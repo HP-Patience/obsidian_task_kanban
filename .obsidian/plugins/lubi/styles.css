@@ -242,6 +242,9 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-task-body { flex: 1; min-width: 0; }
 .lubi-task-title { display: flex; align-items: flex-start; gap: 6px; font-size: var(--font-ui-small); min-width: 0; }
 .lubi-task-title-text { min-width: 0; flex: 1; overflow-wrap: anywhere; line-height: 1.4; }
+/* 圆点 / 受阻图标与标题首行垂直居中：首行行高 1.4em，偏移 (1.4em − 自身高度) / 2；标题换行时仍对齐第一行 */
+.lubi-task-title > .lubi-dot { margin-top: calc(0.7em - 4px); }
+.lubi-task-title > .lubi-blocked-icon { margin-top: calc(0.7em - 6.5px); }
 .lubi-task-meta { font-size: var(--font-ui-smaller); color: var(--lubi-muted); margin-top: 2px; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
 .lubi-task.is-done .lubi-task-title { text-decoration: line-through; color: var(--lubi-muted); }
 .lubi-task.is-blocked .lubi-blocked-icon svg { width: 13px; height: 13px; color: var(--color-orange); }
