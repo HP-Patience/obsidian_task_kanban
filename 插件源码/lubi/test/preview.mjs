@@ -1,0 +1,130 @@
+// 生成静态预览 HTML（jsdom 渲染 + Obsidian 变量垫片），配合 test/shot.py 截图做视觉检查。
+import * as O from "./mock-obsidian.js";
+import fs from "fs";
+import Module from "module";
+import { createRequire } from "module";
+const origLoad = Module._load;
+Module._load = function (req, ...a) { return req === "obsidian" ? O : origLoad.call(this, req, ...a); };
+const require = createRequire(import.meta.url);
+const LubiPlugin = require("./plugin.cjs").default;
+const tick = (ms = 40) => new Promise((r) => setTimeout(r, ms));
+
+const app = new O.App();
+const today = new Date();
+const d = (off) => { const x = new Date(today); x.setDate(x.getDate() + off); return x.toISOString().slice(0, 10); };
+const T = d(0);
+const rec = (recs) => `---\ndate: x\n---\n\n# x\n\n## 记录\n${recs.map((r) => "- " + r).join("\n")}\n`;
+app.vault.files.set(`日记/${T}.md`, rec([
+  "00:10–07:25 睡眠 · 睡觉 [时长:: 7.25h]",
+  "07:40–08:10 饮食 · 早饭 [时长:: 30min]",
+  "08:30–11:00 学习 · 三明治定理习题 [时长:: 2.5h] [任务:: abc] [备注:: 做了 12 题]",
+  "09:30–10:00 日常 · 接电话 [时长:: 30min]",
+  "12:10 财务 · 午饭 [金额:: 35] [类别:: 餐饮]",
+  "12:30–13:00 饮食 · 午饭 [时长:: 30min]",
+  "14:00–15:30 学习 · 读《时间统计法》 [时长:: 1.5h]",
+  "16:00–16:15 日常 · 收拾桌面 [时长:: 15min]",
+  "18:32–19:32 运动 · 跑步 [时长:: 1h]",
+]));
+for (let i = 1; i <= 6; i++) app.vault.files.set(`日记/${d(-i)}.md`, rec([
+  `00:00–07:00 睡眠 · 睡觉 [时长:: 7h]`,
+  `09:00–${11 + (i % 3)}:00 学习 · 学习 [时长:: ${2 + (i % 3)}h]`,
+  `18:00–19:00 运动 · 跑步 [时长:: 1h]`,
+  ...(i === 3 ? ["10:00–11:00 学习 · 看本书 [时长:: 103.23h]"] : []),
+]));
+app.vault.files.set("任务/任务数据.json", JSON.stringify({ version: 14, tasks: [
+  { id: "abc", title: "三明治定理习题", category: "学习", parent: null, status: "todo", blocked: false, date: T, start: "08:30", estimate: 150, repeat: { kind: "none", days: [] }, doneDates: [], startDate: "", endDate: "", notes: "", order: 0 },
+  { id: "run", title: "跑步", category: "运动", parent: null, status: "todo", blocked: false, date: "", start: "18:30", estimate: 60, repeat: { kind: "daily", days: [] }, doneDates: [], startDate: "", endDate: "", notes: "", order: 1 },
+  { id: "p1", title: "微积分", category: "学习", parent: null, status: "doing", blocked: false, date: "", start: "", estimate: 0, repeat: { kind: "none", days: [] }, doneDates: [], startDate: d(-10), endDate: d(20), notes: "", order: 2 },
+  { id: "p1a", title: "学习极限", category: "学习", parent: "p1", status: "done", blocked: false, date: d(-5), start: "", estimate: 0, repeat: { kind: "none", days: [] }, doneDates: [], startDate: "", endDate: "", notes: "", order: 0 },
+  { id: "p1b", title: "学习三明治定理", category: "学习", parent: "p1", status: "todo", blocked: false, date: d(2), start: "14:00", estimate: 90, repeat: { kind: "none", days: [] }, doneDates: [], startDate: "", endDate: "", notes: "", order: 1 },
+  { id: "buy", title: "买牛奶", category: "日常", parent: null, status: "todo", blocked: false, date: "", start: "", estimate: 0, repeat: { kind: "none", days: [] }, doneDates: [], startDate: "", endDate: "", notes: "", order: 3 },
+] }));
+
+const plugin = new LubiPlugin(app, { id: "lubi", version: "1.1.0" });
+await plugin.onload();
+for (const fn of app.workspace._ready) await fn();
+await tick();
+plugin.settings.onboardingDone = true;
+const view = await plugin.activateView("today", T);
+await tick(200);
+const root = view.contentEl;
+
+const shim = `
+:root { --background-primary:#fff; --background-secondary:#f5f5f7; --background-modifier-border:#e3e3e8; --background-modifier-hover:rgba(0,0,0,.06);
+ --text-normal:#1f1f24; --text-muted:#6f6f7a; --text-faint:#a6a6b0; --text-error:#d03a3a; --interactive-accent:#7b5cff; --text-on-accent:#fff;
+ --color-red:#e03131; --color-blue:#1971c2; --color-green:#2f9e44; --color-purple:#7048e8; --color-orange:#e8590c; --color-yellow:#f08c00; --color-base-60:#8a8a94; --color-base-50:#9a9aa3;
+ --font-ui-small:13px; --font-ui-smaller:12px; --font-ui-medium:15px; --radius-s:4px; --radius-m:8px; --radius-l:12px; --shadow-s:0 2px 8px rgba(0,0,0,.12); }
+html,body { margin:0; height:100%; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; font-size:14px; color:var(--text-normal); background:var(--background-primary); }
+button { font-family: inherit; }
+.lubi-root { height: 100vh; }
+.lubi-icon svg, .lubi-icon-btn svg, button svg { width:14px; height:14px; display:inline-block; }
+input, select, textarea { font: inherit; border:1px solid var(--background-modifier-border); border-radius:6px; padding:0 8px; background:var(--background-primary); color:inherit; }
+input[type=checkbox] { width:14px; height:14px; padding:0; }
+textarea { padding:6px 8px; }
+button.mod-cta { background: var(--interactive-accent); color:#fff; border:none; }
+button { border:1px solid var(--background-modifier-border); background:var(--background-primary); color:inherit; border-radius:6px; }
+.lubi-root { --lubi-panel-height: 100vh; }
+body.theme-dark { --background-primary:#1e1e22; --background-secondary:#26262b; --background-modifier-border:#3a3a42; --background-modifier-hover:rgba(255,255,255,.07);
+ --text-normal:#dcdce2; --text-muted:#a2a2ad; --text-faint:#72727d; --text-error:#ff6b6b; --interactive-accent:#8b6cff;
+ --color-red:#ff6b6b; --color-blue:#4dabf7; --color-green:#51cf66; --color-purple:#9775fa; --color-orange:#ff922b; --color-yellow:#fcc419; --color-base-60:#8a8a94; --color-base-50:#6a6a73; }
+.modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.35); }
+.modal { position:fixed; left:50%; top:60px; transform:translateX(-50%); background:var(--background-primary); border-radius:12px; padding:20px 24px 18px; box-shadow:0 12px 40px rgba(0,0,0,.25); box-sizing:border-box; }
+.modal-title { font-size:18px; font-weight:700; margin-bottom:14px; }
+`;
+const styles = fs.readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+const freeze = (el) => { for (const i of el.querySelectorAll("input, textarea")) { if (i.type === "checkbox") { if (i.checked) i.setAttribute("checked", ""); } else if (i.tagName === "TEXTAREA") i.textContent = i.value; else i.setAttribute("value", i.value); } for (const s of el.querySelectorAll("select")) for (const o of s.options) o.toggleAttribute("selected", o.selected); return el.outerHTML; };
+// 与真实视图一致：按 data-scroll-target 定位首屏
+const boot = `<script>addEventListener("load",()=>{for(const el of document.querySelectorAll("[data-scroll-target]"))el.scrollTop=Number(el.dataset.scrollTarget)||0;});</script>`;
+const page = (title, body, dark = false) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${shim}${styles}</style></head><body class="${dark ? "theme-dark" : "theme-light"}">${body}${boot}</body></html>`;
+const out = new URL("../preview/", import.meta.url);
+const outDark = new URL("dark/", out);
+fs.mkdirSync(outDark, { recursive: true });
+const origWrite = fs.writeFileSync.bind(fs);
+fs.writeFileSync = (url, html) => {
+  origWrite(url, html);
+  const name = String(url).split("/").pop();
+  origWrite(new URL(name, outDark), html.replace('<body class="theme-light">', '<body class="theme-dark">'));
+};
+
+// 1. 记录页
+fs.writeFileSync(new URL("today.html", out), page("today", freeze(root)));
+// 2. 回顾页
+view.show("review"); await tick(200);
+fs.writeFileSync(new URL("review.html", out), page("review", freeze(root)));
+// 2b. 回顾页·年
+{
+  const yearBtn = [...root.querySelectorAll(".lubi-review .lubi-seg-item")].find((x) => x.textContent.trim() === "年");
+  if (yearBtn) { yearBtn.click(); await tick(300); fs.writeFileSync(new URL("review-year.html", out), page("review-year", freeze(root))); }
+  const weekBtn = [...root.querySelectorAll(".lubi-review .lubi-seg-item")].find((x) => x.textContent.trim() === "周");
+  if (weekBtn) { weekBtn.click(); await tick(200); }
+}
+// 3. 任务页
+view.show("tasks"); await tick(200);
+fs.writeFileSync(new URL("tasks.html", out), page("tasks", freeze(root)));
+// 4. 编辑模态
+view.show("today"); await tick(200);
+const b = [...root.querySelectorAll(".lubi-block")].find((x) => x.textContent.includes("三明治"));
+if (!window.PointerEvent) window.PointerEvent = class extends window.MouseEvent { constructor(t, o = {}) { super(t, o); this.pointerId = 1; } };
+b.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, clientY: 100, button: 0 }));
+window.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, clientY: 100, button: 0 }));
+await tick();
+const m = O.openModals.at(-1);
+m.modalEl.classList.add("modal");
+m.titleEl.classList.add("modal-title");
+m.contentEl.classList.add("modal-content");
+fs.writeFileSync(new URL("modal.html", out), page("modal", `<div class="lubi-root" style="height:100vh;background:var(--background-secondary)"></div><div class="modal-bg"></div>${freeze(m.modalEl)}`));
+m.close();
+// 5. 新建记录模态（空）
+plugin.quickLog(); await tick();
+const nm = O.openModals.at(-1); nm.modalEl.classList.add("modal"); nm.titleEl.classList.add("modal-title"); nm.contentEl.classList.add("modal-content");
+fs.writeFileSync(new URL("modal-new.html", out), page("modal-new", `<div class="lubi-root" style="height:100vh;background:var(--background-secondary)"></div><div class="modal-bg"></div>${freeze(nm.modalEl)}`));
+nm.close();
+// 6. 任务模态：点任务页里的一行
+view.show("tasks"); await tick(200);
+const rowEl = [...root.querySelectorAll(".lubi-task")].find((x) => x.textContent.includes("三明治定理习题"));
+rowEl.click(); await tick();
+const tm = O.openModals.at(-1); tm.modalEl.classList.add("modal"); tm.titleEl.classList.add("modal-title"); tm.contentEl.classList.add("modal-content");
+fs.writeFileSync(new URL("modal-task.html", out), page("modal-task", `<div class="lubi-root" style="height:100vh;background:var(--background-secondary)"></div><div class="modal-bg"></div>${freeze(tm.modalEl)}`)); tm.close();
+console.log("preview written to", out.pathname);
+process.exit(0);
+

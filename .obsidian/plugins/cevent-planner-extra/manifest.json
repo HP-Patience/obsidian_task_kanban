@@ -1,0 +1,9 @@
+{
+  "id": "cevent-planner-extra",
+  "name": "CEvent Planner Extra",
+  "version": "1.0.1",
+  "minAppVersion": "0.15.0",
+  "description": "A extra plugin for CEvent-Planner.",
+  "author": "Abdur-Nur-Porag",
+  "isDesktopOnly": false
+}

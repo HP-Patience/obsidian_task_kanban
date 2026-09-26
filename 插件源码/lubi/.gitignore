@@ -1,0 +1,4 @@
+node_modules
+main.js
+preview/
+test/_shot_*.py

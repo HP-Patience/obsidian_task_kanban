@@ -1,0 +1,9 @@
+{
+  "propertiesInDocument": "hidden",
+  "readableLineLength": false,
+  "defaultViewMode": "preview",
+  "showInlineTitle": false,
+  "userIgnoreFilters": [
+    "插件源码/lubi/node_modules/"
+  ]
+}
