@@ -3577,6 +3577,9 @@ function renderWeek(plugin, host, date, state, rerender, edit) {
     bindDrop(plugin, h, d, null, rerender);
   }
   const body = grid.createDiv({ cls: "lubi-week-body" });
+  const syncGutter = () => grid.style.setProperty("--lubi-week-sbw", `${Math.max(0, body.offsetWidth - body.clientWidth)}px`);
+  window.requestAnimationFrame(syncGutter);
+  if (typeof ResizeObserver !== "undefined") new ResizeObserver(syncGutter).observe(body);
   const hours = body.createDiv({ cls: "lubi-week-hours" });
   hours.style.height = `${(endH - startH) * HOUR_PX}px`;
   for (let h = startH; h < endH; h++) {

@@ -246,6 +246,10 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
   }
   // 时间轴 + 7 列
   const body = grid.createDiv({ cls: "lubi-week-body" });
+  // 表身有纵向滚动条、表头没有：把滚动条宽度补成表头最右侧的一条空轨道，列线才能上下对齐
+  const syncGutter = () => grid.style.setProperty("--lubi-week-sbw", `${Math.max(0, body.offsetWidth - body.clientWidth)}px`);
+  window.requestAnimationFrame(syncGutter);
+  if (typeof ResizeObserver !== "undefined") new ResizeObserver(syncGutter).observe(body);
   const hours = body.createDiv({ cls: "lubi-week-hours" });
   hours.style.height = `${(endH - startH) * HOUR_PX}px`;
   for (let h = startH; h < endH; h++) {

@@ -1216,3 +1216,6 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-modal .lubi-mode-row { display: flex; align-items: center; justify-content: space-between; gap: var(--lubi-gap-2); flex-wrap: wrap; }
 .lubi-modal .lubi-mode-row:empty { display: none; }
 .lubi-modal .lubi-mode-row .lubi-money-seg:only-child { margin-left: 0; }
+
+/* 周日程表头与表身列对齐：表头多一条与滚动条等宽的轨道（宽度由 tasks.ts 实测写入 --lubi-week-sbw） */
+.lubi-root .lubi-week { grid-template-columns: 48px repeat(7, minmax(0, 1fr)) var(--lubi-week-sbw, 0px); }
