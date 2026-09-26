@@ -378,6 +378,52 @@ ${SECTION}
   async remove(date, line) {
     await this.mutateLines(date, (rows) => rows.filter((r) => r.line !== line).map((r) => r.rec));
   }
+  /** 所有关联到给定任务的记录（跨全部日记） */
+  async linkedTo(ids) {
+    const out = [];
+    for (const d of this.dates()) {
+      for (const r of await this.read(d)) if (r.rec.task && ids.has(r.rec.task)) out.push(r.rec);
+    }
+    return out;
+  }
+  /**
+   * 任务被删除时处理关联记录：remove=false 只去掉 `[任务:: …]`，remove=true 整条删除。
+   * 返回受影响记录的原样副本，供 restoreDetached 撤销。
+   */
+  async detachTasks(ids, remove) {
+    const hit = [];
+    for (const d of this.dates()) {
+      const rows = await this.read(d);
+      if (!rows.some((r) => r.rec.task && ids.has(r.rec.task))) continue;
+      await this.mutateLines(d, (cur) => {
+        const next = [];
+        for (const r of cur) {
+          if (r.rec.task && ids.has(r.rec.task)) {
+            hit.push({ ...r.rec, date: d, extra: { ...r.rec.extra } });
+            if (!remove) next.push({ ...r.rec, task: void 0 });
+          } else next.push(r.rec);
+        }
+        return next;
+      });
+    }
+    return hit;
+  }
+  /** 撤销 detachTasks：删掉的加回来，解除的重新挂上任务 */
+  async restoreDetached(recs, removed) {
+    const byDate = /* @__PURE__ */ new Map();
+    for (const r of recs) byDate.set(r.date, [...byDate.get(r.date) || [], r]);
+    for (const [d, list] of byDate) {
+      await this.mutate(d, (cur) => {
+        if (removed) return [...cur, ...list.map((r) => ({ ...r, extra: { ...r.extra } }))];
+        const next = cur.slice();
+        for (const r of list) {
+          const i = next.findIndex((x) => !x.task && x.start === r.start && x.minutes === r.minutes && x.title === r.title && x.category === r.category);
+          if (i >= 0) next[i] = { ...next[i], task: r.task };
+        }
+        return next;
+      });
+    }
+  }
   async checkCap(date, rec, replacingLine) {
     if (rec.minutes <= 0) return;
     const rows = await this.read(date);
@@ -850,8 +896,13 @@ function icon(parent, name, cls = "lubi-icon") {
   (0, import_obsidian4.setIcon)(s, name);
   return s;
 }
+function tip(el2, text) {
+  el2.setAttribute("aria-label", text);
+  el2.removeAttribute("title");
+  return el2;
+}
 function iconButton(parent, name, label, onClick, cls = "") {
-  const b = parent.createEl("button", { cls: `lubi-icon-btn ${cls}`.trim(), attr: { "aria-label": label, title: label, "data-lubi-focus": `icon:${label}` } });
+  const b = parent.createEl("button", { cls: `lubi-icon-btn ${cls}`.trim(), attr: { "aria-label": label, "data-lubi-focus": `icon:${label}` } });
   (0, import_obsidian4.setIcon)(b, name);
   b.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1226,7 +1277,7 @@ function minuteAt(clientY, container, pxPerMin, offsetMin = 0) {
 }
 
 // src/ui/modals.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/core/quickparse.ts
 var pad2 = (n) => String(n).padStart(2, "0");
@@ -1285,6 +1336,258 @@ function parseEstimate(text) {
   return q && q.minutes !== void 0 && !q.title && q.start === void 0 ? q.minutes : null;
 }
 
+// src/ui/taskList.ts
+var import_obsidian5 = require("obsidian");
+function dayTasks(plugin, date) {
+  return plugin.tasks.forDate(date).filter((t) => !plugin.tasks.children(t.id).length);
+}
+function groupedRows(plugin, list, items, edit, row) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const task of items) {
+    const parents = plugin.tasks.pathOf(task).slice(0, -1);
+    const key = parents.map((p) => p.id).join("/") || "__root__";
+    if (!groups.has(key)) groups.set(key, { parent: parents[parents.length - 1], title: parents.map((p) => p.title).join(" / "), tasks: [] });
+    groups.get(key).tasks.push(task);
+  }
+  for (const group of groups.values()) {
+    const section = list.createDiv({ cls: "lubi-task-group" });
+    if (group.parent) {
+      const path = button(section, group.title, () => edit(group.parent), { cls: "lubi-task-group-title" });
+      tip(path, `\u7F16\u8F91\u7236\u4EFB\u52A1\uFF1A${group.title}`);
+    } else if (groups.size > 1) section.createDiv({ cls: "lubi-task-group-title lubi-muted", text: "\u72EC\u7ACB\u4EFB\u52A1" });
+    for (const task of group.tasks) row(section, task);
+  }
+}
+function renderDayTaskList(plugin, list, date, rerender, openNew, edit, decorate) {
+  const items = dayTasks(plugin, date);
+  groupedRows(plugin, list, items, edit, (group, t) => {
+    const li = taskRow(plugin, group, t, date, rerender, openNew, () => edit(t));
+    decorate?.(li, t);
+  });
+  return items;
+}
+var sameRecord = (r, taskId, log) => r.task === taskId && r.start === log.start && r.title === log.title && r.category === log.category;
+var logOf = (r) => ({ date: r.date, start: r.start, title: r.title, category: r.category });
+function firstTimeCategory(plugin) {
+  return plugin.settings.categories.find((c) => c.kind === "time")?.name || "\u65E5\u5E38";
+}
+async function hasLinkedRecord(plugin, taskId, date) {
+  return (await plugin.journal.read(date)).some((r) => r.rec.task === taskId);
+}
+async function logDone(plugin, t, date, rerender) {
+  const minutes = Math.max(5, t.estimate || 30);
+  let start = t.start;
+  if (!start) {
+    if (date === todayStr()) start = minToHM(Math.max(0, hmToMin(nowHM()) - minutes));
+    else start = plugin.lastEndOf(date) || "09:00";
+  }
+  const category = t.category && categoryOf(plugin.settings, t.category).kind === "time" ? t.category : firstTimeCategory(plugin);
+  const rec = { date, start, minutes, category, title: t.title, task: t.id, extra: {} };
+  try {
+    await plugin.journal.add(rec);
+  } catch (e) {
+    new import_obsidian5.Notice(`\u300C${t.title}\u300D\u5DF2\u5B8C\u6210\uFF0C\u4F46\u6CA1\u80FD\u81EA\u52A8\u8BB0\u5F55\u65F6\u95F4\uFF1A${e.message}`, 6e3);
+    return null;
+  }
+  const latest = plugin.tasks.byId(t.id);
+  if (latest && plugin.tasks.isDoneOn(latest, date)) await plugin.tasks.setDoneLog(t.id, date, logOf(rec));
+  undoNotice(`\u5DF2\u8BB0\u5F55\u300C${t.title}\u300D${start}\u2013${minToHM(hmToMin(start) + minutes)}\uFF0C\u53EF\u5728\u65F6\u95F4\u8F74\u62D6\u52A8\u8C03\u6574`, async () => {
+    const line = await plugin.journal.findLine(date, rec);
+    if (line !== null) await plugin.journal.remove(date, line);
+    const cur = plugin.tasks.byId(t.id);
+    if (cur) {
+      await plugin.tasks.setDoneLog(t.id, date, null);
+      if (plugin.tasks.isDoneOn(cur, date)) await plugin.tasks.toggleDone(t.id, date);
+    }
+    rerender?.();
+  });
+  return rec;
+}
+async function afterDone(plugin, t, date, _openNew, rerender) {
+  if (!plugin.settings.promptLogOnComplete) return;
+  if (await hasLinkedRecord(plugin, t.id, date)) return;
+  await logDone(plugin, t, date, rerender);
+}
+async function afterUndone(plugin, id, date, rerender) {
+  const t = plugin.tasks.byId(id);
+  const log = t?.doneLogs?.[date];
+  if (!t || !log) return;
+  await plugin.tasks.setDoneLog(id, date, null);
+  const rows = await plugin.journal.read(log.date);
+  const hit = rows.find((r) => sameRecord(r.rec, id, log));
+  if (!hit) {
+    new import_obsidian5.Notice("\u52FE\u9009\u65F6\u8BB0\u4E0B\u7684\u90A3\u6761\u8BB0\u5F55\u5DF2\u88AB\u4FEE\u6539\u6216\u5220\u9664\uFF0C\u65F6\u95F4\u7EBF\u672A\u4F5C\u6539\u52A8");
+    return;
+  }
+  await plugin.journal.remove(log.date, hit.line);
+  const removed = hit.rec;
+  undoNotice(`\u5DF2\u53D6\u6D88\u5B8C\u6210\uFF0C\u5E76\u4ECE\u65F6\u95F4\u7EBF\u79FB\u9664\u300C${removed.title}\u300D`, async () => {
+    const cur = plugin.tasks.byId(id);
+    if (!cur) {
+      new import_obsidian5.Notice("\u4EFB\u52A1\u5DF2\u5220\u9664\uFF0C\u65E0\u6CD5\u64A4\u9500");
+      return;
+    }
+    await plugin.journal.add({ ...removed, extra: { ...removed.extra } });
+    if (!plugin.tasks.isDoneOn(cur, date)) await plugin.tasks.toggleDone(id, date);
+    await plugin.tasks.setDoneLog(id, date, log);
+    rerender();
+  });
+}
+async function addRecordAsDone(plugin, rec) {
+  const r = { ...rec, extra: { ...rec.extra } };
+  const isTime = categoryOf(plugin.settings, r.category).kind !== "money" && r.minutes > 0;
+  if (!isTime || r.task) {
+    await plugin.journal.add(r);
+    return r;
+  }
+  const task = blankTask({
+    title: r.title,
+    category: r.category,
+    date: r.date,
+    start: r.start,
+    estimate: r.minutes,
+    status: "done",
+    doneAt: (/* @__PURE__ */ new Date()).toISOString(),
+    origin: "record",
+    doneLogs: { [r.date]: logOf(r) }
+  });
+  await plugin.tasks.upsert(task);
+  r.task = task.id;
+  try {
+    await plugin.journal.add(r);
+  } catch (e) {
+    await plugin.tasks.remove(task.id);
+    throw e;
+  }
+  return r;
+}
+async function syncLinkedTask(plugin, old, next) {
+  const id = next.task || old.task;
+  if (!id) return;
+  const t = plugin.tasks.byId(id);
+  if (!t) return;
+  const log = t.doneLogs?.[old.date];
+  const paired = !!log && sameRecord(old, id, log);
+  if (t.origin === "record") {
+    await plugin.tasks.upsert({
+      ...t,
+      title: next.title,
+      category: categoryOf(plugin.settings, next.category).kind === "time" ? next.category : t.category,
+      start: next.start,
+      estimate: next.minutes > 0 ? next.minutes : t.estimate,
+      doneLogs: paired || !log ? { ...t.doneLogs || {}, [old.date]: logOf(next) } : t.doneLogs
+    });
+  } else if (paired) {
+    await plugin.tasks.setDoneLog(id, old.date, logOf(next));
+  }
+}
+async function deleteRecord(plugin, date, row, rerender) {
+  const r = row.rec;
+  await plugin.journal.remove(date, row.line);
+  let removedTask = null;
+  let unchecked = null;
+  const t = r.task ? plugin.tasks.byId(r.task) : void 0;
+  if (t) {
+    const log = t.doneLogs?.[date];
+    const stillLinked = await hasLinkedRecord(plugin, t.id, date);
+    if (t.origin === "record" && !stillLinked && !plugin.tasks.children(t.id).length) {
+      removedTask = JSON.parse(JSON.stringify(t));
+      await plugin.tasks.remove(t.id);
+    } else if (log && sameRecord(r, t.id, log)) {
+      unchecked = { id: t.id, log };
+      await plugin.tasks.setDoneLog(t.id, date, null);
+      if (plugin.tasks.isDoneOn(t, date)) await plugin.tasks.toggleDone(t.id, date);
+    }
+  }
+  const what = removedTask ? "\uFF08\u4EFB\u52A1\u9875\u91CC\u5BF9\u5E94\u7684\u5DF2\u5B8C\u6210\u4E8B\u9879\u4E5F\u5DF2\u5220\u9664\uFF09" : unchecked ? "\uFF0C\u5BF9\u5E94\u4EFB\u52A1\u5DF2\u53D6\u6D88\u5B8C\u6210" : "";
+  undoNotice(`\u5DF2\u5220\u9664 ${r.title}${what}`, async () => {
+    if (removedTask && !plugin.tasks.byId(removedTask.id)) await plugin.tasks.upsert(removedTask);
+    await plugin.journal.add({ ...r, extra: { ...r.extra } });
+    if (unchecked) {
+      const cur = plugin.tasks.byId(unchecked.id);
+      if (cur) {
+        if (!plugin.tasks.isDoneOn(cur, date)) await plugin.tasks.toggleDone(unchecked.id, date);
+        await plugin.tasks.setDoneLog(unchecked.id, date, unchecked.log);
+      }
+    }
+    rerender();
+  });
+  rerender();
+}
+function taskRow(plugin, ul, t, date, rerender, openNew, onClick) {
+  const done = plugin.tasks.isDoneOn(t, date);
+  const li = ul.createDiv({ cls: `lubi-task ${done ? "is-done" : ""} ${t.blocked ? "is-blocked" : ""}`.trim() });
+  const cb = li.createEl("input", { type: "checkbox" });
+  cb.checked = done;
+  cb.setAttribute("aria-label", `${done ? "\u53D6\u6D88\u5B8C\u6210" : "\u5B8C\u6210"} ${t.title}\uFF08${date}\uFF09`);
+  cb.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (cb.dataset.busy) {
+      e.preventDefault();
+      return;
+    }
+    cb.dataset.busy = "1";
+    try {
+      const nowDone = await plugin.tasks.toggleDone(t.id, date);
+      if (nowDone) await afterDone(plugin, t, date, openNew, rerender);
+      else await afterUndone(plugin, t.id, date, rerender);
+    } catch (error) {
+      new import_obsidian5.Notice(`\u4EFB\u52A1\u66F4\u65B0\u5931\u8D25\uFF1A${error.message}`, 6e3);
+    } finally {
+      delete cb.dataset.busy;
+    }
+    rerender();
+  });
+  const body = li.createDiv({ cls: "lubi-task-body" });
+  const line = onClick ? body.createEl("button", { cls: "lubi-task-title lubi-task-title-button", attr: { type: "button", "aria-label": `\u7F16\u8F91 ${t.title}` } }) : body.createDiv({ cls: "lubi-task-title" });
+  if (onClick) line.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  if (t.category) catDot(line, categoryOf(plugin.settings, t.category));
+  line.createSpan({ cls: "lubi-task-title-text", text: t.title });
+  if (t.blocked) tip(icon(line, "octagon-alert", "lubi-icon lubi-blocked-icon"), "\u53D7\u963B");
+  const parents = plugin.tasks.pathOf(t).slice(0, -1);
+  const meta = [];
+  if (parents.length) meta.push(parents.map((p) => p.title).join(" / "));
+  if (t.start) meta.push(t.start);
+  if (t.estimate) meta.push(fmtDuration(t.estimate));
+  if (t.repeat.kind !== "none") meta.push("\u91CD\u590D");
+  if (meta.length) {
+    const text = meta.join(" \xB7 ");
+    tip(body.createDiv({ cls: "lubi-task-meta", text }), text);
+  }
+  if (done && date <= todayStr() && plugin.settings.promptLogOnComplete) {
+    void hasLinkedRecord(plugin, t.id, date).then((has) => {
+      if (has || body.querySelector(".lubi-task-unlogged")) return;
+      const fix = tip(body.createEl("button", { cls: "lubi-task-unlogged", attr: { type: "button" } }), `\u300C${t.title}\u300D\u5DF2\u5B8C\u6210\uFF0C\u4F46\u65F6\u95F4\u7EBF\u4E0A\u8FD8\u6CA1\u6709\u5BF9\u5E94\u7684\u8BB0\u5F55\u3002\u70B9\u51FB\u6309\u8BA1\u5212\u65F6\u95F4\u8865\u8BB0`);
+      icon(fix, "clock", "lubi-icon");
+      fix.createSpan({ text: "\u672A\u8BB0\u65F6\u95F4 \xB7 \u8865\u8BB0" });
+      fix.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const cur = plugin.tasks.byId(t.id) || t;
+        await logDone(plugin, cur, date, rerender);
+        rerender();
+      });
+    });
+  }
+  if (!done) {
+    const acts = li.createDiv({ cls: "lubi-task-actions" });
+    iconButton(acts, "play", `\u5F00\u59CB\u300C${t.title}\u300D\uFF1A\u9884\u586B\u4E00\u6761\u8BB0\u5F55`, () => openNew({
+      title: t.title,
+      category: t.category || void 0,
+      task: t.id,
+      start: date === todayStr() ? nowHM() : t.start || void 0,
+      minutes: t.estimate || 30
+    }), "lubi-task-start");
+  }
+  if (onClick) li.addEventListener("click", (e) => {
+    if (e.target.closest("button, input")) return;
+    onClick();
+  });
+  return li;
+}
+
 // src/ui/modals.ts
 var fieldId = 0;
 function associate(label, control) {
@@ -1297,7 +1600,7 @@ function errorHost(control) {
 }
 function fieldError(control, message) {
   if (!control) {
-    new import_obsidian5.Notice(message);
+    new import_obsidian6.Notice(message);
     return;
   }
   const host = errorHost(control);
@@ -1323,7 +1626,7 @@ function formError(host, message) {
   error.setText(message);
   error.focus();
 }
-var ConfirmModal = class extends import_obsidian5.Modal {
+var ConfirmModal = class extends import_obsidian6.Modal {
   constructor(app, title, body, onOk, okLabel = "\u786E\u5B9A", danger = true) {
     super(app);
     this.title = title;
@@ -1345,20 +1648,73 @@ var ConfirmModal = class extends import_obsidian5.Modal {
     if (this.danger) ok.addClass("lubi-btn-danger");
   }
 };
+var DeleteTaskModal = class extends import_obsidian6.Modal {
+  constructor(app, plugin, task, onDone) {
+    super(app);
+    this.plugin = plugin;
+    this.task = task;
+    this.onDone = onDone;
+    this.removeRecords = false;
+  }
+  async onOpen() {
+    this.modalEl.addClass("lubi-modal", "lubi-modal-sm");
+    this.titleEl.setText("\u5220\u9664\u4EFB\u52A1\uFF1F");
+    const all = [this.task, ...this.plugin.tasks.descendants(this.task.id)];
+    const ids = new Set(all.map((t) => t.id));
+    const kids = all.length - 1;
+    this.contentEl.createEl("p", { cls: "lubi-confirm-body", text: kids ? `\u300C${this.task.title}\u300D\u4F1A\u8FDE\u540C ${kids} \u4E2A\u5B50\u4EFB\u52A1\u4E00\u8D77\u5220\u9664\u3002` : `\u300C${this.task.title}\u300D` });
+    const linked = await this.plugin.journal.linkedTo(ids);
+    if (linked.length) {
+      const box = this.contentEl.createDiv({ cls: "lubi-delete-opts", attr: { role: "radiogroup", "aria-label": "\u5173\u8054\u8BB0\u5F55\u7684\u5904\u7406\u65B9\u5F0F" } });
+      box.createDiv({ cls: "lubi-muted", text: `\u65F6\u95F4\u7EBF\u4E0A\u6709 ${linked.length} \u6761\u8BB0\u5F55\u5173\u8054\u4E86${kids ? "\u8FD9\u4E9B\u4EFB\u52A1" : "\u8FD9\u4E2A\u4EFB\u52A1"}\uFF1A` });
+      const opt = (value, label, desc) => {
+        const row2 = box.createEl("label", { cls: "lubi-delete-opt" });
+        const input = row2.createEl("input", { type: "radio", attr: { name: "lubi-delete-records" } });
+        input.checked = value === this.removeRecords;
+        input.addEventListener("change", () => {
+          if (input.checked) this.removeRecords = value;
+        });
+        const text = row2.createDiv();
+        text.createDiv({ text: label });
+        text.createDiv({ cls: "lubi-muted", text: desc });
+      };
+      opt(false, "\u4FDD\u7559\u8BB0\u5F55\uFF0C\u53EA\u89E3\u9664\u5173\u8054", "\u65F6\u95F4\u786E\u5B9E\u82B1\u6389\u4E86\uFF0C\u56DE\u987E\u7EDF\u8BA1\u4E0D\u53D8");
+      opt(true, `\u8FDE\u540C\u8FD9 ${linked.length} \u6761\u8BB0\u5F55\u4E00\u8D77\u5220\u9664`, "\u9002\u5408\u5EFA\u9519\u7684\u4EFB\u52A1\u6216\u8BEF\u8BB0\u7684\u65F6\u95F4");
+    }
+    const row = this.contentEl.createDiv({ cls: "lubi-modal-actions" });
+    button(row, "\u53D6\u6D88", () => this.close(), { cls: "lubi-btn-ghost" });
+    const ok = button(row, "\u5220\u9664", () => void this.run(all, ids, linked.length > 0));
+    ok.addClass("lubi-btn-danger");
+  }
+  async run(all, ids, hasLinked) {
+    this.close();
+    const snapshot = JSON.parse(JSON.stringify(all));
+    const removed = this.removeRecords;
+    const touched = hasLinked ? await this.plugin.journal.detachTasks(ids, removed) : [];
+    await this.plugin.tasks.remove(this.task.id);
+    this.onDone();
+    const what = !touched.length ? "" : removed ? `\uFF0C\u5E76\u5220\u9664 ${touched.length} \u6761\u8BB0\u5F55` : `\uFF0C${touched.length} \u6761\u8BB0\u5F55\u5DF2\u89E3\u9664\u5173\u8054`;
+    undoNotice(`\u5DF2\u5220\u9664\u300C${this.task.title}\u300D${what}`, async () => {
+      for (const t of snapshot) if (!this.plugin.tasks.byId(t.id)) await this.plugin.tasks.upsert(t);
+      if (touched.length) await this.plugin.journal.restoreDetached(touched, removed);
+      this.onDone();
+    });
+  }
+};
 var SHORTCUTS = [
-  ["N", "\u8BB0\u4E00\u6761"],
-  ["1 / 2 / 3", "\u5207\u6362 \u8BB0\u5F55 \xB7 \u56DE\u987E \xB7 \u4EFB\u52A1"],
-  ["T", "\u6BCF\u65E5\u9875\u56DE\u5230\u4ECA\u5929"],
-  ["\u2190 / \u2192", "\u6BCF\u65E5\u9875\u524D\u4E00\u5929 / \u540E\u4E00\u5929"],
+  ["N", "\u65B0\u5EFA\uFF08\u6BCF\u65E5\u9875\u9ED8\u8BA4\u300C\u5DF2\u5B8C\u6210\u300D\uFF0C\u4EFB\u52A1\u9875\u9ED8\u8BA4\u300C\u5F85\u505A\u300D\uFF09"],
+  ["1 / 2 / 3", "\u5207\u6362 \u6BCF\u65E5 \xB7 \u56DE\u987E \xB7 \u4EFB\u52A1"],
+  ["T", "\u56DE\u5230\u4ECA\u5929\uFF08\u6BCF\u65E5 / \u4EFB\u52A1\u9875\uFF09"],
+  ["\u2190 / \u2192", "\u524D\u4E00\u5929 / \u540E\u4E00\u5929\uFF08\u6BCF\u65E5 / \u4EFB\u52A1\u9875\uFF09"],
   ["?", "\u6253\u5F00\u672C\u901F\u67E5\u5361"],
   ["\u2191 / \u2193", "\u65F6\u95F4\u8F74\uFF1A\u9009\u4E2D\u5757\u79FB\u52A8 5 \u5206\u949F\uFF08Alt \u4E3A 1 \u5206\u949F\uFF09"],
   ["Shift + \u2191 / \u2193", "\u65F6\u95F4\u8F74\uFF1A\u6539\u65F6\u957F"],
   ["Enter / Delete", "\u65F6\u95F4\u8F74\uFF1A\u7F16\u8F91 / \u5220\u9664\u9009\u4E2D\u5757"],
-  ["Alt + 1\u20269", "\u8BB0\u4E00\u6761\uFF1A\u5207\u6362\u5206\u7C7B"],
-  ["Enter", "\u8BB0\u4E00\u6761 / \u4EFB\u52A1\uFF1A\u4FDD\u5B58"],
+  ["Alt + 1\u20269", "\u65B0\u5EFA\u8BB0\u5F55\uFF1A\u5207\u6362\u5206\u7C7B"],
+  ["Enter", "\u65B0\u5EFA / \u7F16\u8F91\uFF1A\u4FDD\u5B58"],
   ["Esc", "\u53D6\u6D88\u62D6\u52A8 / \u5173\u95ED\u7A97\u53E3"]
 ];
-var ShortcutsModal = class extends import_obsidian5.Modal {
+var ShortcutsModal = class extends import_obsidian6.Modal {
   onOpen() {
     this.modalEl.addClass("lubi-modal", "lubi-modal-sm", "lubi-shortcuts-modal");
     this.titleEl.setText("\u5FEB\u6377\u952E");
@@ -1374,7 +1730,20 @@ var ShortcutsModal = class extends import_obsidian5.Modal {
     }
   }
 };
-var RecordModal = class extends import_obsidian5.Modal {
+function kindSwitch(host, plugin, current, onPick) {
+  const hasMoney = plugin.settings.categories.some((c) => c.kind === "money");
+  const items = [
+    { id: "done", label: "\u5DF2\u5B8C\u6210", icon: "check" },
+    ...hasMoney ? [{ id: "money", label: "\u652F\u51FA", icon: "wallet" }] : [],
+    { id: "todo", label: "\u5F85\u505A", icon: "list-todo" }
+  ];
+  const seg = segmented(host, items, current, (kind) => {
+    if (kind !== current) onPick(kind);
+  });
+  seg.addClass("lubi-mode-seg", "lubi-kind-seg");
+  seg.setAttribute("aria-label", "\u65B0\u5EFA\u7C7B\u578B");
+}
+var RecordModal = class extends import_obsidian6.Modal {
   constructor(app, plugin, opts) {
     super(app);
     this.plugin = plugin;
@@ -1411,13 +1780,30 @@ var RecordModal = class extends import_obsidian5.Modal {
     this.modalEl.addClass("lubi-record-modal");
     this.modalEl.style.setProperty("--chip", cat.color);
     titleEl.empty();
-    titleEl.createSpan({ text: this.editing ? "\u7F16\u8F91\u8BB0\u5F55" : "\u8BB0\u4E00\u6761" });
+    titleEl.createSpan({ text: this.editing ? "\u7F16\u8F91\u8BB0\u5F55" : "\u65B0\u5EFA" });
     const ctx = [`${shortDate(this.rec.date)} \u5468${weekdayZh(this.rec.date)}`];
     if (this.editing && this.opts.rec) ctx.push(this.opts.rec.minutes > 0 ? `${this.opts.rec.start}\u2013${minToHM(hmToMin(this.opts.rec.start) + this.opts.rec.minutes)}` : this.opts.rec.start);
     titleEl.createSpan({ cls: "lubi-modal-ctx", text: ctx.join(" \xB7 ") });
     const timeCats = s.categories.filter((c) => c.kind === "time");
     const moneyCats = s.categories.filter((c) => c.kind === "money");
-    if (timeCats.length && moneyCats.length) {
+    if (!this.editing) {
+      kindSwitch(contentEl, this.plugin, isMoney ? "money" : "done", (kind) => {
+        if (kind === "todo") {
+          this.switchToTask();
+          return;
+        }
+        if (kind === "money" && moneyCats.length) {
+          this.lastTimeCat = this.rec.category;
+          this.rec.category = moneyCats[0].name;
+          if (this.rec.minutes === 30) this.rec.minutes = 0;
+        } else if (kind === "done" && timeCats.length) {
+          this.rec.category = this.lastTimeCat && timeCats.some((c) => c.name === this.lastTimeCat) ? this.lastTimeCat : timeCats[0].name;
+          if (this.rec.minutes <= 0) this.rec.minutes = 30;
+        }
+        this.render(false);
+        this.contentEl.querySelector('.lubi-kind-seg .lubi-seg-item[aria-pressed="true"]')?.focus();
+      });
+    } else if (timeCats.length && moneyCats.length) {
       segmented(contentEl, [
         { id: "time", label: "\u65F6\u95F4", icon: "clock" },
         { id: "money", label: "\u652F\u51FA", icon: "wallet" }
@@ -1457,7 +1843,7 @@ var RecordModal = class extends import_obsidian5.Modal {
     window.requestAnimationFrame(markOverflow);
     cats.toggleClass("is-hidden", pool.length <= 1 && isMoney);
     pool.forEach((c, i) => {
-      const b = cats.createEl("button", { cls: "lubi-cat-option", attr: { type: "button", "aria-pressed": String(c.name === this.rec.category), "data-cat": c.name, title: i < 9 ? `${c.name}\uFF08Alt+${i + 1}\uFF09` : c.name } });
+      const b = tip(cats.createEl("button", { cls: "lubi-cat-option", attr: { type: "button", "aria-pressed": String(c.name === this.rec.category), "data-cat": c.name } }), i < 9 ? `${c.name}\uFF08Alt+${i + 1}\uFF09` : c.name);
       b.style.setProperty("--chip", c.color);
       icon(b, c.icon, "lubi-icon");
       b.createSpan({ text: c.name });
@@ -1564,7 +1950,7 @@ var RecordModal = class extends import_obsidian5.Modal {
       const before = this.rec.date === todayStr() ? hmToMin(nowHM()) : void 0;
       const prevEnd = this.plugin.lastEndOf(this.rec.date, before);
       if (prevEnd && !this.editing && prevEnd !== this.rec.start) {
-        const b = quick.createEl("button", { cls: "lubi-quick-chip lubi-quick-chip-accent", attr: { type: "button", title: "\u4E0A\u4E00\u6761\u8BB0\u5F55\u7684\u7ED3\u675F\u65F6\u95F4" } });
+        const b = tip(quick.createEl("button", { cls: "lubi-quick-chip lubi-quick-chip-accent", attr: { type: "button" } }), `\u4ECE\u4E0A\u4E00\u6761\u8BB0\u5F55\u7684\u7ED3\u675F\u65F6\u95F4 ${prevEnd} \u63A5\u7740\u8BB0`);
         icon(b, "corner-down-right", "lubi-icon");
         b.createSpan({ text: `\u4ECE ${prevEnd} \u63A5\u7740\u8BB0` });
         b.addEventListener("click", (e) => {
@@ -1631,31 +2017,6 @@ var RecordModal = class extends import_obsidian5.Modal {
       });
       if (initiallyOpen) open();
     };
-    optional("task", "\u5173\u8054\u5F85\u529E", "link", (host) => {
-      const taskSel = host.createEl("select", { attr: { "aria-label": "\u5173\u8054\u5F85\u529E" } });
-      taskSel.createEl("option", { value: "", text: "\uFF08\u4E0D\u5173\u8054\uFF09" });
-      const candidates = this.plugin.tasks.forDate(this.rec.date).filter((t) => !this.plugin.tasks.children(t.id).length);
-      const inbox = this.plugin.tasks.inbox();
-      const seen = /* @__PURE__ */ new Set();
-      for (const t of [...candidates, ...inbox]) {
-        if (seen.has(t.id)) continue;
-        seen.add(t.id);
-        taskSel.createEl("option", { value: t.id, text: this.plugin.tasks.pathOf(t).map((p) => p.title).join(" / ") });
-      }
-      if (this.rec.task && !seen.has(this.rec.task)) {
-        const t = this.plugin.tasks.byId(this.rec.task);
-        taskSel.createEl("option", { value: this.rec.task, text: t ? this.plugin.tasks.pathOf(t).map((p) => p.title).join(" / ") : `\uFF08\u5DF2\u5220\u9664\u7684\u4EFB\u52A1 ${this.rec.task.slice(0, 8)}\uFF09` });
-      }
-      taskSel.value = this.rec.task || "";
-      taskSel.addEventListener("change", () => {
-        this.rec.task = taskSel.value || void 0;
-        const t = taskSel.value ? this.plugin.tasks.byId(taskSel.value) : null;
-        if (t && !this.rec.title) {
-          this.rec.title = t.title;
-          titleInput.value = t.title;
-        }
-      });
-    }, !!this.rec.task);
     optional("notes", "\u5907\u6CE8", "sticky-note", (host) => {
       const notes = host.createEl("textarea", { attr: { rows: "2", placeholder: "\u8865\u4E00\u53E5\u4E0A\u4E0B\u6587", "aria-label": "\u5907\u6CE8" } });
       notes.value = this.rec.notes || "";
@@ -1667,9 +2028,8 @@ var RecordModal = class extends import_obsidian5.Modal {
       del.addEventListener("click", (e) => {
         stopAll(e);
         new ConfirmModal(this.app, "\u5220\u9664\u8FD9\u6761\u8BB0\u5F55\uFF1F", `${this.rec.start} ${this.rec.category} \xB7 ${this.rec.title}`, async () => {
-          await this.plugin.journal.remove(this.opts.date, this.opts.line);
           this.close();
-          this.opts.onSaved?.();
+          await deleteRecord(this.plugin, this.opts.date, { rec: this.opts.rec, line: this.opts.line }, () => this.opts.onSaved?.());
         }, "\u5220\u9664").open();
       });
     }
@@ -1688,6 +2048,16 @@ var RecordModal = class extends import_obsidian5.Modal {
       }
     };
     if (this.parsed === null && titleInput.value) applyParse();
+  }
+  /** 切到「待做」：带着已填的内容换成任务表单 */
+  switchToTask() {
+    const s = this.plugin.settings;
+    const title = (this.parsed ? this.parsed.title : this.rec.title).trim();
+    const category = categoryOf(s, this.rec.category).kind === "time" ? this.rec.category : this.lastTimeCat || "";
+    const start = this.parsed?.start || this.opts.defaults?.start || "";
+    const estimate = this.rec.minutes > 0 ? this.rec.minutes : 0;
+    this.close();
+    new TaskModal(this.app, this.plugin, { defaults: { title, category, date: this.rec.date, start, estimate }, onSaved: () => this.opts.onSaved?.() }).open();
   }
   async save() {
     if (this.saving) return;
@@ -1712,10 +2082,13 @@ var RecordModal = class extends import_obsidian5.Modal {
     }
     this.saving = true;
     try {
-      if (this.editing && this.opts.line !== void 0) await this.plugin.journal.update(this.opts.date, this.opts.line, r);
-      else await this.plugin.journal.add(r);
+      let saved = r;
+      if (this.editing && this.opts.line !== void 0) {
+        await this.plugin.journal.update(this.opts.date, this.opts.line, r);
+        if (this.opts.rec) await syncLinkedTask(this.plugin, this.opts.rec, r);
+      } else saved = await addRecordAsDone(this.plugin, r);
       this.close();
-      this.opts.onSaved?.({ ...r, extra: { ...r.extra } });
+      this.opts.onSaved?.({ ...saved, extra: { ...saved.extra } });
     } catch (e) {
       formError(this.contentEl, `\u65E0\u6CD5\u4FDD\u5B58\uFF1A${e.message}`);
     } finally {
@@ -1723,7 +2096,7 @@ var RecordModal = class extends import_obsidian5.Modal {
     }
   }
 };
-var TaskModal = class extends import_obsidian5.Modal {
+var TaskModal = class extends import_obsidian6.Modal {
   constructor(app, plugin, opts) {
     super(app);
     this.plugin = plugin;
@@ -1756,10 +2129,11 @@ var TaskModal = class extends import_obsidian5.Modal {
     const cat = categoryOf(s, this.t.category);
     this.modalEl.style.setProperty("--chip", cat.color);
     titleEl.empty();
-    titleEl.createSpan({ text: this.editing ? "\u7F16\u8F91\u4EFB\u52A1" : parent ? "\u65B0\u5EFA\u5B50\u4EFB\u52A1" : "\u65B0\u5EFA\u4EFB\u52A1" });
+    titleEl.createSpan({ text: this.editing ? "\u7F16\u8F91\u4EFB\u52A1" : parent ? "\u65B0\u5EFA\u5B50\u4EFB\u52A1" : "\u65B0\u5EFA" });
     if (parent) titleEl.createSpan({ cls: "lubi-modal-ctx", text: this.plugin.tasks.pathOf(parent).map((p) => p.title).join(" / ") });
     titleEl.createSpan({ cls: "lubi-dirty", text: "\u25CF \u672A\u4FDD\u5B58", attr: { "aria-live": "polite" } });
     this.syncDirty();
+    if (!this.editing && !parent) kindSwitch(contentEl, this.plugin, "todo", (kind) => this.switchToRecord(kind));
     const cats = contentEl.createDiv({ cls: "lubi-cat-picker" });
     for (const c of s.categories.filter((c2) => c2.kind === "time")) {
       const b = cats.createEl("button", { cls: "lubi-cat-option", attr: { "aria-pressed": String(c.name === this.t.category) } });
@@ -1946,7 +2320,7 @@ var TaskModal = class extends import_obsidian5.Modal {
       const blocked = row.createEl("button", { cls: "lubi-quick-chip lubi-quick-chip-warn lubi-switch", attr: { type: "button", "aria-pressed": String(this.t.blocked) } });
       blocked.createSpan({ cls: "lubi-switch-track", attr: { "aria-hidden": "true" } }).createSpan({ cls: "lubi-switch-thumb" });
       blocked.createSpan({ text: "\u53D7\u963B" });
-      blocked.title = "\u88AB\u5916\u90E8\u56E0\u7D20\u5361\u4F4F\uFF0C\u5217\u8868\u91CC\u4F1A\u663E\u793A\u63D0\u793A";
+      tip(blocked, "\u53D7\u963B\uFF1A\u88AB\u5916\u90E8\u56E0\u7D20\u5361\u4F4F\uFF0C\u5217\u8868\u91CC\u4F1A\u663E\u793A\u63D0\u793A");
       blocked.addEventListener("click", (e) => {
         stopAll(e);
         this.t.blocked = !this.t.blocked;
@@ -1962,15 +2336,14 @@ var TaskModal = class extends import_obsidian5.Modal {
     }, () => this.t.notes = "", !!this.t.notes);
     const actions = contentEl.createDiv({ cls: "lubi-modal-actions" });
     if (this.editing) {
-      const kids = this.plugin.tasks.descendants(this.t.id).length;
       const del = actions.createEl("button", { cls: "lubi-text-btn lubi-text-btn-danger lubi-push-left", text: "\u5220\u9664" });
       del.addEventListener("click", (e) => {
         stopAll(e);
-        new ConfirmModal(this.app, "\u5220\u9664\u4EFB\u52A1\uFF1F", kids ? `\u4F1A\u8FDE\u540C ${kids} \u4E2A\u5B50\u4EFB\u52A1\u4E00\u8D77\u5220\u9664\u3002` : this.t.title, async () => {
-          await this.plugin.tasks.remove(this.t.id);
+        const original = this.plugin.tasks.byId(this.t.id) || this.t;
+        new DeleteTaskModal(this.app, this.plugin, original, () => {
           this.close();
           this.opts.onSaved?.(this.t);
-        }, "\u5220\u9664").open();
+        }).open();
       });
     }
     button(actions, "\u53D6\u6D88", () => this.close(), { cls: "lubi-btn-ghost" });
@@ -1982,6 +2355,15 @@ var TaskModal = class extends import_obsidian5.Modal {
         void this.save();
       }
     };
+  }
+  /** 切到「已完成 / 支出」：带着已填的内容换成记录表单 */
+  switchToRecord(kind) {
+    const s = this.plugin.settings;
+    const money = s.categories.find((c) => c.kind === "money")?.name;
+    const date = this.t.date || todayStr();
+    const defaults = kind === "money" && money ? { title: this.t.title, category: money, minutes: 0 } : { title: this.t.title, category: this.t.category || void 0, start: this.t.start || void 0, minutes: this.t.estimate || 30 };
+    this.close();
+    new RecordModal(this.app, this.plugin, { date, defaults, onSaved: () => this.opts.onSaved?.(this.t) }).open();
   }
   async save() {
     if (this.saving) return;
@@ -1999,11 +2381,26 @@ var TaskModal = class extends import_obsidian5.Modal {
     }
     if (this.t.status === "done" && !this.t.doneAt) this.t.doneAt = (/* @__PURE__ */ new Date()).toISOString();
     if (this.t.status !== "done") this.t.doneAt = "";
+    const before = this.editing ? this.plugin.tasks.byId(this.t.id) : void 0;
+    const wasDone = !!before && before.repeat.kind === "none" && before.status === "done";
+    const becomesDone = this.t.repeat.kind === "none" && this.t.status === "done" && !wasDone;
+    const becomesUndone = wasDone && !(this.t.repeat.kind === "none" && this.t.status === "done");
+    if (becomesDone && !this.t.date) this.t.date = todayStr();
+    const undoneDate = before?.date || "";
     this.saving = true;
     try {
       const saved = await this.plugin.tasks.upsert(this.t);
       this.close();
       this.opts.onSaved?.(saved);
+      const refresh = () => this.opts.onSaved?.(saved);
+      if (becomesDone) {
+        const date = saved.date || todayStr();
+        await afterDone(this.plugin, saved, date, void 0, refresh);
+        refresh();
+      } else if (becomesUndone && undoneDate) {
+        await afterUndone(this.plugin, saved.id, undoneDate, refresh);
+        refresh();
+      }
     } catch (e) {
       formError(this.contentEl, `\u65E0\u6CD5\u4FDD\u5B58\uFF1A${e.message}`);
     } finally {
@@ -2011,138 +2408,6 @@ var TaskModal = class extends import_obsidian5.Modal {
     }
   }
 };
-
-// src/ui/taskList.ts
-var import_obsidian6 = require("obsidian");
-function dayTasks(plugin, date) {
-  return plugin.tasks.forDate(date).filter((t) => !plugin.tasks.children(t.id).length);
-}
-function groupedRows(plugin, list, items, edit, row) {
-  const groups = /* @__PURE__ */ new Map();
-  for (const task of items) {
-    const parents = plugin.tasks.pathOf(task).slice(0, -1);
-    const key = parents.map((p) => p.id).join("/") || "__root__";
-    if (!groups.has(key)) groups.set(key, { parent: parents[parents.length - 1], title: parents.map((p) => p.title).join(" / "), tasks: [] });
-    groups.get(key).tasks.push(task);
-  }
-  for (const group of groups.values()) {
-    const section = list.createDiv({ cls: "lubi-task-group" });
-    if (group.parent) {
-      const path = button(section, group.title, () => edit(group.parent), { cls: "lubi-task-group-title" });
-      path.title = `\u7F16\u8F91\u7236\u4EFB\u52A1\uFF1A${group.title}`;
-      path.setAttribute("aria-label", `\u7F16\u8F91\u7236\u4EFB\u52A1\uFF1A${group.title}`);
-    } else if (groups.size > 1) section.createDiv({ cls: "lubi-task-group-title lubi-muted", text: "\u72EC\u7ACB\u4EFB\u52A1" });
-    for (const task of group.tasks) row(section, task);
-  }
-}
-function renderDayTaskList(plugin, list, date, rerender, openNew, edit, decorate) {
-  const items = dayTasks(plugin, date);
-  groupedRows(plugin, list, items, edit, (group, t) => {
-    const li = taskRow(plugin, group, t, date, rerender, openNew, () => edit(t));
-    decorate?.(li, t);
-  });
-  return items;
-}
-var sameRecord = (r, taskId, log) => r.task === taskId && r.start === log.start && r.title === log.title && r.category === log.category;
-async function afterDone(plugin, t, date, openNew) {
-  if (!plugin.settings.promptLogOnComplete) return;
-  const rows = await plugin.journal.read(date);
-  if (rows.some((r) => r.rec.task === t.id)) return;
-  const prevEnd = plugin.lastEndOf(date, date === todayStr() ? hmToMin(nowHM()) : void 0);
-  openNew(
-    { title: t.title, category: t.category || void 0, task: t.id, minutes: t.estimate || 30, start: t.start || prevEnd || void 0 },
-    async (rec) => {
-      const latest = plugin.tasks.byId(t.id);
-      if (!latest || !plugin.tasks.isDoneOn(latest, date)) return;
-      await plugin.tasks.setDoneLog(t.id, date, { date: rec.date, start: rec.start, title: rec.title, category: rec.category });
-    }
-  );
-}
-async function afterUndone(plugin, id, date, rerender) {
-  const t = plugin.tasks.byId(id);
-  const log = t?.doneLogs?.[date];
-  if (!t || !log) return;
-  await plugin.tasks.setDoneLog(id, date, null);
-  const rows = await plugin.journal.read(log.date);
-  const hit = rows.find((r) => sameRecord(r.rec, id, log));
-  if (!hit) {
-    new import_obsidian6.Notice("\u52FE\u9009\u65F6\u8BB0\u4E0B\u7684\u90A3\u6761\u8BB0\u5F55\u5DF2\u88AB\u4FEE\u6539\u6216\u5220\u9664\uFF0C\u65F6\u95F4\u7EBF\u672A\u4F5C\u6539\u52A8");
-    return;
-  }
-  await plugin.journal.remove(log.date, hit.line);
-  const removed = hit.rec;
-  undoNotice(`\u5DF2\u53D6\u6D88\u5B8C\u6210\uFF0C\u5E76\u4ECE\u65F6\u95F4\u7EBF\u79FB\u9664\u300C${removed.title}\u300D`, async () => {
-    const cur = plugin.tasks.byId(id);
-    if (!cur) {
-      new import_obsidian6.Notice("\u4EFB\u52A1\u5DF2\u5220\u9664\uFF0C\u65E0\u6CD5\u64A4\u9500");
-      return;
-    }
-    await plugin.journal.add({ ...removed, extra: { ...removed.extra } });
-    if (!plugin.tasks.isDoneOn(cur, date)) await plugin.tasks.toggleDone(id, date);
-    await plugin.tasks.setDoneLog(id, date, log);
-    rerender();
-  });
-}
-function taskRow(plugin, ul, t, date, rerender, openNew, onClick) {
-  const done = plugin.tasks.isDoneOn(t, date);
-  const li = ul.createDiv({ cls: `lubi-task ${done ? "is-done" : ""} ${t.blocked ? "is-blocked" : ""}`.trim() });
-  const cb = li.createEl("input", { type: "checkbox" });
-  cb.checked = done;
-  cb.setAttribute("aria-label", `${done ? "\u53D6\u6D88\u5B8C\u6210" : "\u5B8C\u6210"} ${t.title}\uFF08${date}\uFF09`);
-  cb.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    if (cb.dataset.busy) {
-      e.preventDefault();
-      return;
-    }
-    cb.dataset.busy = "1";
-    try {
-      const nowDone = await plugin.tasks.toggleDone(t.id, date);
-      if (nowDone) await afterDone(plugin, t, date, openNew);
-      else await afterUndone(plugin, t.id, date, rerender);
-    } catch (error) {
-      new import_obsidian6.Notice(`\u4EFB\u52A1\u66F4\u65B0\u5931\u8D25\uFF1A${error.message}`, 6e3);
-    } finally {
-      delete cb.dataset.busy;
-    }
-    rerender();
-  });
-  const body = li.createDiv({ cls: "lubi-task-body" });
-  const line = onClick ? body.createEl("button", { cls: "lubi-task-title lubi-task-title-button", attr: { type: "button", "aria-label": `\u7F16\u8F91 ${t.title}` } }) : body.createDiv({ cls: "lubi-task-title" });
-  if (onClick) line.addEventListener("click", (e) => {
-    e.stopPropagation();
-    onClick();
-  });
-  if (t.category) catDot(line, categoryOf(plugin.settings, t.category));
-  line.createSpan({ cls: "lubi-task-title-text", text: t.title });
-  if (t.blocked) icon(line, "octagon-alert", "lubi-icon lubi-blocked-icon").title = "\u53D7\u963B";
-  const parents = plugin.tasks.pathOf(t).slice(0, -1);
-  const meta = [];
-  if (parents.length) meta.push(parents.map((p) => p.title).join(" / "));
-  if (t.start) meta.push(t.start);
-  if (t.estimate) meta.push(fmtDuration(t.estimate));
-  if (t.repeat.kind !== "none") meta.push("\u91CD\u590D");
-  if (meta.length) {
-    const text = meta.join(" \xB7 ");
-    const detail = body.createDiv({ cls: "lubi-task-meta", text });
-    detail.title = text;
-  }
-  if (!done) {
-    const acts = li.createDiv({ cls: "lubi-task-actions" });
-    iconButton(acts, "play", `\u5F00\u59CB\u300C${t.title}\u300D\uFF1A\u9884\u586B\u8BB0\u4E00\u6761`, () => openNew({
-      title: t.title,
-      category: t.category || void 0,
-      task: t.id,
-      start: date === todayStr() ? nowHM() : t.start || void 0,
-      minutes: t.estimate || 30
-    }), "lubi-task-start");
-  }
-  if (onClick) li.addEventListener("click", (e) => {
-    if (e.target.closest("button, input")) return;
-    onClick();
-  });
-  return li;
-}
 
 // src/ui/today.ts
 var HOUR_PX = 56;
@@ -2161,26 +2426,27 @@ async function renderToday(plugin, host, date, rerender) {
     rerender();
   } }).open();
   const openEdit = (row) => new RecordModal(plugin.app, plugin, { date, rec: row.rec, line: row.line, onSaved: rerender }).open();
-  const left = host.createDiv({ cls: "lubi-today-main" });
-  if (!plugin.settings.onboardingDone && plugin.journal.dates().length === 0) renderOnboarding(plugin, left, () => openNew());
-  const tlHead = left.createDiv({ cls: "lubi-panel-head" });
+  const top = host.createDiv({ cls: "lubi-today-top" });
+  if (!plugin.settings.onboardingDone && plugin.journal.dates().length === 0) renderOnboarding(plugin, top, () => openNew());
+  const tlHead = top.createDiv({ cls: "lubi-panel-head" });
   el(tlHead, "h3", "lubi-panel-title", "\u65F6\u95F4\u8F74");
   el(tlHead, "span", "lubi-muted lubi-tl-stats", timed.length ? `\u8BB0\u5F55 ${fmtHours(stats.recordedMinutes)} \xB7 \u8986\u76D6 ${fmtHours(stats.coveredMinutes)} \xB7 \u7A7A\u767D ${fmtHours(stats.emptyMinutes)}` : "\u8FD8\u6CA1\u6709\u8BB0\u5F55");
   if (stats.overlapMinutes) {
     const badge = tlHead.createSpan({ cls: "lubi-badge lubi-badge-overlap lubi-data-overlap", attr: { tabindex: "0", role: "note" } });
     icon(badge, "layers", "lubi-icon");
     badge.createSpan({ text: `\u5E76\u884C ${fmtDuration(stats.overlapMinutes)}` });
-    badge.title = `\u5E76\u884C\u8BB0\u5F55 ${fmtDuration(stats.overlapMinutes)}\uFF1A\u8BB0\u5F55\u65F6\u957F\u53EF\u80FD\u5927\u4E8E\u5B9E\u9645\u8986\u76D6\u65F6\u95F4\u3002\u91CD\u53E0\u7684\u5757\u4F1A\u5E76\u6392\u663E\u793A\u5E76\u5E26\u659C\u7EBF\u6807\u8BB0\u3002`;
+    tip(badge, `\u5E76\u884C\u8BB0\u5F55 ${fmtDuration(stats.overlapMinutes)}\uFF1A\u8BB0\u5F55\u65F6\u957F\u53EF\u80FD\u5927\u4E8E\u5B9E\u9645\u8986\u76D6\u65F6\u95F4\u3002\u91CD\u53E0\u7684\u5757\u4F1A\u5E76\u6392\u663E\u793A\u5E76\u5E26\u659C\u7EBF\u6807\u8BB0\u3002`);
   }
   const hint = tlHead.createSpan({ cls: "lubi-muted lubi-tl-hint" });
   icon(hint, "move-vertical", "lubi-icon");
   hint.createSpan({ text: "\u62D6\u52A8\u79FB\u52A8 \xB7 \u62C9\u8FB9\u7F18\u6539\u65F6\u957F \xB7 \u7A7A\u767D\u5904\u62D6\u51FA\u65B0\u8BB0\u5F55" });
   if (invalidRows.length) {
-    const warning = left.createDiv({ cls: "lubi-data-warning", attr: { role: "status" } });
+    const warning = top.createDiv({ cls: "lubi-data-warning", attr: { role: "status" } });
     warning.createDiv({ text: `${invalidRows.length} \u6761\u8BB0\u5F55\u8DE8\u51FA\u5F53\u5929\u3002\u8986\u76D6\u65F6\u95F4\u53EA\u6309\u5F53\u5929\u8BA1\u7B97\uFF0C\u8BF7\u6838\u5BF9\u539F\u8BB0\u5F55\u3002` });
     const links = warning.createDiv({ cls: "lubi-data-warning-links" });
     for (const row of invalidRows) button(links, `${row.rec.start} \xB7 ${row.rec.title}\uFF08${fmtHours(row.rec.minutes)}\uFF09`, () => openEdit(row), { cls: "lubi-btn-sm" });
   }
+  const left = host.createDiv({ cls: "lubi-today-main" });
   const tlWrap = left.createDiv({ cls: "lubi-timeline-wrap" });
   const scroller = tlWrap.createDiv({ cls: "lubi-timeline-scroll" });
   const tl = scroller.createDiv({ cls: `lubi-timeline ${money.length ? "has-rail" : ""}`.trim(), attr: { tabindex: "0" } });
@@ -2231,6 +2497,7 @@ async function renderToday(plugin, host, date, rerender) {
     const next = { ...old, start: minToHM(start), minutes, extra: { ...old.extra } };
     try {
       await plugin.journal.update(date, row.line, next);
+      await syncLinkedTask(plugin, old, next);
     } catch (e) {
       new import_obsidian7.Notice(e.message, 6e3);
       rerender();
@@ -2240,6 +2507,7 @@ async function renderToday(plugin, host, date, rerender) {
       const line = await plugin.journal.findLine(date, next);
       if (line === null) return;
       await plugin.journal.update(date, line, old);
+      await syncLinkedTask(plugin, next, old);
       rerender();
     });
     rerender();
@@ -2256,10 +2524,10 @@ async function renderToday(plugin, host, date, rerender) {
     const cat = categoryOf(plugin.settings, r.category);
     const block = canvas.createDiv({ cls: "lubi-block" });
     const startMin = hmToMin(r.start);
-    const top = startMin * PX_PER_MIN;
+    const top2 = startMin * PX_PER_MIN;
     const invalid = invalidTimedSpan(r);
     const height = Math.max(Math.min(r.minutes, 1440 - startMin) * PX_PER_MIN, 18);
-    block.style.top = `${top}px`;
+    block.style.top = `${top2}px`;
     block.style.height = `${height - 2}px`;
     block.style.left = `calc(${lane / n * 100}% + ${lane ? 2 : 0}px)`;
     block.style.width = `calc(${100 / n}% - ${lane ? 2 : 0}px)`;
@@ -2269,7 +2537,6 @@ async function renderToday(plugin, host, date, rerender) {
     block.toggleClass("is-parallel", n > 1);
     block.setAttribute("tabindex", "0");
     block.setAttribute("role", "button");
-    block.setAttribute("aria-label", `${r.category} ${r.title}\uFF0C${r.start}\uFF0C${fmtDuration(r.minutes)}${invalid ? "\uFF0C\u9700\u6821\u5BF9\u8DE8\u51FA\u5F53\u5929\u7684\u65F6\u957F" : ""}\u3002\u6309\u56DE\u8F66\u7F16\u8F91\u3002`);
     block.addEventListener("focus", () => select(row, block));
     if (height < 30) block.addClass("lubi-block-compact");
     if (height >= 40) block.addClass("has-meta");
@@ -2282,29 +2549,21 @@ async function renderToday(plugin, host, date, rerender) {
     const durEl = head.createSpan({ cls: "lubi-block-dur", text: fmtDuration(r.minutes) });
     const meta = block.createDiv({ cls: "lubi-block-meta" });
     const timeEl = meta.createSpan({ cls: "lubi-block-time", text: invalid ? `${r.start} \xB7 \u9700\u6821\u5BF9` : `${r.start}\u2013${minToHM(startMin + r.minutes)}` });
-    const subParts = [r.task ? "\u5173\u8054\u4EFB\u52A1" : "", r.notes || ""].filter(Boolean);
+    const subParts = [r.task && plugin.tasks.byId(r.task) ? "\u5173\u8054\u4EFB\u52A1" : "", r.notes || ""].filter(Boolean);
     if (subParts.length) meta.createSpan({ cls: "lubi-block-sub", text: subParts.join(" \xB7 ") });
-    block.title = `${invalid ? `${r.start} \xB7 \u65F6\u957F\u8DE8\u51FA\u5F53\u5929\uFF0C\u70B9\u51FB\u6821\u5BF9` : `${r.start}\u2013${minToHM(startMin + r.minutes)}`} ${r.category} \xB7 ${r.title}${r.notes ? "\n" + r.notes : ""}
-${invalid ? "\u5148\u6821\u5BF9\u8BB0\u5F55" : "\u62D6\u52A8\u79FB\u52A8 \xB7 \u62C9\u8FB9\u7F18\u6539\u65F6\u957F \xB7 Enter \u7F16\u8F91"}`;
+    tip(block, `${invalid ? `${r.start} \xB7 \u65F6\u957F\u8DE8\u51FA\u5F53\u5929\uFF0C\u9700\u6821\u5BF9` : `${r.start}\u2013${minToHM(startMin + r.minutes)}`} ${r.category} \xB7 ${r.title}\uFF0C${fmtDuration(r.minutes)}${r.notes ? `\uFF08${r.notes}\uFF09` : ""}\u3002${invalid ? "\u70B9\u51FB\u6216\u56DE\u8F66\u6821\u5BF9" : "\u62D6\u52A8\u79FB\u52A8 \xB7 \u62C9\u8FB9\u7F18\u6539\u65F6\u957F \xB7 \u56DE\u8F66\u7F16\u8F91"}`);
     const acts = block.createDiv({ cls: "lubi-block-actions" });
     iconButton(acts, "pencil", "\u7F16\u8F91", () => openEdit(row));
     iconButton(acts, "copy", "\u590D\u5236\u5230\u660E\u5929", async () => {
-      const copy = { ...r, date: plugin.shiftDate(date, 1), extra: { ...r.extra } };
+      const copy = { ...r, date: plugin.shiftDate(date, 1), task: void 0, extra: { ...r.extra } };
       try {
-        await plugin.journal.add(copy);
+        await addRecordAsDone(plugin, copy);
         new import_obsidian7.Notice(`\u5DF2\u590D\u5236\u5230 ${copy.date}`);
       } catch (e) {
         new import_obsidian7.Notice(e.message);
       }
     });
-    iconButton(acts, "trash-2", "\u5220\u9664", async () => {
-      await plugin.journal.remove(date, row.line);
-      undoNotice(`\u5DF2\u5220\u9664 ${r.title}`, async () => {
-        await plugin.journal.add({ ...r, extra: { ...r.extra } });
-        rerender();
-      });
-      rerender();
-    });
+    iconButton(acts, "trash-2", "\u5220\u9664", () => void deleteRecord(plugin, date, row, rerender));
     const live = (s) => {
       block.style.top = `${s.start * PX_PER_MIN}px`;
       block.style.height = `${Math.max(s.minutes * PX_PER_MIN, 18) - 2}px`;
@@ -2431,14 +2690,7 @@ ${invalid ? "\u5148\u6821\u5BF9\u8BB0\u5F55" : "\u62D6\u52A8\u79FB\u52A8 \xB7 \u
       openEdit(selected.row);
     } else if (e.key === "Delete" || e.key === "Backspace") {
       e.preventDefault();
-      const row = selected.row;
-      void plugin.journal.remove(date, row.line).then(() => {
-        undoNotice(`\u5DF2\u5220\u9664 ${row.rec.title}`, async () => {
-          await plugin.journal.add({ ...row.rec, extra: { ...row.rec.extra } });
-          rerender();
-        });
-        rerender();
-      });
+      void deleteRecord(plugin, date, selected.row, rerender);
     } else if (e.key === "Escape") {
       selected.el.removeClass("is-selected");
       selected = null;
@@ -2455,7 +2707,6 @@ ${invalid ? "\u5148\u6821\u5BF9\u8BB0\u5F55" : "\u62D6\u52A8\u79FB\u52A8 \xB7 \u
       icon(pin, cat.icon, "lubi-icon");
       pin.createSpan({ cls: "lubi-pin-title", text: r.title });
       if (r.amount !== void 0) pin.createSpan({ cls: "lubi-pin-amt", text: `\xA5${r.amount}` });
-      pin.title = `${r.start} ${r.category} \xB7 ${r.title}`;
       pin.addEventListener("click", (e) => {
         stopAll(e);
         openEdit(row);
@@ -2470,9 +2721,9 @@ ${invalid ? "\u5148\u6821\u5BF9\u8BB0\u5F55" : "\u62D6\u52A8\u79FB\u52A8 \xB7 \u
   const moreDown = tlWrap.createEl("button", { cls: "lubi-tl-more is-down", attr: { type: "button" } });
   const spans = timed.map((row) => ({ start: hmToMin(row.rec.start), end: Math.min(1440, hmToMin(row.rec.start) + row.rec.minutes) }));
   const scrollToMin = (m) => {
-    const top = Math.max(0, m * PX_PER_MIN - 24);
-    if (typeof scroller.scrollTo === "function") scroller.scrollTo({ top, behavior: "smooth" });
-    else scroller.scrollTop = top;
+    const top2 = Math.max(0, m * PX_PER_MIN - 24);
+    if (typeof scroller.scrollTo === "function") scroller.scrollTo({ top: top2, behavior: "smooth" });
+    else scroller.scrollTop = top2;
   };
   const updateMore = () => {
     const h = scroller.clientHeight;
@@ -2494,7 +2745,6 @@ ${invalid ? "\u5148\u6821\u5BF9\u8BB0\u5F55" : "\u62D6\u52A8\u79FB\u52A8 \xB7 \u
   });
   const side = host.createDiv({ cls: "lubi-today-side" });
   renderSummary(plugin, side, rows.map((r) => r.rec), date);
-  await renderTodayTasks(plugin, side, date, rerender, openNew);
 }
 function blackHoles(recs, date, minGap = 30) {
   const today = todayStr();
@@ -2581,21 +2831,6 @@ function renderSummary(plugin, side, recs, date) {
     row.createSpan({ cls: "lubi-kv-val", text: `\xA5${sum2.toFixed(2)} \xB7 ${spend.length} \u7B14` });
   }
 }
-async function renderTodayTasks(plugin, side, date, rerender, openNew) {
-  const tasks = dayTasks(plugin, date);
-  const card = side.createDiv({ cls: "lubi-card lubi-day-tasks" });
-  const head = card.createDiv({ cls: "lubi-panel-head" });
-  el(head, "h3", "lubi-panel-title", date === todayStr() ? "\u4ECA\u65E5\u5F85\u529E" : `${shortDate(date)} \u5F85\u529E`);
-  const done = tasks.filter((t) => plugin.tasks.isDoneOn(t, date)).length;
-  if (tasks.length) head.createSpan({ cls: "lubi-muted", text: `${done}/${tasks.length}` });
-  iconButton(head, "list-todo", "\u5728\u4EFB\u52A1\u9875\u5B89\u6392", () => plugin.openDate(date, "tasks"), "lubi-push-right");
-  if (!tasks.length) {
-    card.createDiv({ cls: "lubi-muted", text: "\u8FD9\u5929\u6CA1\u6709\u5B89\u6392\u4EFB\u52A1\u3002\u65B0\u5EFA\u548C\u6392\u671F\u8BF7\u5230\u300C\u4EFB\u52A1\u300D\u9875\u3002" });
-    return;
-  }
-  const list = card.createDiv({ cls: "lubi-task-list lubi-task-list-compact" });
-  renderDayTaskList(plugin, list, date, rerender, openNew, (t) => new TaskModal(plugin.app, plugin, { task: t, onSaved: rerender }).open());
-}
 function renderOnboarding(plugin, host, onAdd) {
   const box = host.createDiv({ cls: "lubi-onboard" });
   const head = box.createDiv({ cls: "lubi-panel-head" });
@@ -2615,7 +2850,7 @@ function renderOnboarding(plugin, host, onAdd) {
   };
   step2("1", "\u505A\u5B8C\u4E00\u4EF6\u4E8B\u5C31\u8BB0\u4E00\u6761", "\u5199\u505A\u4E86\u4EC0\u4E48\u3001\u4ECE\u51E0\u70B9\u5F00\u59CB\u3001\u7528\u4E86\u591A\u4E45\u3002\u65F6\u95F4\u8F74\u4E0A\u7559\u767D\u7684\u5730\u65B9\uFF0C\u5C31\u662F\u65F6\u95F4\u9ED1\u6D1E\u3002");
   step2("2", "\u56DE\u987E\u9875\u770B\u65F6\u95F4\u53BB\u5411", "\u6309\u5468 / \u6708\u6C47\u603B\u6BCF\u4E2A\u5206\u7C7B\u7684\u5C0F\u65F6\u6570\uFF0C\u8FD9\u662F\u67F3\u6BD4\u6B47\u592B\u6CD5\u7684\u6838\u5FC3\uFF1A\u6708\u672B\u7B97\u8D26\u3002");
-  step2("3", "\u4EFB\u52A1\u9875\u5B89\u6392\u660E\u5929", "\u628A\u5F85\u529E\u62D6\u5230\u65E5\u7A0B\u8868\u4E0A\uFF1B\u52FE\u6389\u4E00\u4E2A\u4EFB\u52A1\u65F6\u4F1A\u987A\u624B\u8BA9\u4F60\u8BB0\u4E0B\u5B9E\u9645\u7528\u65F6\u3002");
+  step2("3", "\u4EFB\u52A1\u9875\u5B89\u6392\u660E\u5929", "\u628A\u5F85\u529E\u62D6\u5230\u65E5\u7A0B\u8868\u4E0A\uFF1B\u52FE\u6389\u4E00\u4E2A\u4EFB\u52A1\uFF0C\u65F6\u95F4\u8F74\u4E0A\u5C31\u81EA\u52A8\u8BB0\u4E0B\u8FD9\u6BB5\u65F6\u95F4\u3002");
   button(box, "\u8BB0\u7B2C\u4E00\u6761", onAdd, { primary: true, icon: "plus" });
 }
 
@@ -2756,7 +2991,8 @@ async function renderReview(plugin, host, state, setState) {
     const bt = bucketTotals[i];
     const isFuture = b.dates[0] > today;
     const stats = bucketStats[i];
-    const col = bars.createEl("button", { cls: `lubi-bar-col ${b.dates.includes(today) ? "is-today" : ""} ${isFuture ? "is-future" : ""} ${bt ? "" : "is-empty"}`.trim(), attr: { type: "button", "aria-label": `${b.label}\uFF0C\u8BB0\u5F55 ${fmtHours(bt)}\uFF0C\u8986\u76D6 ${fmtHours(stats.covered)}${stats.invalid ? "\uFF0C\u5B58\u5728\u5F85\u6821\u5BF9\u8BB0\u5F55" : stats.overlap ? `\uFF0C\u5E76\u884C ${fmtDuration(stats.overlap)}` : ""}\u3002\u6309\u56DE\u8F66\u67E5\u770B` } });
+    const col = bars.createEl("button", { cls: `lubi-bar-col ${b.dates.includes(today) ? "is-today" : ""} ${isFuture ? "is-future" : ""} ${bt ? "" : "is-empty"}`.trim(), attr: { type: "button" } });
+    col.createSpan({ cls: "lubi-sr-only", text: `${b.label}\uFF0C\u8BB0\u5F55 ${fmtHours(bt)}\uFF0C\u8986\u76D6 ${fmtHours(stats.covered)}${stats.invalid ? "\uFF0C\u5B58\u5728\u5F85\u6821\u5BF9\u8BB0\u5F55" : stats.overlap ? `\uFF0C\u5E76\u884C ${fmtDuration(stats.overlap)}` : ""}\u3002\u6309\u56DE\u8F66\u67E5\u770B` });
     col.dataset.idx = String(i);
     const stack = col.createDiv({ cls: "lubi-bar-stack" });
     const over = bt > cap + 1;
@@ -2956,7 +3192,7 @@ function renderHeatmap(plugin, host, from, to, dailyStats) {
     if (d === today) cell.addClass("is-today");
     if (d > today) cell.addClass("is-future");
     cell.dataset.date = d;
-    cell.title = `${d} \u5468${weekdayZh(d)} \xB7 ${st ? `\u8986\u76D6 ${Math.round(ratio * 100)}%` : "\u6CA1\u6709\u8BB0\u5F55"}${st?.invalidCount ? " \xB7 \u5F85\u6821\u5BF9" : ""}`;
+    tip(cell, `${d} \u5468${weekdayZh(d)} \xB7 ${st ? `\u8986\u76D6 ${Math.round(ratio * 100)}%` : "\u6CA1\u6709\u8BB0\u5F55"}${st?.invalidCount ? " \xB7 \u5F85\u6821\u5BF9" : ""}`);
   });
   grid.addEventListener("click", (e) => {
     const d = e.target.closest(".lubi-heat-cell")?.dataset.date;
@@ -3210,8 +3446,10 @@ function renderWeek(plugin, host, date, state, rerender, edit) {
   const grid = card.createDiv({ cls: "lubi-week" });
   const corner = grid.createDiv({ cls: "lubi-week-corner" });
   corner.setText("");
+  const heads = [];
   for (const d of days) {
     const h = grid.createDiv({ cls: `lubi-week-day ${d === todayStr() ? "is-today" : ""} ${d === date ? "is-selected" : ""}`.trim() });
+    heads.push(h);
     const dayButton = h.createEl("button", { cls: "lubi-week-day-button", attr: { type: "button", "aria-label": `\u67E5\u770B ${d} \u5468${weekdayZh(d)} \u7684\u4EFB\u52A1`, "aria-current": d === date ? "date" : "false" } });
     dayButton.createSpan({ cls: "lubi-week-dow", text: `\u5468${weekdayZh(d)}` });
     dayButton.createSpan({ cls: "lubi-week-date", text: String(Number(d.slice(8, 10))) });
@@ -3221,11 +3459,10 @@ function renderWeek(plugin, host, date, state, rerender, edit) {
     const strip = h.createDiv({ cls: "lubi-allday" });
     for (const t of allDay) {
       const doneChip = plugin.tasks.isDoneOn(t, d);
-      const chip = strip.createEl("button", { cls: `lubi-allday-chip ${doneChip ? "is-done" : ""}`, attr: { type: "button", "aria-label": `${d} \u5168\u5929\u4EFB\u52A1 ${t.title}${doneChip ? "\uFF08\u5DF2\u5B8C\u6210\uFF09" : ""}\uFF0C\u70B9\u51FB\u7F16\u8F91` } });
+      const chip = tip(strip.createEl("button", { cls: `lubi-allday-chip ${doneChip ? "is-done" : ""}`, attr: { type: "button" } }), `${d} \u5168\u5929\u4EFB\u52A1 ${t.title}${doneChip ? "\uFF08\u5DF2\u5B8C\u6210\uFF09" : ""}\uFF1A\u70B9\u51FB\u7F16\u8F91\uFF0C\u62D6\u5230\u4E0B\u65B9\u65F6\u6BB5\u53EF\u5B9A\u65F6`);
       chip.style.setProperty("--chip", categoryOf(s, t.category).color);
       if (doneChip) chip.createSpan({ cls: "lubi-allday-check", text: "\u2713 ", attr: { "aria-hidden": "true" } });
       chip.createSpan({ text: t.title });
-      chip.title = t.title + "\uFF08\u5168\u5929 \xB7 \u62D6\u5230\u4E0B\u65B9\u65F6\u6BB5\u53EF\u5B9A\u65F6\uFF09";
       chip.addEventListener("click", (e) => {
         stopAll(e);
         edit(t);
@@ -3242,11 +3479,59 @@ function renderWeek(plugin, host, date, state, rerender, edit) {
     l.style.top = `${(h - startH) * HOUR_PX2}px`;
     l.setText(`${String(h).padStart(2, "0")}:00`);
   }
+  const hoverLabel = hours.createDiv({ cls: "lubi-week-hover-label", attr: { "aria-hidden": "true" } });
+  const hovers = [];
+  let dragging = false;
+  const yOf = (m) => (m - startH * 60) / 60 * HOUR_PX2;
+  const showHover = (col, m) => {
+    hovers.forEach((h, i) => {
+      h.addClass("is-on");
+      h.toggleClass("is-current", i === col);
+      h.style.top = `${yOf(m)}px`;
+    });
+    cols.forEach((c, i) => c.toggleClass("is-hover", i === col));
+    heads.forEach((h, i) => h.toggleClass("is-hover", i === col));
+    hoverLabel.style.top = `${yOf(m)}px`;
+    hoverLabel.setText(minToHM(m));
+    hoverLabel.addClass("is-on");
+  };
+  const hideHover = () => {
+    hovers.forEach((h) => h.removeClass("is-on", "is-current"));
+    cols.forEach((c) => c.removeClass("is-hover"));
+    heads.forEach((h) => h.removeClass("is-hover"));
+    hoverLabel.removeClass("is-on");
+  };
   const cols = [];
   days.forEach((d, dayIdx) => {
     const col = body.createDiv({ cls: `lubi-week-col ${d === todayStr() ? "is-today" : ""}` });
     cols.push(col);
     col.style.height = `${(endH - startH) * HOUR_PX2}px`;
+    const colHover = col.createDiv({ cls: "lubi-tl-hover lubi-week-hover", attr: { "aria-hidden": "true" } });
+    hovers.push(colHover);
+    const minuteAtY = (clientY, round = false) => {
+      const rect = col.getBoundingClientRect();
+      const raw = (clientY - rect.top) / HOUR_PX2 * 60;
+      const m = startH * 60 + (round ? snap(raw) : Math.floor(raw / SNAP) * SNAP);
+      return Math.max(startH * 60, Math.min(endH * 60 - SNAP, m));
+    };
+    col.addEventListener("pointermove", (e) => {
+      if (dragging || e.target.closest(".lubi-wblock")) {
+        if (!dragging) hideHover();
+        return;
+      }
+      showHover(dayIdx, minuteAtY(e.clientY));
+    });
+    col.addEventListener("pointerleave", () => {
+      if (!dragging) hideHover();
+    });
+    col.addEventListener("dragover", (e) => {
+      if (!e.dataTransfer?.types.includes("text/lubi-task")) return;
+      showHover(dayIdx, minuteAtY(e.clientY, true));
+    });
+    col.addEventListener("dragleave", (e) => {
+      if (!col.contains(e.relatedTarget)) hideHover();
+    });
+    col.addEventListener("drop", () => hideHover());
     for (let h = startH; h < endH; h++) {
       const line = col.createDiv({ cls: "lubi-week-line" });
       line.style.top = `${(h - startH) * HOUR_PX2}px`;
@@ -3272,12 +3557,9 @@ function renderWeek(plugin, host, date, state, rerender, edit) {
       const timeEl = block.createDiv({ cls: "lubi-wblock-time", text: `${t.start}\u2013${minToHM(startMin + dur)}${t.estimate ? "" : " \xB7 \u672A\u586B\u9884\u8BA1"}` });
       const handleTop = block.createDiv({ cls: "lubi-block-handle is-top" });
       const handle = block.createDiv({ cls: "lubi-block-handle is-bottom" });
-      block.title = `${t.title}
-${t.start} \xB7 ${fmtDuration(dur)}
-\u62D6\u52A8\u6539\u65F6\u95F4 / \u6362\u5929\uFF1B\u70B9\u51FB\u7F16\u8F91\uFF0C\u6216\u4ECE\u8BAE\u7A0B\u91CC\u4FEE\u6539\u65E5\u671F\u65F6\u95F4`;
       block.setAttribute("tabindex", "0");
       block.setAttribute("role", "button");
-      block.setAttribute("aria-label", `${d} ${t.title}\uFF0C${t.start}\uFF0C\u9884\u8BA1 ${fmtDuration(dur)}\u3002\u56DE\u8F66\u7F16\u8F91\u3002`);
+      tip(block, `${d} ${t.title}\uFF0C${t.start}\uFF0C\u9884\u8BA1 ${fmtDuration(dur)}\u3002\u62D6\u52A8\u6539\u65F6\u95F4 / \u6362\u5929\uFF1B\u70B9\u51FB\u6216\u56DE\u8F66\u7F16\u8F91`);
       block.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -3299,14 +3581,20 @@ ${t.start} \xB7 ${fmtDuration(dur)}
             minMinutes: SNAP,
             snap: SNAP,
             horizontal: mode === "move" ? { colWidth, minCol: -dayIdx, maxCol: 6 - dayIdx } : void 0,
-            onStart: () => block.addClass("is-dragging", mode === "move" ? "is-moving" : "is-resizing"),
+            onStart: () => {
+              dragging = true;
+              block.addClass("is-dragging", mode === "move" ? "is-moving" : "is-resizing");
+            },
             onMove: (st) => {
               place(st.start, st.minutes);
               block.style.transform = st.col ? `translateX(calc(${st.col * 100}% + ${st.col * 1}px))` : "";
               timeEl.setText(`${minToHM(st.start)}\u2013${minToHM(st.start + st.minutes)}`);
               cols.forEach((c, i) => c.toggleClass("is-drop", i === dayIdx + st.col && st.col !== 0));
+              showHover(dayIdx + (st.col || 0), mode === "resize-end" ? st.start + st.minutes : st.start);
             },
             onEnd: (st) => {
+              dragging = false;
+              hideHover();
               block.removeClass("is-dragging", "is-moving", "is-resizing");
               block.style.transform = "";
               cols.forEach((c) => c.removeClass("is-drop"));
@@ -3345,6 +3633,41 @@ ${t.start} \xB7 ${fmtDuration(dur)}
       bindDrag(handleTop, "resize-start");
       bindDrag(handle, "resize-end");
     }
+    const ghost = col.createDiv({ cls: "lubi-wghost", attr: { "aria-hidden": "true" } });
+    const colPxPerMin = HOUR_PX2 / 60;
+    col.addEventListener("pointerdown", (e) => {
+      if (e.target.closest(".lubi-wblock")) return;
+      const rect = col.getBoundingClientRect();
+      const raw = startH * 60 + Math.floor((e.clientY - rect.top) / colPxPerMin / SNAP) * SNAP;
+      const at = Math.max(startH * 60, Math.min(endH * 60 - SNAP, raw));
+      startDrag(e, {
+        mode: "create",
+        start: at,
+        minutes: 0,
+        pxPerMin: colPxPerMin,
+        min: startH * 60,
+        max: endH * 60,
+        minMinutes: SNAP,
+        snap: SNAP,
+        onStart: () => {
+          dragging = true;
+          ghost.addClass("is-on");
+        },
+        onMove: (st) => {
+          ghost.style.top = `${(st.start - startH * 60) / 60 * HOUR_PX2}px`;
+          ghost.style.height = `${Math.max(st.minutes / 60 * HOUR_PX2 - 2, 16)}px`;
+          ghost.setText(`${minToHM(st.start)}\u2013${minToHM(st.start + st.minutes)} \xB7 ${fmtDuration(st.minutes)}`);
+          showHover(dayIdx, st.start + st.minutes);
+        },
+        onEnd: (st) => {
+          dragging = false;
+          hideHover();
+          ghost.removeClass("is-on");
+          if (!st || !st.moved) return;
+          new TaskModal(plugin.app, plugin, { defaults: { date: d, start: minToHM(st.start), estimate: st.minutes }, onSaved: rerender }).open();
+        }
+      });
+    });
     col.addEventListener("dblclick", (e) => {
       if (e.target.closest(".lubi-wblock")) return;
       const rect = col.getBoundingClientRect();
@@ -3371,10 +3694,9 @@ function renderLoad(plugin, host, d) {
     role: "meter",
     "aria-valuemin": "0",
     "aria-valuemax": String(capacity),
-    "aria-valuenow": String(Math.min(planned, capacity * 2)),
-    "aria-label": `${d} \u8BA1\u5212 ${fmtDuration(planned) || "0"} / \u53EF\u7528 ${fmtDuration(capacity)}`
+    "aria-valuenow": String(Math.min(planned, capacity * 2))
   } });
-  load.title = planned ? `\u8BA1\u5212 ${fmtDuration(planned)} / \u53EF\u7528 ${fmtDuration(capacity)}${ratio > 1 ? " \xB7 \u6392\u592A\u6EE1\u4E86" : ""}` : `\u8FD8\u6CA1\u6709\u8BA1\u5212\u65F6\u957F \xB7 \u53EF\u7528 ${fmtDuration(capacity)}`;
+  tip(load, planned ? `${d} \u8BA1\u5212 ${fmtDuration(planned)} / \u53EF\u7528 ${fmtDuration(capacity)}${ratio > 1 ? " \xB7 \u6392\u592A\u6EE1\u4E86" : ""}` : `${d} \u8FD8\u6CA1\u6709\u8BA1\u5212\u65F6\u957F \xB7 \u53EF\u7528 ${fmtDuration(capacity)}`);
   const track = load.createDiv({ cls: "lubi-load-track" });
   track.createDiv({ cls: "lubi-load-fill" }).style.width = `${Math.min(100, ratio * 100)}%`;
   load.createSpan({ cls: "lubi-load-text", text: planned ? `${fmtHoursShort(planned)}/${fmtHoursShort(capacity)}` : "\u2014" });
@@ -3430,7 +3752,7 @@ function renderProjects(plugin, host, state, rerender, edit, create) {
     head.insertBefore(peek, addProject);
     for (const p of projects.slice(0, 4)) {
       const { done, total } = plugin.tasks.progress(p);
-      const chip = peek.createEl("button", { cls: "lubi-project-chip", attr: { type: "button", title: `${p.title} \xB7 ${done}/${total}\uFF0C\u70B9\u51FB\u7F16\u8F91` } });
+      const chip = tip(peek.createEl("button", { cls: "lubi-project-chip", attr: { type: "button" } }), `${p.title} \xB7 ${done}/${total}\uFF0C\u70B9\u51FB\u7F16\u8F91`);
       chip.style.setProperty("--chip", categoryOf(plugin.settings, p.category).color);
       chip.createSpan({ cls: "lubi-project-chip-name", text: p.title });
       const bar = chip.createSpan({ cls: "lubi-project-chip-bar" });
@@ -3510,13 +3832,9 @@ function renderProjects(plugin, host, state, rerender, edit, create) {
         const liveLabel = bar.createDiv({ cls: "lubi-gantt-live" });
         bar.createDiv({ cls: "lubi-gantt-handle is-left" });
         bar.createDiv({ cls: "lubi-gantt-handle is-right" });
-        bar.title = `${t.title}
-${span.from} \u2192 ${span.to}${kids.length ? `
-\u5B8C\u6210 ${done}/${total}` : ""}
-\u70B9\u6309\u7F16\u8F91\uFF1B\u62D6\u52A8\u6574\u6761\u79FB\u52A8\uFF0C\u62C9\u4E24\u7AEF\u6539\u8DE8\u5EA6`;
         bar.setAttribute("tabindex", "0");
         bar.setAttribute("role", "button");
-        bar.setAttribute("aria-label", `${t.title}\uFF0C${span.from} \u5230 ${span.to}\uFF0C\u6309\u56DE\u8F66\u7F16\u8F91\u8DE8\u5EA6`);
+        tip(bar, `${t.title}\uFF0C${span.from} \u2192 ${span.to}${kids.length ? `\uFF0C\u5B8C\u6210 ${done}/${total}` : ""}\u3002\u70B9\u6309\u6216\u56DE\u8F66\u7F16\u8F91\uFF1B\u62D6\u52A8\u6574\u6761\u79FB\u52A8\uFF0C\u62C9\u4E24\u7AEF\u6539\u8DE8\u5EA6`);
         bar.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
@@ -3656,7 +3974,7 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
     const left = bar.createDiv({ cls: "lubi-topbar-left" });
     const nav = left.createDiv({ cls: "lubi-nav lubi-day-nav" });
     iconButton(nav, "chevron-left", "\u524D\u4E00\u5929\uFF08\u2190\uFF09", () => this.setDate(shiftDate(this.date, -1)));
-    this.dateLabel = nav.createEl("button", { cls: "lubi-date-label", attr: { title: "\u70B9\u51FB\u9009\u62E9\u65E5\u671F" } });
+    this.dateLabel = tip(nav.createEl("button", { cls: "lubi-date-label" }), "\u70B9\u51FB\u9009\u62E9\u65E5\u671F");
     const picker = nav.createEl("input", { type: "date", cls: "lubi-date-picker", attr: { tabindex: "-1", "aria-hidden": "true" } });
     this.dateLabel.addEventListener("click", () => {
       picker.value = this.date;
@@ -3666,7 +3984,7 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
     });
     picker.addEventListener("change", () => picker.value && this.setDate(picker.value));
     iconButton(nav, "chevron-right", "\u540E\u4E00\u5929\uFF08\u2192\uFF09", () => this.setDate(shiftDate(this.date, 1)));
-    this.todayBtn = nav.createEl("button", { cls: "lubi-btn lubi-btn-sm lubi-today-btn", text: "\u4ECA\u5929", attr: { title: "\u56DE\u5230\u4ECA\u5929\uFF08T\uFF09" } });
+    this.todayBtn = tip(nav.createEl("button", { cls: "lubi-btn lubi-btn-sm lubi-today-btn", text: "\u4ECA\u5929" }), "\u56DE\u5230\u4ECA\u5929\uFF08T\uFF09");
     this.todayBtn.addEventListener("click", () => this.setDate(todayStr()));
     this.contextLabel = left.createDiv({ cls: "lubi-context", attr: { "aria-live": "polite" } });
     const tabs = segmented(bar, [
@@ -3678,12 +3996,11 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
     tabs.setAttribute("role", "tablist");
     tabs.querySelectorAll(".lubi-seg-item").forEach((b, i) => {
       const label = b.textContent || "";
-      b.title = `${label}\uFF08${i + 1}\uFF09`;
-      b.setAttribute("aria-label", label);
+      tip(b, `${label}\uFF08${i + 1}\uFF09`);
     });
     const right = bar.createDiv({ cls: "lubi-topbar-right" });
-    const cta = button(right, "\u8BB0\u4E00\u6761", () => this.openRecord(), { primary: true, icon: "plus", cls: "lubi-topbar-cta" });
-    cta.title = "\u8BB0\u4E00\u6761\uFF08N\uFF09";
+    const cta = button(right, "\u65B0\u5EFA", () => this.openNew(), { primary: true, icon: "plus", cls: "lubi-topbar-cta" });
+    tip(cta, "\u65B0\u5EFA\uFF08N\uFF09\uFF1A\u6BCF\u65E5\u9875\u9ED8\u8BA4\u300C\u5DF2\u5B8C\u6210\u300D\uFF0C\u4EFB\u52A1\u9875\u9ED8\u8BA4\u300C\u5F85\u505A\u300D\uFF0C\u7A97\u53E3\u9876\u90E8\u53EF\u5207\u6362");
     cta.createSpan({ cls: "lubi-kbd lubi-kbd-cta", text: "N" });
     iconButton(right, "more-horizontal", "\u66F4\u591A", () => void 0, "lubi-more-btn").addEventListener("click", (e) => this.openMore(e));
     if (!this.keyHandler) {
@@ -3691,8 +4008,10 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
       document.addEventListener("keydown", this.keyHandler);
     }
   }
-  openRecord() {
-    new RecordModal(this.app, this.plugin, { date: this.activeDate(), onSaved: () => this.refresh() }).open();
+  /** 唯一的新建入口：任务页默认「待做」，其他页默认「已完成」；窗口顶部可随时切换 */
+  openNew() {
+    if (this.tab === "tasks") new TaskModal(this.app, this.plugin, { defaults: { date: this.tasksState.selectedDate }, onSaved: () => this.refresh() }).open();
+    else new RecordModal(this.app, this.plugin, { date: this.activeDate(), onSaved: () => this.refresh() }).open();
   }
   openMore(e) {
     const menu = new import_obsidian9.Menu();
@@ -3712,17 +4031,17 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
     const key = e.key;
     if (key === "n" || key === "N") {
       e.preventDefault();
-      this.openRecord();
+      this.openNew();
     } else if (key === "1" || key === "2" || key === "3") {
       e.preventDefault();
       this.setTab(["today", "review", "tasks"][Number(key) - 1]);
-    } else if ((key === "t" || key === "T") && this.tab === "today") {
+    } else if ((key === "t" || key === "T") && this.tab !== "review") {
       e.preventDefault();
       this.setDate(todayStr());
     } else if (key === "?") {
       e.preventDefault();
       new ShortcutsModal(this.app).open();
-    } else if ((key === "ArrowLeft" || key === "ArrowRight") && this.tab === "today") {
+    } else if ((key === "ArrowLeft" || key === "ArrowRight") && this.tab !== "review") {
       if (t && t.closest(".lubi-block, .lubi-timeline, .lubi-chart, .lubi-week")) return;
       e.preventDefault();
       this.setDate(shiftDate(this.date, key === "ArrowLeft" ? -1 : 1));
@@ -3745,8 +4064,16 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
   activeDate() {
     return this.tab === "today" ? this.date : this.tab === "tasks" ? this.tasksState.selectedDate : todayStr();
   }
+  /** 每日页与任务页共用同一个日期：任一页翻天，另一页跟着走 */
+  syncTasksDate(d) {
+    const s = this.tasksState;
+    s.selectedDate = d;
+    s.weekAnchor = d;
+    s.agendaDate = d;
+  }
   setDate(d) {
     this.date = d;
+    this.syncTasksDate(d);
     void this.render();
   }
   setTab(t) {
@@ -3755,6 +4082,7 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
       this.review.anchor = this.tab === "today" ? this.date : this.tasksState.selectedDate;
       this.visitedReview = true;
     }
+    if (t === "tasks" && this.tasksState.selectedDate !== this.date) this.syncTasksDate(this.date);
     this.tab = t;
     this.syncTabs();
     void this.render();
@@ -3767,14 +4095,12 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
   show(tab, date) {
     if (date) {
       const target = tab || this.tab;
-      if (target === "today") this.date = date;
-      else if (target === "review") {
+      if (target === "review") {
         this.review.anchor = date;
         this.visitedReview = true;
       } else {
-        this.tasksState.selectedDate = date;
-        this.tasksState.weekAnchor = date;
-        this.tasksState.agendaDate = date;
+        this.date = date;
+        this.syncTasksDate(date);
       }
     }
     if (tab) {
@@ -3782,6 +4108,7 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
         this.review.anchor = this.tab === "today" ? this.date : this.tasksState.selectedDate;
         this.visitedReview = true;
       }
+      if (tab === "tasks" && !date && this.tasksState.selectedDate !== this.date) this.syncTasksDate(this.date);
       this.tab = tab;
     }
     this.syncTabs();
@@ -3792,6 +4119,7 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
     const active = document.activeElement;
     const focusKey = active && this.body.contains(active) ? active.getAttribute("data-lubi-focus") : null;
     hideTip();
+    if (this.tab === "tasks") this.date = this.tasksState.selectedDate;
     const isToday = this.date === todayStr();
     this.dateLabel.empty();
     this.dateLabel.createSpan({ text: `${this.date} \u5468${weekdayZh(this.date)}` });
@@ -3968,7 +4296,7 @@ var LubiSettingTab = class extends import_obsidian10.PluginSettingTab {
       s.scheduleEndHour = clamp(Number(v), 1, 24, 24);
       save();
     }));
-    new import_obsidian10.Setting(containerEl).setName("\u52FE\u6389\u4EFB\u52A1\u65F6\u987A\u624B\u8BB0\u4E00\u6761").setDesc("\u5B8C\u6210\u4EFB\u52A1\u540E\u81EA\u52A8\u5F39\u51FA\u8BB0\u5F55\u7A97\u53E3\uFF0C\u9884\u586B\u4EFB\u52A1\u540D\u4E0E\u9884\u8BA1\u65F6\u957F").addToggle((t) => t.setValue(s.promptLogOnComplete).onChange((v) => {
+    new import_obsidian10.Setting(containerEl).setName("\u52FE\u6389\u4EFB\u52A1\u65F6\u81EA\u52A8\u8BB0\u4E00\u6761").setDesc("\u5B8C\u6210\u4EFB\u52A1\u540E\u76F4\u63A5\u5728\u65F6\u95F4\u8F74\u751F\u6210\u8BB0\u5F55\uFF08\u6309\u8BA1\u5212\u5F00\u59CB\u65F6\u95F4\uFF1B\u6CA1\u6709\u5219\u4ECE\u6B64\u523B\u5F80\u524D\u63A8\u9884\u8BA1\u65F6\u957F\uFF09\uFF0C\u53EF\u64A4\u9500\uFF0C\u53EF\u62D6\u52A8\u8C03\u6574").addToggle((t) => t.setValue(s.promptLogOnComplete).onChange((v) => {
       s.promptLogOnComplete = v;
       save();
     }));
@@ -4082,7 +4410,7 @@ var LubiPlugin = class extends import_obsidian11.Plugin {
     this.addRibbonIcon("hourglass", "Lubi \u8BB0\u5F55", () => void this.activateView());
     this.addSettingTab(new LubiSettingTab(this.app, this));
     this.addCommand({ id: "open", name: "\u6253\u5F00\u9762\u677F", callback: () => void this.activateView() });
-    this.addCommand({ id: "log", name: "\u8BB0\u4E00\u6761", callback: () => this.quickLog() });
+    this.addCommand({ id: "log", name: "\u65B0\u5EFA\uFF08\u5DF2\u5B8C\u6210 / \u652F\u51FA / \u5F85\u505A\uFF09", callback: () => this.quickLog() });
     this.addCommand({ id: "open-today", name: "\u6253\u5F00\u9762\u677F \xB7 \u6BCF\u65E5\u9875", callback: () => void this.activateView("today") });
     this.addCommand({ id: "open-review", name: "\u6253\u5F00\u9762\u677F \xB7 \u56DE\u987E\u9875", callback: () => void this.activateView("review") });
     this.addCommand({ id: "open-tasks", name: "\u6253\u5F00\u9762\u677F \xB7 \u4EFB\u52A1\u9875", callback: () => void this.activateView("tasks") });
@@ -4152,10 +4480,14 @@ var LubiPlugin = class extends import_obsidian11.Plugin {
     const f = await this.journal.ensure(date);
     await this.app.workspace.getLeaf("tab").openFile(f);
   }
+  /** 新建：有面板时交给面板（任务页默认「待做」，其他页默认「已完成」），否则记今天的一条 */
   quickLog() {
     const v = this.views()[0];
-    const date = v?.activeDate() || todayStr();
-    new RecordModal(this.app, this, { date, onSaved: () => this.refreshViews() }).open();
+    if (v) {
+      v.openNew();
+      return;
+    }
+    new RecordModal(this.app, this, { date: todayStr(), onSaved: () => this.refreshViews() }).open();
   }
   shiftDate(date, days) {
     return shiftDate(date, days);

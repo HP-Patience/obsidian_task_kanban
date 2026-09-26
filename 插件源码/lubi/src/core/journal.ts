@@ -97,6 +97,55 @@ export class Journal {
     await this.mutateLines(date, (rows) => rows.filter((r) => r.line !== line).map((r) => r.rec));
   }
 
+  /** 所有关联到给定任务的记录（跨全部日记） */
+  async linkedTo(ids: ReadonlySet<string>): Promise<Rec[]> {
+    const out: Rec[] = [];
+    for (const d of this.dates()) {
+      for (const r of await this.read(d)) if (r.rec.task && ids.has(r.rec.task)) out.push(r.rec);
+    }
+    return out;
+  }
+
+  /**
+   * 任务被删除时处理关联记录：remove=false 只去掉 `[任务:: …]`，remove=true 整条删除。
+   * 返回受影响记录的原样副本，供 restoreDetached 撤销。
+   */
+  async detachTasks(ids: ReadonlySet<string>, remove: boolean): Promise<Rec[]> {
+    const hit: Rec[] = [];
+    for (const d of this.dates()) {
+      const rows = await this.read(d);
+      if (!rows.some((r) => r.rec.task && ids.has(r.rec.task))) continue;
+      await this.mutateLines(d, (cur) => {
+        const next: Rec[] = [];
+        for (const r of cur) {
+          if (r.rec.task && ids.has(r.rec.task)) {
+            hit.push({ ...r.rec, date: d, extra: { ...r.rec.extra } });
+            if (!remove) next.push({ ...r.rec, task: undefined });
+          } else next.push(r.rec);
+        }
+        return next;
+      });
+    }
+    return hit;
+  }
+
+  /** 撤销 detachTasks：删掉的加回来，解除的重新挂上任务 */
+  async restoreDetached(recs: readonly Rec[], removed: boolean): Promise<void> {
+    const byDate = new Map<string, Rec[]>();
+    for (const r of recs) byDate.set(r.date, [...(byDate.get(r.date) || []), r]);
+    for (const [d, list] of byDate) {
+      await this.mutate(d, (cur) => {
+        if (removed) return [...cur, ...list.map((r) => ({ ...r, extra: { ...r.extra } }))];
+        const next = cur.slice();
+        for (const r of list) {
+          const i = next.findIndex((x) => !x.task && x.start === r.start && x.minutes === r.minutes && x.title === r.title && x.category === r.category);
+          if (i >= 0) next[i] = { ...next[i], task: r.task };
+        }
+        return next;
+      });
+    }
+  }
+
   private async checkCap(date: string, rec: Rec, replacingLine: number | null): Promise<void> {
     if (rec.minutes <= 0) return;
     const rows = await this.read(date);

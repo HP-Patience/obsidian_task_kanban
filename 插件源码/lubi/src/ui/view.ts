@@ -3,11 +3,11 @@
 import { ItemView, Menu, WorkspaceLeaf } from "obsidian";
 import type LubiPlugin from "../main";
 import { shiftDate, shortDate, todayStr, weekdayZh, weekStart, monthStart, monthEnd } from "../core/time";
-import { iconButton, segmented, button, debounce, hideTip } from "./components";
+import { iconButton, segmented, button, debounce, hideTip, tip } from "./components";
 import { renderToday } from "./today";
 import { renderReview, ReviewState } from "./review";
 import { renderTasks, TasksState } from "./tasks";
-import { RecordModal, ShortcutsModal } from "./modals";
+import { RecordModal, ShortcutsModal, TaskModal } from "./modals";
 
 export const VIEW_TYPE = "lubi-dashboard";
 export type Tab = "today" | "review" | "tasks";
@@ -76,7 +76,7 @@ export class DashboardView extends ItemView {
     const left = bar.createDiv({ cls: "lubi-topbar-left" });
     const nav = left.createDiv({ cls: "lubi-nav lubi-day-nav" });
     iconButton(nav, "chevron-left", "前一天（←）", () => this.setDate(shiftDate(this.date, -1)));
-    this.dateLabel = nav.createEl("button", { cls: "lubi-date-label", attr: { title: "点击选择日期" } });
+    this.dateLabel = tip(nav.createEl("button", { cls: "lubi-date-label" }), "点击选择日期");
     const picker = nav.createEl("input", { type: "date", cls: "lubi-date-picker", attr: { tabindex: "-1", "aria-hidden": "true" } });
     this.dateLabel.addEventListener("click", () => {
       picker.value = this.date;
@@ -86,7 +86,7 @@ export class DashboardView extends ItemView {
     });
     picker.addEventListener("change", () => picker.value && this.setDate(picker.value));
     iconButton(nav, "chevron-right", "后一天（→）", () => this.setDate(shiftDate(this.date, 1)));
-    this.todayBtn = nav.createEl("button", { cls: "lubi-btn lubi-btn-sm lubi-today-btn", text: "今天", attr: { title: "回到今天（T）" } });
+    this.todayBtn = tip(nav.createEl("button", { cls: "lubi-btn lubi-btn-sm lubi-today-btn", text: "今天" }), "回到今天（T）");
     this.todayBtn.addEventListener("click", () => this.setDate(todayStr()));
     this.contextLabel = left.createDiv({ cls: "lubi-context", attr: { "aria-live": "polite" } });
 
@@ -99,13 +99,12 @@ export class DashboardView extends ItemView {
     tabs.setAttribute("role", "tablist");
     tabs.querySelectorAll<HTMLElement>(".lubi-seg-item").forEach((b, i) => {
       const label = b.textContent || "";
-      b.title = `${label}（${i + 1}）`;
-      b.setAttribute("aria-label", label);
+      tip(b, `${label}（${i + 1}）`);
     });
 
     const right = bar.createDiv({ cls: "lubi-topbar-right" });
-    const cta = button(right, "记一条", () => this.openRecord(), { primary: true, icon: "plus", cls: "lubi-topbar-cta" });
-    cta.title = "记一条（N）";
+    const cta = button(right, "新建", () => this.openNew(), { primary: true, icon: "plus", cls: "lubi-topbar-cta" });
+    tip(cta, "新建（N）：每日页默认「已完成」，任务页默认「待做」，窗口顶部可切换");
     cta.createSpan({ cls: "lubi-kbd lubi-kbd-cta", text: "N" });
     iconButton(right, "more-horizontal", "更多", () => undefined, "lubi-more-btn").addEventListener("click", (e) => this.openMore(e));
 
@@ -116,8 +115,10 @@ export class DashboardView extends ItemView {
     }
   }
 
-  private openRecord(): void {
-    new RecordModal(this.app, this.plugin, { date: this.activeDate(), onSaved: () => this.refresh() }).open();
+  /** 唯一的新建入口：任务页默认「待做」，其他页默认「已完成」；窗口顶部可随时切换 */
+  openNew(): void {
+    if (this.tab === "tasks") new TaskModal(this.app, this.plugin, { defaults: { date: this.tasksState.selectedDate }, onSaved: () => this.refresh() }).open();
+    else new RecordModal(this.app, this.plugin, { date: this.activeDate(), onSaved: () => this.refresh() }).open();
   }
 
   private openMore(e: MouseEvent): void {
@@ -138,11 +139,11 @@ export class DashboardView extends ItemView {
     const active = (t && this.contentEl.contains(t)) || ws.getActiveViewOfType?.(DashboardView) === this;
     if (!active) return;
     const key = e.key;
-    if (key === "n" || key === "N") { e.preventDefault(); this.openRecord(); }
+    if (key === "n" || key === "N") { e.preventDefault(); this.openNew(); }
     else if (key === "1" || key === "2" || key === "3") { e.preventDefault(); this.setTab((["today", "review", "tasks"] as Tab[])[Number(key) - 1]); }
-    else if ((key === "t" || key === "T") && this.tab === "today") { e.preventDefault(); this.setDate(todayStr()); }
+    else if ((key === "t" || key === "T") && this.tab !== "review") { e.preventDefault(); this.setDate(todayStr()); }
     else if (key === "?") { e.preventDefault(); new ShortcutsModal(this.app).open(); }
-    else if ((key === "ArrowLeft" || key === "ArrowRight") && this.tab === "today") {
+    else if ((key === "ArrowLeft" || key === "ArrowRight") && this.tab !== "review") {
       // 时间轴块内的方向键另有用途；只在非块元素上切换日期
       if (t && t.closest(".lubi-block, .lubi-timeline, .lubi-chart, .lubi-week")) return;
       e.preventDefault();
@@ -166,8 +167,17 @@ export class DashboardView extends ItemView {
     return this.tab === "today" ? this.date : this.tab === "tasks" ? this.tasksState.selectedDate : todayStr();
   }
 
+  /** 每日页与任务页共用同一个日期：任一页翻天，另一页跟着走 */
+  private syncTasksDate(d: string): void {
+    const s = this.tasksState;
+    s.selectedDate = d;
+    s.weekAnchor = d;
+    s.agendaDate = d;
+  }
+
   setDate(d: string): void {
     this.date = d;
+    this.syncTasksDate(d);
     void this.render();
   }
 
@@ -177,6 +187,7 @@ export class DashboardView extends ItemView {
       this.review.anchor = this.tab === "today" ? this.date : this.tasksState.selectedDate;
       this.visitedReview = true;
     }
+    if (t === "tasks" && this.tasksState.selectedDate !== this.date) this.syncTasksDate(this.date);
     this.tab = t;
     this.syncTabs();
     void this.render();
@@ -191,12 +202,10 @@ export class DashboardView extends ItemView {
   show(tab?: Tab, date?: string): void {
     if (date) {
       const target = tab || this.tab;
-      if (target === "today") this.date = date;
-      else if (target === "review") { this.review.anchor = date; this.visitedReview = true; }
+      if (target === "review") { this.review.anchor = date; this.visitedReview = true; }
       else {
-        this.tasksState.selectedDate = date;
-        this.tasksState.weekAnchor = date;
-        this.tasksState.agendaDate = date;
+        this.date = date;
+        this.syncTasksDate(date);
       }
     }
     if (tab) {
@@ -204,6 +213,7 @@ export class DashboardView extends ItemView {
         this.review.anchor = this.tab === "today" ? this.date : this.tasksState.selectedDate;
         this.visitedReview = true;
       }
+      if (tab === "tasks" && !date && this.tasksState.selectedDate !== this.date) this.syncTasksDate(this.date);
       this.tab = tab;
     }
     this.syncTabs();
@@ -215,6 +225,8 @@ export class DashboardView extends ItemView {
     const active = document.activeElement as HTMLElement | null;
     const focusKey = active && this.body.contains(active) ? active.getAttribute("data-lubi-focus") : null;
     hideTip();
+    // 任务页内部（周日程翻周、点表头、议程）改了选中日：顶栏日期跟着它
+    if (this.tab === "tasks") this.date = this.tasksState.selectedDate;
     const isToday = this.date === todayStr();
     this.dateLabel.empty();
     this.dateLabel.createSpan({ text: `${this.date} 周${weekdayZh(this.date)}` });
@@ -274,4 +286,3 @@ export class DashboardView extends ItemView {
     }
   }
 }
-

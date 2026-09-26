@@ -5,7 +5,7 @@ import { Rec } from "../core/records";
 import { eachDate, fmtDuration, fmtHours, monthEnd, monthStart, parseDate, shiftDate, shortDate, weekStart, weekdayZh, todayStr, dateStr } from "../core/time";
 import { categoryOf } from "../settings";
 import { dayTimeStats } from "../core/metrics";
-import { button, catDot, el, emptyState, hoverTip, icon, iconButton, segmented } from "./components";
+import { button, catDot, el, emptyState, hoverTip, icon, iconButton, segmented, tip } from "./components";
 
 export type Period = "week" | "month" | "year";
 
@@ -170,7 +170,9 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
     const bt = bucketTotals[i];
     const isFuture = b.dates[0] > today;
     const stats = bucketStats[i];
-    const col = bars.createEl("button", { cls: `lubi-bar-col ${b.dates.includes(today) ? "is-today" : ""} ${isFuture ? "is-future" : ""} ${bt ? "" : "is-empty"}`.trim(), attr: { type: "button", "aria-label": `${b.label}，记录 ${fmtHours(bt)}，覆盖 ${fmtHours(stats.covered)}${stats.invalid ? "，存在待校对记录" : stats.overlap ? `，并行 ${fmtDuration(stats.overlap)}` : ""}。按回车查看` } });
+    // 柱子已有自绘的悬浮明细卡：读屏文字放进隐藏的 span，不用 aria-label，免得 Obsidian 再叠一个提示
+    const col = bars.createEl("button", { cls: `lubi-bar-col ${b.dates.includes(today) ? "is-today" : ""} ${isFuture ? "is-future" : ""} ${bt ? "" : "is-empty"}`.trim(), attr: { type: "button" } });
+    col.createSpan({ cls: "lubi-sr-only", text: `${b.label}，记录 ${fmtHours(bt)}，覆盖 ${fmtHours(stats.covered)}${stats.invalid ? "，存在待校对记录" : stats.overlap ? `，并行 ${fmtDuration(stats.overlap)}` : ""}。按回车查看` });
     col.dataset.idx = String(i);
     const stack = col.createDiv({ cls: "lubi-bar-stack" });
     const over = bt > cap + 1;
@@ -378,7 +380,7 @@ function renderHeatmap(plugin: LubiPlugin, host: HTMLElement, from: string, to: 
     if (d === today) cell.addClass("is-today");
     if (d > today) cell.addClass("is-future");
     cell.dataset.date = d;
-    cell.title = `${d} 周${weekdayZh(d)} · ${st ? `覆盖 ${Math.round(ratio * 100)}%` : "没有记录"}${st?.invalidCount ? " · 待校对" : ""}`;
+    tip(cell, `${d} 周${weekdayZh(d)} · ${st ? `覆盖 ${Math.round(ratio * 100)}%` : "没有记录"}${st?.invalidCount ? " · 待校对" : ""}`);
   });
   grid.addEventListener("click", (e) => {
     const d = (e.target as HTMLElement).closest<HTMLElement>(".lubi-heat-cell")?.dataset.date;

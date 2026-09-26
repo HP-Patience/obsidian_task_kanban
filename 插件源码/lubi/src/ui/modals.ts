@@ -5,7 +5,8 @@ import { Task, blankTask, RepeatKind } from "../core/tasks";
 import { hmToMin, minToHM, nowHM, todayStr, fmtDuration, shortDate, weekdayZh } from "../core/time";
 import { categoryOf } from "../settings";
 import { parseEstimate, parseQuick, QuickParse } from "../core/quickparse";
-import { button, icon, iconButton, segmented, stopAll } from "./components";
+import { button, icon, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
+import { addRecordAsDone, afterDone, afterUndone, deleteRecord, syncLinkedTask } from "./taskList";
 
 let fieldId = 0;
 function associate(label: HTMLLabelElement, control: HTMLElement): void {
@@ -64,19 +65,73 @@ export class ConfirmModal extends Modal {
   }
 }
 
+// ---------------- 删除任务（含关联记录的处理） ----------------
+
+export class DeleteTaskModal extends Modal {
+  private removeRecords = false;
+
+  constructor(app: App, private plugin: LubiPlugin, private task: Task, private onDone: () => void) {
+    super(app);
+  }
+
+  async onOpen(): Promise<void> {
+    this.modalEl.addClass("lubi-modal", "lubi-modal-sm");
+    this.titleEl.setText("删除任务？");
+    const all = [this.task, ...this.plugin.tasks.descendants(this.task.id)];
+    const ids = new Set(all.map((t) => t.id));
+    const kids = all.length - 1;
+    this.contentEl.createEl("p", { cls: "lubi-confirm-body", text: kids ? `「${this.task.title}」会连同 ${kids} 个子任务一起删除。` : `「${this.task.title}」` });
+    const linked = await this.plugin.journal.linkedTo(ids);
+    if (linked.length) {
+      const box = this.contentEl.createDiv({ cls: "lubi-delete-opts", attr: { role: "radiogroup", "aria-label": "关联记录的处理方式" } });
+      box.createDiv({ cls: "lubi-muted", text: `时间线上有 ${linked.length} 条记录关联了${kids ? "这些任务" : "这个任务"}：` });
+      const opt = (value: boolean, label: string, desc: string) => {
+        const row = box.createEl("label", { cls: "lubi-delete-opt" });
+        const input = row.createEl("input", { type: "radio", attr: { name: "lubi-delete-records" } });
+        input.checked = value === this.removeRecords;
+        input.addEventListener("change", () => { if (input.checked) this.removeRecords = value; });
+        const text = row.createDiv();
+        text.createDiv({ text: label });
+        text.createDiv({ cls: "lubi-muted", text: desc });
+      };
+      opt(false, "保留记录，只解除关联", "时间确实花掉了，回顾统计不变");
+      opt(true, `连同这 ${linked.length} 条记录一起删除`, "适合建错的任务或误记的时间");
+    }
+    const row = this.contentEl.createDiv({ cls: "lubi-modal-actions" });
+    button(row, "取消", () => this.close(), { cls: "lubi-btn-ghost" });
+    const ok = button(row, "删除", () => void this.run(all, ids, linked.length > 0));
+    ok.addClass("lubi-btn-danger");
+  }
+
+  private async run(all: Task[], ids: Set<string>, hasLinked: boolean): Promise<void> {
+    this.close();
+    const snapshot: Task[] = JSON.parse(JSON.stringify(all));
+    const removed = this.removeRecords;
+    const touched = hasLinked ? await this.plugin.journal.detachTasks(ids, removed) : [];
+    await this.plugin.tasks.remove(this.task.id);
+    this.onDone();
+    const what = !touched.length ? "" : removed ? `，并删除 ${touched.length} 条记录` : `，${touched.length} 条记录已解除关联`;
+    undoNotice(`已删除「${this.task.title}」${what}`, async () => {
+      for (const t of snapshot) if (!this.plugin.tasks.byId(t.id)) await this.plugin.tasks.upsert(t);
+      if (touched.length) await this.plugin.journal.restoreDetached(touched, removed);
+      this.onDone();
+    });
+  }
+}
+
 // ---------------- 快捷键速查 ----------------
 
 export const SHORTCUTS: [string, string][] = [
-  ["N", "记一条"],
-  ["1 / 2 / 3", "切换 记录 · 回顾 · 任务"],
-  ["T", "每日页回到今天"],
-  ["← / →", "每日页前一天 / 后一天"],
+  ["N", "新建（每日页默认「已完成」，任务页默认「待做」）"],
+  ["1 / 2 / 3", "切换 每日 · 回顾 · 任务"],
+  ["T", "回到今天（每日 / 任务页）"],
+  ["← / →", "前一天 / 后一天（每日 / 任务页）"],
   ["?", "打开本速查卡"],
   ["↑ / ↓", "时间轴：选中块移动 5 分钟（Alt 为 1 分钟）"],
   ["Shift + ↑ / ↓", "时间轴：改时长"],
   ["Enter / Delete", "时间轴：编辑 / 删除选中块"],
-  ["Alt + 1…9", "记一条：切换分类"],
-  ["Enter", "记一条 / 任务：保存"],
+  ["Alt + 1…9", "新建记录：切换分类"],
+  ["Enter", "新建 / 编辑：保存"],
   ["Esc", "取消拖动 / 关闭窗口"],
 ];
 
@@ -97,7 +152,24 @@ export class ShortcutsModal extends Modal {
   }
 }
 
-// ---------------- 记一条 ----------------
+// ---------------- 新建：已完成 / 支出 / 待做 共用一个入口 ----------------
+
+export type NewKind = "done" | "money" | "todo";
+
+/** 新建窗口顶部的类型切换。「已完成 / 支出」写进日记，「待做」写进任务清单。 */
+function kindSwitch(host: HTMLElement, plugin: LubiPlugin, current: NewKind, onPick: (kind: NewKind) => void): void {
+  const hasMoney = plugin.settings.categories.some((c) => c.kind === "money");
+  const items: { id: NewKind; label: string; icon: string }[] = [
+    { id: "done", label: "已完成", icon: "check" },
+    ...(hasMoney ? [{ id: "money" as NewKind, label: "支出", icon: "wallet" }] : []),
+    { id: "todo", label: "待做", icon: "list-todo" },
+  ];
+  const seg = segmented<NewKind>(host, items, current, (kind) => { if (kind !== current) onPick(kind); });
+  seg.addClass("lubi-mode-seg", "lubi-kind-seg");
+  seg.setAttribute("aria-label", "新建类型");
+}
+
+// ---------------- 记录（已完成 / 支出） ----------------
 
 export interface RecordModalOptions {
   date: string;
@@ -155,7 +227,7 @@ export class RecordModal extends Modal {
 
     // 标题：带日期与原时间段
     titleEl.empty();
-    titleEl.createSpan({ text: this.editing ? "编辑记录" : "记一条" });
+    titleEl.createSpan({ text: this.editing ? "编辑记录" : "新建" });
     const ctx = [`${shortDate(this.rec.date)} 周${weekdayZh(this.rec.date)}`];
     if (this.editing && this.opts.rec) ctx.push(this.opts.rec.minutes > 0 ? `${this.opts.rec.start}–${minToHM(hmToMin(this.opts.rec.start) + this.opts.rec.minutes)}` : this.opts.rec.start);
     titleEl.createSpan({ cls: "lubi-modal-ctx", text: ctx.join(" · ") });
@@ -163,7 +235,21 @@ export class RecordModal extends Modal {
     // 模式：时间 | 支出（财务不再混在时间分类里）
     const timeCats = s.categories.filter((c) => c.kind === "time");
     const moneyCats = s.categories.filter((c) => c.kind === "money");
-    if (timeCats.length && moneyCats.length) {
+    if (!this.editing) {
+      kindSwitch(contentEl, this.plugin, isMoney ? "money" : "done", (kind) => {
+        if (kind === "todo") { this.switchToTask(); return; }
+        if (kind === "money" && moneyCats.length) {
+          this.lastTimeCat = this.rec.category;
+          this.rec.category = moneyCats[0].name;
+          if (this.rec.minutes === 30) this.rec.minutes = 0;
+        } else if (kind === "done" && timeCats.length) {
+          this.rec.category = this.lastTimeCat && timeCats.some((c) => c.name === this.lastTimeCat) ? this.lastTimeCat : timeCats[0].name;
+          if (this.rec.minutes <= 0) this.rec.minutes = 30;
+        }
+        this.render(false);
+        this.contentEl.querySelector<HTMLElement>('.lubi-kind-seg .lubi-seg-item[aria-pressed="true"]')?.focus();
+      });
+    } else if (timeCats.length && moneyCats.length) {
       segmented<"time" | "money">(contentEl, [
         { id: "time", label: "时间", icon: "clock" },
         { id: "money", label: "支出", icon: "wallet" },
@@ -202,7 +288,7 @@ export class RecordModal extends Modal {
     window.requestAnimationFrame(markOverflow);
     cats.toggleClass("is-hidden", pool.length <= 1 && isMoney);
     pool.forEach((c, i) => {
-      const b = cats.createEl("button", { cls: "lubi-cat-option", attr: { type: "button", "aria-pressed": String(c.name === this.rec.category), "data-cat": c.name, title: i < 9 ? `${c.name}（Alt+${i + 1}）` : c.name } });
+      const b = tip(cats.createEl("button", { cls: "lubi-cat-option", attr: { type: "button", "aria-pressed": String(c.name === this.rec.category), "data-cat": c.name } }), i < 9 ? `${c.name}（Alt+${i + 1}）` : c.name);
       b.style.setProperty("--chip", c.color);
       icon(b, c.icon, "lubi-icon");
       b.createSpan({ text: c.name });
@@ -309,7 +395,7 @@ export class RecordModal extends Modal {
       const before = this.rec.date === todayStr() ? hmToMin(nowHM()) : undefined;
       const prevEnd = this.plugin.lastEndOf(this.rec.date, before);
       if (prevEnd && !this.editing && prevEnd !== this.rec.start) {
-        const b = quick.createEl("button", { cls: "lubi-quick-chip lubi-quick-chip-accent", attr: { type: "button", title: "上一条记录的结束时间" } });
+        const b = tip(quick.createEl("button", { cls: "lubi-quick-chip lubi-quick-chip-accent", attr: { type: "button" } }), `从上一条记录的结束时间 ${prevEnd} 接着记`);
         icon(b, "corner-down-right", "lubi-icon");
         b.createSpan({ text: `从 ${prevEnd} 接着记` });
         b.addEventListener("click", (e) => {
@@ -344,7 +430,7 @@ export class RecordModal extends Modal {
       sel.addEventListener("change", () => (this.rec.expenseType = sel.value));
     }
 
-    // 可选字段：关联待办 / 备注（ghost 按钮，点开才出现）
+    // 可选字段：备注（ghost 按钮，点开才出现）；关联任务由勾选 / 新建自动维护，不再手动选
     const extras = contentEl.createDiv({ cls: "lubi-extras" });
     const toggles = extras.createDiv({ cls: "lubi-extras-toggles" });
     const fields = extras.createDiv({ cls: "lubi-extras-fields" });
@@ -375,31 +461,6 @@ export class RecordModal extends Modal {
       });
       if (initiallyOpen) open();
     };
-    optional("task", "关联待办", "link", (host) => {
-      const taskSel = host.createEl("select", { attr: { "aria-label": "关联待办" } });
-      taskSel.createEl("option", { value: "", text: "（不关联）" });
-      const candidates = this.plugin.tasks.forDate(this.rec.date).filter((t) => !this.plugin.tasks.children(t.id).length);
-      const inbox = this.plugin.tasks.inbox();
-      const seen = new Set<string>();
-      for (const t of [...candidates, ...inbox]) {
-        if (seen.has(t.id)) continue;
-        seen.add(t.id);
-        taskSel.createEl("option", { value: t.id, text: this.plugin.tasks.pathOf(t).map((p) => p.title).join(" / ") });
-      }
-      if (this.rec.task && !seen.has(this.rec.task)) {
-        const t = this.plugin.tasks.byId(this.rec.task);
-        taskSel.createEl("option", { value: this.rec.task, text: t ? this.plugin.tasks.pathOf(t).map((p) => p.title).join(" / ") : `（已删除的任务 ${this.rec.task.slice(0, 8)}）` });
-      }
-      taskSel.value = this.rec.task || "";
-      taskSel.addEventListener("change", () => {
-        this.rec.task = taskSel.value || undefined;
-        const t = taskSel.value ? this.plugin.tasks.byId(taskSel.value) : null;
-        if (t && !this.rec.title) {
-          this.rec.title = t.title;
-          titleInput.value = t.title;
-        }
-      });
-    }, !!this.rec.task);
     optional("notes", "备注", "sticky-note", (host) => {
       const notes = host.createEl("textarea", { attr: { rows: "2", placeholder: "补一句上下文", "aria-label": "备注" } });
       notes.value = this.rec.notes || "";
@@ -413,9 +474,8 @@ export class RecordModal extends Modal {
       del.addEventListener("click", (e) => {
         stopAll(e);
         new ConfirmModal(this.app, "删除这条记录？", `${this.rec.start} ${this.rec.category} · ${this.rec.title}`, async () => {
-          await this.plugin.journal.remove(this.opts.date, this.opts.line!);
           this.close();
-          this.opts.onSaved?.();
+          await deleteRecord(this.plugin, this.opts.date, { rec: this.opts.rec!, line: this.opts.line! }, () => this.opts.onSaved?.());
         }, "删除").open();
       });
     }
@@ -436,6 +496,17 @@ export class RecordModal extends Modal {
       }
     };
     if (this.parsed === null && titleInput.value) applyParse();
+  }
+
+  /** 切到「待做」：带着已填的内容换成任务表单 */
+  private switchToTask(): void {
+    const s = this.plugin.settings;
+    const title = (this.parsed ? this.parsed.title : this.rec.title).trim();
+    const category = categoryOf(s, this.rec.category).kind === "time" ? this.rec.category : (this.lastTimeCat || "");
+    const start = this.parsed?.start || this.opts.defaults?.start || "";
+    const estimate = this.rec.minutes > 0 ? this.rec.minutes : 0;
+    this.close();
+    new TaskModal(this.app, this.plugin, { defaults: { title, category, date: this.rec.date, start, estimate }, onSaved: () => this.opts.onSaved?.() }).open();
   }
 
   private async save(): Promise<void> {
@@ -461,10 +532,13 @@ export class RecordModal extends Modal {
     }
     this.saving = true;
     try {
-      if (this.editing && this.opts.line !== undefined) await this.plugin.journal.update(this.opts.date, this.opts.line, r);
-      else await this.plugin.journal.add(r);
+      let saved: Rec = r;
+      if (this.editing && this.opts.line !== undefined) {
+        await this.plugin.journal.update(this.opts.date, this.opts.line, r);
+        if (this.opts.rec) await syncLinkedTask(this.plugin, this.opts.rec, r);
+      } else saved = await addRecordAsDone(this.plugin, r);
       this.close();
-      this.opts.onSaved?.({ ...r, extra: { ...r.extra } });
+      this.opts.onSaved?.({ ...saved, extra: { ...saved.extra } });
     } catch (e) {
       formError(this.contentEl, `无法保存：${(e as Error).message}`);
     } finally {
@@ -525,10 +599,11 @@ export class TaskModal extends Modal {
     const cat = categoryOf(s, this.t.category);
     this.modalEl.style.setProperty("--chip", cat.color);
     titleEl.empty();
-    titleEl.createSpan({ text: this.editing ? "编辑任务" : parent ? "新建子任务" : "新建任务" });
+    titleEl.createSpan({ text: this.editing ? "编辑任务" : parent ? "新建子任务" : "新建" });
     if (parent) titleEl.createSpan({ cls: "lubi-modal-ctx", text: this.plugin.tasks.pathOf(parent).map((p) => p.title).join(" / ") });
     titleEl.createSpan({ cls: "lubi-dirty", text: "● 未保存", attr: { "aria-live": "polite" } });
     this.syncDirty();
+    if (!this.editing && !parent) kindSwitch(contentEl, this.plugin, "todo", (kind) => this.switchToRecord(kind));
 
     // 分类
     const cats = contentEl.createDiv({ cls: "lubi-cat-picker" });
@@ -717,7 +792,7 @@ export class TaskModal extends Modal {
       const blocked = row.createEl("button", { cls: "lubi-quick-chip lubi-quick-chip-warn lubi-switch", attr: { type: "button", "aria-pressed": String(this.t.blocked) } });
       blocked.createSpan({ cls: "lubi-switch-track", attr: { "aria-hidden": "true" } }).createSpan({ cls: "lubi-switch-thumb" });
       blocked.createSpan({ text: "受阻" });
-      blocked.title = "被外部因素卡住，列表里会显示提示";
+      tip(blocked, "受阻：被外部因素卡住，列表里会显示提示");
       blocked.addEventListener("click", (e) => {
         stopAll(e);
         this.t.blocked = !this.t.blocked;
@@ -734,15 +809,14 @@ export class TaskModal extends Modal {
 
     const actions = contentEl.createDiv({ cls: "lubi-modal-actions" });
     if (this.editing) {
-      const kids = this.plugin.tasks.descendants(this.t.id).length;
       const del = actions.createEl("button", { cls: "lubi-text-btn lubi-text-btn-danger lubi-push-left", text: "删除" });
       del.addEventListener("click", (e) => {
         stopAll(e);
-        new ConfirmModal(this.app, "删除任务？", kids ? `会连同 ${kids} 个子任务一起删除。` : this.t.title, async () => {
-          await this.plugin.tasks.remove(this.t.id);
+        const original = this.plugin.tasks.byId(this.t.id) || this.t;
+        new DeleteTaskModal(this.app, this.plugin, original, () => {
           this.close();
           this.opts.onSaved?.(this.t);
-        }, "删除").open();
+        }).open();
       });
     }
     button(actions, "取消", () => this.close(), { cls: "lubi-btn-ghost" });
@@ -754,6 +828,18 @@ export class TaskModal extends Modal {
         void this.save();
       }
     };
+  }
+
+  /** 切到「已完成 / 支出」：带着已填的内容换成记录表单 */
+  private switchToRecord(kind: NewKind): void {
+    const s = this.plugin.settings;
+    const money = s.categories.find((c) => c.kind === "money")?.name;
+    const date = this.t.date || todayStr();
+    const defaults: Partial<Rec> = kind === "money" && money
+      ? { title: this.t.title, category: money, minutes: 0 }
+      : { title: this.t.title, category: this.t.category || undefined, start: this.t.start || undefined, minutes: this.t.estimate || 30 };
+    this.close();
+    new RecordModal(this.app, this.plugin, { date, defaults, onSaved: () => this.opts.onSaved?.(this.t) }).open();
   }
 
   private async save(): Promise<void> {
@@ -772,11 +858,27 @@ export class TaskModal extends Modal {
     }
     if (this.t.status === "done" && !this.t.doneAt) this.t.doneAt = new Date().toISOString();
     if (this.t.status !== "done") this.t.doneAt = "";
+    // 与勾选保持一致：非重复任务在这里被标为完成 / 取消完成时，同样弹出记录框 / 撤掉勾选时记下的记录
+    const before = this.editing ? this.plugin.tasks.byId(this.t.id) : undefined;
+    const wasDone = !!before && before.repeat.kind === "none" && before.status === "done";
+    const becomesDone = this.t.repeat.kind === "none" && this.t.status === "done" && !wasDone;
+    const becomesUndone = wasDone && !(this.t.repeat.kind === "none" && this.t.status === "done");
+    if (becomesDone && !this.t.date) this.t.date = todayStr();
+    const undoneDate = before?.date || "";
     this.saving = true;
     try {
       const saved = await this.plugin.tasks.upsert(this.t);
       this.close();
       this.opts.onSaved?.(saved);
+      const refresh = () => this.opts.onSaved?.(saved);
+      if (becomesDone) {
+        const date = saved.date || todayStr();
+        await afterDone(this.plugin, saved, date, undefined, refresh);
+        refresh();
+      } else if (becomesUndone && undoneDate) {
+        await afterUndone(this.plugin, saved.id, undoneDate, refresh);
+        refresh();
+      }
     } catch (e) {
       formError(this.contentEl, `无法保存：${(e as Error).message}`);
     } finally {
@@ -784,4 +886,3 @@ export class TaskModal extends Modal {
     }
   }
 }
-

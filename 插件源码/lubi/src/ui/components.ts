@@ -19,8 +19,18 @@ export function icon(parent: HTMLElement, name: string, cls = "lubi-icon"): HTML
   return s;
 }
 
+/**
+ * 悬浮提示统一走 Obsidian：只设 aria-label（Obsidian 会据此显示自带提示）。
+ * 不要再设 title —— 浏览器会再弹一个原生提示，出现两个一模一样的提示。
+ */
+export function tip<T extends HTMLElement>(el: T, text: string): T {
+  el.setAttribute("aria-label", text);
+  el.removeAttribute("title");
+  return el;
+}
+
 export function iconButton(parent: HTMLElement, name: string, label: string, onClick: () => void, cls = ""): HTMLButtonElement {
-  const b = parent.createEl("button", { cls: `lubi-icon-btn ${cls}`.trim(), attr: { "aria-label": label, title: label, "data-lubi-focus": `icon:${label}` } });
+  const b = parent.createEl("button", { cls: `lubi-icon-btn ${cls}`.trim(), attr: { "aria-label": label, "data-lubi-focus": `icon:${label}` } });
   setIcon(b, name);
   b.addEventListener("click", (e) => {
     e.stopPropagation();

@@ -34,6 +34,8 @@ export interface Task {
   updated: string;
   /** 勾选完成时顺手记下的记录（完成日期 → 记录标识），取消勾选时据此删掉那条记录 */
   doneLogs?: Record<string, DoneLog>;
+  /** "record"：在每日页直接记下的已完成事项自动生成的任务；删掉那条记录时一起删除 */
+  origin?: "record";
 }
 
 /** 用开始时间 + 标题 + 分类（+ 关联任务）定位一条记录；不含时长，跨夜拆分后仍能找到 */

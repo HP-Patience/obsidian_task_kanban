@@ -46,7 +46,7 @@ export class LubiSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("备份文件夹").setDesc("迁移旧数据前的整份备份放在这里").addText((t) => t.setValue(s.backupFolder).onChange((v) => { s.backupFolder = v.trim() || "备份"; save(); }));
 
     new Setting(containerEl).setName("日程显示时段").setDesc("任务页周日程的起止小时").addText((t) => t.setPlaceholder("6").setValue(String(s.scheduleStartHour)).onChange((v) => { s.scheduleStartHour = clamp(Number(v), 0, 23, 6); save(); })).addText((t) => t.setPlaceholder("24").setValue(String(s.scheduleEndHour)).onChange((v) => { s.scheduleEndHour = clamp(Number(v), 1, 24, 24); save(); }));
-    new Setting(containerEl).setName("勾掉任务时顺手记一条").setDesc("完成任务后自动弹出记录窗口，预填任务名与预计时长").addToggle((t) => t.setValue(s.promptLogOnComplete).onChange((v) => { s.promptLogOnComplete = v; save(); }));
+    new Setting(containerEl).setName("勾掉任务时自动记一条").setDesc("完成任务后直接在时间轴生成记录（按计划开始时间；没有则从此刻往前推预计时长），可撤销，可拖动调整").addToggle((t) => t.setValue(s.promptLogOnComplete).onChange((v) => { s.promptLogOnComplete = v; save(); }));
     new Setting(containerEl).setName("每日可用小时").setDesc("任务页周日程表头的负载条：计划时长 ÷ 可用小时，≥90% 变橙、超过变红").addText((t) => t.setPlaceholder("8").setValue(String(s.dailyCapacityHours ?? 8)).onChange((v) => { s.dailyCapacityHours = clamp(Number(v), 1, 24, 8); save(); }));
 
     // 分类

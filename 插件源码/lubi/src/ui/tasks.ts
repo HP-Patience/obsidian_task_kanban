@@ -5,7 +5,7 @@ import type LubiPlugin from "../main";
 import { Task, weekOf, blankTask } from "../core/tasks";
 import { daysBetween, eachDate, fmtDuration, hmToMin, minToHM, nowHM, shiftDate, shortDate, todayStr, weekdayZh, weekStart } from "../core/time";
 import { categoryOf } from "../settings";
-import { button, catDot, el, emptyState, icon, iconButton, segmented, stopAll, undoNotice } from "./components";
+import { button, catDot, el, emptyState, icon, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
 import { TaskModal, RecordModal } from "./modals";
 import { dayTasks, groupedRows, OpenRecord, renderDayTaskList, taskRow } from "./taskList";
 import { startDrag } from "./drag";
@@ -220,8 +220,10 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
   // 表头 + 全天条
   const corner = grid.createDiv({ cls: "lubi-week-corner" });
   corner.setText("");
+  const heads: HTMLElement[] = [];
   for (const d of days) {
     const h = grid.createDiv({ cls: `lubi-week-day ${d === todayStr() ? "is-today" : ""} ${d === date ? "is-selected" : ""}`.trim() });
+    heads.push(h);
     const dayButton = h.createEl("button", { cls: "lubi-week-day-button", attr: { type: "button", "aria-label": `查看 ${d} 周${weekdayZh(d)} 的任务`, "aria-current": d === date ? "date" : "false" } });
     dayButton.createSpan({ cls: "lubi-week-dow", text: `周${weekdayZh(d)}` });
     dayButton.createSpan({ cls: "lubi-week-date", text: String(Number(d.slice(8, 10))) });
@@ -231,11 +233,10 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
     const strip = h.createDiv({ cls: "lubi-allday" });
     for (const t of allDay) {
       const doneChip = plugin.tasks.isDoneOn(t, d);
-      const chip = strip.createEl("button", { cls: `lubi-allday-chip ${doneChip ? "is-done" : ""}`, attr: { type: "button", "aria-label": `${d} 全天任务 ${t.title}${doneChip ? "（已完成）" : ""}，点击编辑` } });
+      const chip = tip(strip.createEl("button", { cls: `lubi-allday-chip ${doneChip ? "is-done" : ""}`, attr: { type: "button" } }), `${d} 全天任务 ${t.title}${doneChip ? "（已完成）" : ""}：点击编辑，拖到下方时段可定时`);
       chip.style.setProperty("--chip", categoryOf(s, t.category).color);
       if (doneChip) chip.createSpan({ cls: "lubi-allday-check", text: "✓ ", attr: { "aria-hidden": "true" } });
       chip.createSpan({ text: t.title });
-      chip.title = t.title + "（全天 · 拖到下方时段可定时）";
       chip.addEventListener("click", (e) => {
         stopAll(e);
         edit(t);
@@ -253,11 +254,58 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
     l.style.top = `${(h - startH) * HOUR_PX}px`;
     l.setText(`${String(h).padStart(2, "0")}:00`);
   }
+  // 悬停十字指示：横向虚线贯穿整周（当前列加深）+ 当前列与表头高亮 + 左侧刻度栏时间标签；拖动时跟随
+  const hoverLabel = hours.createDiv({ cls: "lubi-week-hover-label", attr: { "aria-hidden": "true" } });
+  const hovers: HTMLElement[] = [];
+  let dragging = false;
+  const yOf = (m: number) => ((m - startH * 60) / 60) * HOUR_PX;
+  const showHover = (col: number, m: number) => {
+    hovers.forEach((h, i) => {
+      h.addClass("is-on");
+      h.toggleClass("is-current", i === col);
+      h.style.top = `${yOf(m)}px`;
+    });
+    cols.forEach((c, i) => c.toggleClass("is-hover", i === col));
+    heads.forEach((h, i) => h.toggleClass("is-hover", i === col));
+    hoverLabel.style.top = `${yOf(m)}px`;
+    hoverLabel.setText(minToHM(m));
+    hoverLabel.addClass("is-on");
+  };
+  const hideHover = () => {
+    hovers.forEach((h) => h.removeClass("is-on", "is-current"));
+    cols.forEach((c) => c.removeClass("is-hover"));
+    heads.forEach((h) => h.removeClass("is-hover"));
+    hoverLabel.removeClass("is-on");
+  };
   const cols: HTMLElement[] = [];
   days.forEach((d, dayIdx) => {
     const col = body.createDiv({ cls: `lubi-week-col ${d === todayStr() ? "is-today" : ""}` });
     cols.push(col);
     col.style.height = `${(endH - startH) * HOUR_PX}px`;
+    const colHover = col.createDiv({ cls: "lubi-tl-hover lubi-week-hover", attr: { "aria-hidden": "true" } });
+    hovers.push(colHover);
+    // 与「空白处拖出新任务」同一套取整规则，悬停线所在位置即拖动起点
+    const minuteAtY = (clientY: number, round = false) => {
+      const rect = col.getBoundingClientRect();
+      const raw = ((clientY - rect.top) / HOUR_PX) * 60;
+      const m = startH * 60 + (round ? snap(raw) : Math.floor(raw / SNAP) * SNAP);
+      return Math.max(startH * 60, Math.min(endH * 60 - SNAP, m));
+    };
+    col.addEventListener("pointermove", (e) => {
+      if (dragging || (e.target as HTMLElement).closest(".lubi-wblock")) {
+        if (!dragging) hideHover();
+        return;
+      }
+      showHover(dayIdx, minuteAtY(e.clientY));
+    });
+    col.addEventListener("pointerleave", () => { if (!dragging) hideHover(); });
+    // 从左侧清单拖任务进来时，同样提示落点时间
+    col.addEventListener("dragover", (e) => {
+      if (!e.dataTransfer?.types.includes("text/lubi-task")) return;
+      showHover(dayIdx, minuteAtY(e.clientY, true));
+    });
+    col.addEventListener("dragleave", (e) => { if (!col.contains(e.relatedTarget as Node | null)) hideHover(); });
+    col.addEventListener("drop", () => hideHover());
     for (let h = startH; h < endH; h++) {
       const line = col.createDiv({ cls: "lubi-week-line" });
       line.style.top = `${(h - startH) * HOUR_PX}px`;
@@ -283,10 +331,9 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
       const timeEl = block.createDiv({ cls: "lubi-wblock-time", text: `${t.start}–${minToHM(startMin + dur)}${t.estimate ? "" : " · 未填预计"}` });
       const handleTop = block.createDiv({ cls: "lubi-block-handle is-top" });
       const handle = block.createDiv({ cls: "lubi-block-handle is-bottom" });
-      block.title = `${t.title}\n${t.start} · ${fmtDuration(dur)}\n拖动改时间 / 换天；点击编辑，或从议程里修改日期时间`;
       block.setAttribute("tabindex", "0");
       block.setAttribute("role", "button");
-      block.setAttribute("aria-label", `${d} ${t.title}，${t.start}，预计 ${fmtDuration(dur)}。回车编辑。`);
+      tip(block, `${d} ${t.title}，${t.start}，预计 ${fmtDuration(dur)}。拖动改时间 / 换天；点击或回车编辑`);
       block.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); edit(t); }
       });
@@ -305,14 +352,20 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
             minMinutes: SNAP,
             snap: SNAP,
             horizontal: mode === "move" ? { colWidth, minCol: -dayIdx, maxCol: 6 - dayIdx } : undefined,
-            onStart: () => block.addClass("is-dragging", mode === "move" ? "is-moving" : "is-resizing"),
+            onStart: () => {
+              dragging = true;
+              block.addClass("is-dragging", mode === "move" ? "is-moving" : "is-resizing");
+            },
             onMove: (st) => {
               place(st.start, st.minutes);
               block.style.transform = st.col ? `translateX(calc(${st.col * 100}% + ${st.col * 1}px))` : "";
               timeEl.setText(`${minToHM(st.start)}–${minToHM(st.start + st.minutes)}`);
               cols.forEach((c, i) => c.toggleClass("is-drop", i === dayIdx + st.col && st.col !== 0));
+              showHover(dayIdx + (st.col || 0), mode === "resize-end" ? st.start + st.minutes : st.start);
             },
             onEnd: (st) => {
+              dragging = false;
+              hideHover();
               block.removeClass("is-dragging", "is-moving", "is-resizing");
               block.style.transform = "";
               cols.forEach((c) => c.removeClass("is-drop"));
@@ -349,6 +402,42 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
       bindDrag(handleTop, "resize-start");
       bindDrag(handle, "resize-end");
     }
+    // 空白处：按下拖出一段时间 → 松手新建任务，日期 / 开始时间 / 预计时长已填好（与每日页时间轴拖出新记录一致）
+    const ghost = col.createDiv({ cls: "lubi-wghost", attr: { "aria-hidden": "true" } });
+    const colPxPerMin = HOUR_PX / 60;
+    col.addEventListener("pointerdown", (e) => {
+      if ((e.target as HTMLElement).closest(".lubi-wblock")) return;
+      const rect = col.getBoundingClientRect();
+      const raw = startH * 60 + Math.floor((e.clientY - rect.top) / colPxPerMin / SNAP) * SNAP;
+      const at = Math.max(startH * 60, Math.min(endH * 60 - SNAP, raw));
+      startDrag(e, {
+        mode: "create",
+        start: at,
+        minutes: 0,
+        pxPerMin: colPxPerMin,
+        min: startH * 60,
+        max: endH * 60,
+        minMinutes: SNAP,
+        snap: SNAP,
+        onStart: () => {
+          dragging = true;
+          ghost.addClass("is-on");
+        },
+        onMove: (st) => {
+          ghost.style.top = `${((st.start - startH * 60) / 60) * HOUR_PX}px`;
+          ghost.style.height = `${Math.max((st.minutes / 60) * HOUR_PX - 2, 16)}px`;
+          ghost.setText(`${minToHM(st.start)}–${minToHM(st.start + st.minutes)} · ${fmtDuration(st.minutes)}`);
+          showHover(dayIdx, st.start + st.minutes);
+        },
+        onEnd: (st) => {
+          dragging = false;
+          hideHover();
+          ghost.removeClass("is-on");
+          if (!st || !st.moved) return;
+          new TaskModal(plugin.app, plugin, { defaults: { date: d, start: minToHM(st.start), estimate: st.minutes }, onSaved: rerender }).open();
+        },
+      });
+    });
     col.addEventListener("dblclick", (e) => {
       if ((e.target as HTMLElement).closest(".lubi-wblock")) return;
       const rect = col.getBoundingClientRect();
@@ -378,9 +467,8 @@ function renderLoad(plugin: LubiPlugin, host: HTMLElement, d: string): void {
   const level = ratio > 1 ? "is-over" : ratio >= 0.9 ? "is-high" : planned ? "is-ok" : "is-empty";
   const load = host.createDiv({ cls: `lubi-load ${level}`, attr: {
     role: "meter", "aria-valuemin": "0", "aria-valuemax": String(capacity), "aria-valuenow": String(Math.min(planned, capacity * 2)),
-    "aria-label": `${d} 计划 ${fmtDuration(planned) || "0"} / 可用 ${fmtDuration(capacity)}`,
   } });
-  load.title = planned ? `计划 ${fmtDuration(planned)} / 可用 ${fmtDuration(capacity)}${ratio > 1 ? " · 排太满了" : ""}` : `还没有计划时长 · 可用 ${fmtDuration(capacity)}`;
+  tip(load, planned ? `${d} 计划 ${fmtDuration(planned)} / 可用 ${fmtDuration(capacity)}${ratio > 1 ? " · 排太满了" : ""}` : `${d} 还没有计划时长 · 可用 ${fmtDuration(capacity)}`);
   const track = load.createDiv({ cls: "lubi-load-track" });
   track.createDiv({ cls: "lubi-load-fill" }).style.width = `${Math.min(100, ratio * 100)}%`;
   load.createSpan({ cls: "lubi-load-text", text: planned ? `${fmtHoursShort(planned)}/${fmtHoursShort(capacity)}` : "—" });
@@ -437,7 +525,7 @@ function renderProjects(plugin: LubiPlugin, host: HTMLElement, state: TasksState
     head.insertBefore(peek, addProject);
     for (const p of projects.slice(0, 4)) {
       const { done, total } = plugin.tasks.progress(p);
-      const chip = peek.createEl("button", { cls: "lubi-project-chip", attr: { type: "button", title: `${p.title} · ${done}/${total}，点击编辑` } });
+      const chip = tip(peek.createEl("button", { cls: "lubi-project-chip", attr: { type: "button" } }), `${p.title} · ${done}/${total}，点击编辑`);
       chip.style.setProperty("--chip", categoryOf(plugin.settings, p.category).color);
       chip.createSpan({ cls: "lubi-project-chip-name", text: p.title });
       const bar = chip.createSpan({ cls: "lubi-project-chip-bar" });
@@ -519,10 +607,9 @@ function renderProjects(plugin: LubiPlugin, host: HTMLElement, state: TasksState
         const liveLabel = bar.createDiv({ cls: "lubi-gantt-live" });
         bar.createDiv({ cls: "lubi-gantt-handle is-left" });
         bar.createDiv({ cls: "lubi-gantt-handle is-right" });
-        bar.title = `${t.title}\n${span.from} → ${span.to}${kids.length ? `\n完成 ${done}/${total}` : ""}\n点按编辑；拖动整条移动，拉两端改跨度`;
         bar.setAttribute("tabindex", "0");
         bar.setAttribute("role", "button");
-        bar.setAttribute("aria-label", `${t.title}，${span.from} 到 ${span.to}，按回车编辑跨度`);
+        tip(bar, `${t.title}，${span.from} → ${span.to}${kids.length ? `，完成 ${done}/${total}` : ""}。点按或回车编辑；拖动整条移动，拉两端改跨度`);
         bar.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") { e.preventDefault(); edit(t); }
         });

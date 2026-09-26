@@ -28,7 +28,7 @@ export default class LubiPlugin extends Plugin {
     this.addSettingTab(new LubiSettingTab(this.app, this));
 
     this.addCommand({ id: "open", name: "打开面板", callback: () => void this.activateView() });
-    this.addCommand({ id: "log", name: "记一条", callback: () => this.quickLog() });
+    this.addCommand({ id: "log", name: "新建（已完成 / 支出 / 待做）", callback: () => this.quickLog() });
     this.addCommand({ id: "open-today", name: "打开面板 · 每日页", callback: () => void this.activateView("today") });
     this.addCommand({ id: "open-review", name: "打开面板 · 回顾页", callback: () => void this.activateView("review") });
     this.addCommand({ id: "open-tasks", name: "打开面板 · 任务页", callback: () => void this.activateView("tasks") });
@@ -113,10 +113,11 @@ export default class LubiPlugin extends Plugin {
     await this.app.workspace.getLeaf("tab").openFile(f);
   }
 
+  /** 新建：有面板时交给面板（任务页默认「待做」，其他页默认「已完成」），否则记今天的一条 */
   quickLog(): void {
     const v = this.views()[0];
-    const date = v?.activeDate() || todayStr();
-    new RecordModal(this.app, this, { date, onSaved: () => this.refreshViews() }).open();
+    if (v) { v.openNew(); return; }
+    new RecordModal(this.app, this, { date: todayStr(), onSaved: () => this.refreshViews() }).open();
   }
 
   shiftDate(date: string, days: number): string {
@@ -183,4 +184,3 @@ export default class LubiPlugin extends Plugin {
     return f instanceof TFile ? f : null;
   }
 }
-

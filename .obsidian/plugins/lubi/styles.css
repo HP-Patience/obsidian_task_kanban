@@ -109,7 +109,8 @@
 .lubi-date-label.is-today { color: var(--lubi-accent); }
 .lubi-date-picker { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
 .lubi-topbar-right { margin-left: auto; display: inline-flex; align-items: center; gap: var(--lubi-gap-1); }
-.lubi-root[data-tab="review"] .lubi-day-nav, .lubi-root[data-tab="tasks"] .lubi-day-nav { display: none; }
+/* 每日页与任务页共用顶栏日期导航；回顾页显示周期上下文 */
+.lubi-root[data-tab="review"] .lubi-day-nav { display: none; }
 
 .lubi-body { flex: 1; min-height: 0; overflow: auto; background: var(--background-secondary); }
 .lubi-page { padding: var(--lubi-gap-4); min-height: 100%; box-sizing: border-box; }
@@ -119,6 +120,13 @@
 @media (max-width: 900px) { .lubi-today { grid-template-columns: 1fr; } }
 .lubi-today-main { display: flex; flex-direction: column; gap: var(--lubi-gap-3); min-width: 0; }
 .lubi-today-side { display: flex; flex-direction: column; gap: var(--lubi-gap-3); position: sticky; top: 0; }
+/* 第一行：时间轴标题；第二行：时间轴 + 右栏（两者顶部对齐） */
+.lubi-today { row-gap: var(--lubi-gap-3); }
+.lubi-today-top { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; gap: var(--lubi-gap-3); min-width: 0; }
+.lubi-today-main { grid-column: 1; grid-row: 2; }
+.lubi-today-side { grid-column: 2; grid-row: 2; }
+@media (max-width: 900px) { .lubi-today-top, .lubi-today-main, .lubi-today-side { grid-column: auto; grid-row: auto; } }
+@container (max-width: 900px) { .lubi-today-top, .lubi-today-main, .lubi-today-side { grid-column: auto; grid-row: auto; } }
 
 .lubi-timeline-scroll {
   height: calc(100vh - 180px); min-height: 420px; overflow-y: auto;
@@ -247,6 +255,15 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-task-title > .lubi-blocked-icon { margin-top: calc(0.7em - 6.5px); }
 .lubi-task-meta { font-size: var(--font-ui-smaller); color: var(--lubi-muted); margin-top: 2px; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
 .lubi-task.is-done .lubi-task-title { text-decoration: line-through; color: var(--lubi-muted); }
+/* 已完成但没记时间：小药丸按钮，点一下补记 */
+.lubi-root button.lubi-task-unlogged, .lubi-task-unlogged {
+  display: inline-flex; align-items: center; gap: 4px; height: auto; margin-top: 4px; padding: 2px 8px;
+  border: 1px dashed var(--color-orange); border-radius: 999px; background: transparent; box-shadow: none;
+  color: var(--color-orange); font-size: var(--font-ui-smaller); line-height: 1.4; cursor: pointer;
+}
+.lubi-root button.lubi-task-unlogged:hover, .lubi-root button.lubi-task-unlogged:focus-visible { background: rgba(var(--color-orange-rgb), 0.12); }
+.lubi-task-unlogged .lubi-icon { width: 12px; height: 12px; }
+.lubi-task-unlogged .lubi-icon svg { width: 12px; height: 12px; }
 .lubi-task.is-blocked .lubi-blocked-icon svg { width: 13px; height: 13px; color: var(--color-orange); }
 .lubi-task-actions { display: none; position: absolute; right: 4px; top: 6px; }
 .lubi-task:hover .lubi-task-actions { display: inline-flex; }
@@ -280,6 +297,33 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-week-hour { position: absolute; right: 6px; transform: translateY(-50%); font-size: 11px; color: var(--lubi-muted); font-variant-numeric: tabular-nums; }
 .lubi-week-col { position: relative; border-right: 1px solid var(--lubi-border); }
 .lubi-week-col:last-child { border-right: none; }
+/* 周日程空白处拖出新任务时的虚线预览 */
+.lubi-wghost {
+  display: none; position: absolute; left: 2px; right: 2px; z-index: 4; box-sizing: border-box; overflow: hidden; pointer-events: none;
+  padding: 2px 6px; border-radius: 4px; border: 1.5px dashed var(--lubi-accent);
+  background: color-mix(in srgb, var(--lubi-accent) 14%, transparent);
+  font-size: 11px; font-weight: 600; line-height: 1.3; color: var(--lubi-accent); font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis;
+}
+.lubi-wghost.is-on { display: block; }
+/* 周日程悬停指示：列内虚线（复用 .lubi-tl-hover）+ 刻度栏时间标签 */
+.lubi-week-hover { z-index: 1; }
+.lubi-week-hover.is-on:not(.is-current) { opacity: 0.45; }
+.lubi-week-hover.is-current { border-top-color: var(--text-muted); }
+/* 十字的竖向部分：当前列两侧虚线 + 淡底色；表头同列同步高亮 */
+.lubi-week-col.is-hover { background-image: linear-gradient(color-mix(in srgb, var(--text-normal) 4%, transparent), color-mix(in srgb, var(--text-normal) 4%, transparent)); }
+.lubi-week-col.is-hover::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 1;
+  border-left: 1px dashed var(--text-faint); border-right: 1px dashed var(--text-faint);
+}
+.lubi-week-day.is-hover { background-image: linear-gradient(color-mix(in srgb, var(--text-normal) 5%, transparent), color-mix(in srgb, var(--text-normal) 5%, transparent)); }
+.lubi-week-day.is-hover .lubi-week-dow { color: var(--text-normal); font-weight: 600; }
+.lubi-week-hover-label {
+  position: absolute; right: 4px; transform: translateY(-50%); z-index: 2; pointer-events: none;
+  opacity: 0; transition: opacity 0.1s;
+  font-size: var(--lubi-fs-xs, 11px); line-height: 1; padding: 3px 5px; border-radius: 3px; white-space: nowrap;
+  background: var(--text-normal); color: var(--background-primary); font-variant-numeric: tabular-nums; font-weight: 600;
+}
+.lubi-week-hover-label.is-on { opacity: 1; }
 .lubi-week-col.is-today { background: color-mix(in srgb, var(--lubi-accent) 4%, transparent); }
 .lubi-week-line { position: absolute; left: 0; right: 0; border-top: 1px solid var(--lubi-border); opacity: 0.7; pointer-events: none; }
 .lubi-week-line.is-half { border-top-style: dashed; opacity: 0.35; }
@@ -399,6 +443,10 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-record-modal { width: 500px; max-width: 92vw; }
 .lubi-record-modal::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--chip); border-radius: 14px 14px 0 0; transition: background 0.15s; }
 .lubi-confirm-body { margin: -6px 0 4px; color: var(--lubi-muted); font-size: var(--font-ui-small); line-height: 1.6; }
+.lubi-delete-opts { display: flex; flex-direction: column; gap: 8px; font-size: var(--font-ui-small); }
+.lubi-delete-opt { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--lubi-border); border-radius: 10px; cursor: pointer; line-height: 1.5; }
+.lubi-delete-opt:has(input:checked) { border-color: var(--interactive-accent); background: var(--background-modifier-hover); }
+.lubi-delete-opt input { margin-top: 3px; }
 
 /* 输入控件 */
 .lubi-modal input[type="text"], .lubi-modal input[type="time"], .lubi-modal input[type="number"], .lubi-modal input[type="date"], .lubi-modal select, .lubi-modal textarea {
@@ -816,7 +864,7 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-root .lubi-topbar-tabs { justify-self: center; }
 .lubi-root .lubi-topbar-right { justify-self: end; margin-left: 0; gap: 6px; }
 .lubi-context { font-weight: 600; font-size: var(--lubi-fs-md); color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 4px; }
-.lubi-root[data-tab="today"] .lubi-context { display: none; }
+.lubi-root[data-tab="today"] .lubi-context, .lubi-root[data-tab="tasks"] .lubi-context { display: none; }
 .lubi-root .lubi-date-label, .lubi-root button.lubi-date-label.is-today, .lubi-root .lubi-date-label.is-today { color: var(--text-normal); display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .lubi-today-badge {
   display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: var(--lubi-radius-pill);

@@ -1,14 +1,16 @@
-// 任务行与「某天的任务清单」：每日页与任务页共用同一套渲染，保证两边显示和行为完全一致。
+// 任务行、「某天的任务清单」，以及任务 ↔ 时间线记录的配对规则：
+//   勾选任务 = 直接在时间线生成一条记录（可撤销）；取消勾选 = 删掉那条记录；
+//   在每日页新记一条时间 = 同时生成一个已完成任务；删掉这条记录 = 连同该任务一起删除。
 
 import { Notice } from "obsidian";
 import type LubiPlugin from "../main";
-import { Rec } from "../core/records";
-import { Task, DoneLog } from "../core/tasks";
-import { fmtDuration, hmToMin, nowHM, todayStr } from "../core/time";
+import { ParsedLine, Rec } from "../core/records";
+import { Task, DoneLog, blankTask } from "../core/tasks";
+import { fmtDuration, hmToMin, minToHM, nowHM, todayStr } from "../core/time";
 import { categoryOf } from "../settings";
-import { button, catDot, icon, iconButton, undoNotice } from "./components";
+import { button, catDot, icon, iconButton, tip, undoNotice } from "./components";
 
-/** 打开「记一条」；onRec 在记录真正保存后回调（取消则不调用） */
+/** 打开「新建 · 已完成」记录框；onRec 在记录真正保存后回调（取消则不调用） */
 export type OpenRecord = (defaults?: Partial<Rec>, onRec?: (rec: Rec) => void | Promise<void>) => void;
 
 /** 某天应显示的任务：有子任务的父任务不单列（它们以分组标题出现） */
@@ -29,8 +31,7 @@ export function groupedRows(plugin: LubiPlugin, list: HTMLElement, items: Task[]
     const section = list.createDiv({ cls: "lubi-task-group" });
     if (group.parent) {
       const path = button(section, group.title, () => edit(group.parent!), { cls: "lubi-task-group-title" });
-      path.title = `编辑父任务：${group.title}`;
-      path.setAttribute("aria-label", `编辑父任务：${group.title}`);
+      tip(path, `编辑父任务：${group.title}`);
     }
     else if (groups.size > 1) section.createDiv({ cls: "lubi-task-group-title lubi-muted", text: "独立任务" });
     for (const task of group.tasks) row(section, task);
@@ -50,28 +51,64 @@ export function renderDayTaskList(plugin: LubiPlugin, list: HTMLElement, date: s
 const sameRecord = (r: Rec, taskId: string, log: DoneLog) =>
   r.task === taskId && r.start === log.start && r.title === log.title && r.category === log.category;
 
-/**
- * 勾选完成后：若开启「勾掉任务时顺手记一条」且这天还没有关联该任务的记录，弹出预填的记录框；
- * 保存后把这条记录登记到任务上（doneLogs），以便取消勾选时精确删掉它。
- */
-async function afterDone(plugin: LubiPlugin, t: Task, date: string, openNew: OpenRecord): Promise<void> {
-  if (!plugin.settings.promptLogOnComplete) return;
-  const rows = await plugin.journal.read(date);
-  if (rows.some((r) => r.rec.task === t.id)) return; // 已有关联记录（比如用 ▶ 记过），不重复记
-  const prevEnd = plugin.lastEndOf(date, date === todayStr() ? hmToMin(nowHM()) : undefined);
-  openNew(
-    { title: t.title, category: t.category || undefined, task: t.id, minutes: t.estimate || 30, start: t.start || prevEnd || undefined },
-    async (rec) => {
-      // 记录框打开期间任务可能又被取消了：此时不登记，避免留下孤儿标记
-      const latest = plugin.tasks.byId(t.id);
-      if (!latest || !plugin.tasks.isDoneOn(latest, date)) return;
-      await plugin.tasks.setDoneLog(t.id, date, { date: rec.date, start: rec.start, title: rec.title, category: rec.category });
-    },
-  );
+const logOf = (r: Rec): DoneLog => ({ date: r.date, start: r.start, title: r.title, category: r.category });
+
+function firstTimeCategory(plugin: LubiPlugin): string {
+  return plugin.settings.categories.find((c) => c.kind === "time")?.name || "日常";
 }
 
-/** 取消勾选后：删掉当初勾选时记下的那条记录（可撤销）；记录被改过则保留并提示 */
-async function afterUndone(plugin: LubiPlugin, id: string, date: string, rerender: () => void): Promise<void> {
+/** 这天是否已有关联该任务的记录 */
+export async function hasLinkedRecord(plugin: LubiPlugin, taskId: string, date: string): Promise<boolean> {
+  return (await plugin.journal.read(date)).some((r) => r.rec.task === taskId);
+}
+
+/**
+ * 按任务直接在时间线上记一条（不弹窗）：
+ * 开始 = 任务的计划开始；没有计划时，今天按「此刻往前推预计时长」，其他日子接在当天最后一条记录后（没有则 09:00）。
+ * 时长 = 预计时长（没填按 30 分钟）。生成后登记到任务上，并给出「撤销」。
+ */
+export async function logDone(plugin: LubiPlugin, t: Task, date: string, rerender?: () => void): Promise<Rec | null> {
+  const minutes = Math.max(5, t.estimate || 30);
+  let start = t.start;
+  if (!start) {
+    if (date === todayStr()) start = minToHM(Math.max(0, hmToMin(nowHM()) - minutes));
+    else start = plugin.lastEndOf(date) || "09:00";
+  }
+  const category = t.category && categoryOf(plugin.settings, t.category).kind === "time" ? t.category : firstTimeCategory(plugin);
+  const rec: Rec = { date, start, minutes, category, title: t.title, task: t.id, extra: {} };
+  try {
+    await plugin.journal.add(rec);
+  } catch (e) {
+    new Notice(`「${t.title}」已完成，但没能自动记录时间：${(e as Error).message}`, 6000);
+    return null;
+  }
+  const latest = plugin.tasks.byId(t.id);
+  if (latest && plugin.tasks.isDoneOn(latest, date)) await plugin.tasks.setDoneLog(t.id, date, logOf(rec));
+  undoNotice(`已记录「${t.title}」${start}–${minToHM(hmToMin(start) + minutes)}，可在时间轴拖动调整`, async () => {
+    const line = await plugin.journal.findLine(date, rec);
+    if (line !== null) await plugin.journal.remove(date, line);
+    const cur = plugin.tasks.byId(t.id);
+    if (cur) {
+      await plugin.tasks.setDoneLog(t.id, date, null);
+      if (plugin.tasks.isDoneOn(cur, date)) await plugin.tasks.toggleDone(t.id, date);
+    }
+    rerender?.();
+  });
+  return rec;
+}
+
+/**
+ * 任务变为完成后（勾选或在编辑窗口改状态）：若开启「勾掉任务时自动记一条」且这天还没有关联该任务的记录，直接生成记录。
+ * 第四个参数保留给旧调用方，不再使用。
+ */
+export async function afterDone(plugin: LubiPlugin, t: Task, date: string, _openNew?: OpenRecord, rerender?: () => void): Promise<void> {
+  if (!plugin.settings.promptLogOnComplete) return;
+  if (await hasLinkedRecord(plugin, t.id, date)) return; // 已有关联记录（比如用 ▶ 记过），不重复记
+  await logDone(plugin, t, date, rerender);
+}
+
+/** 取消勾选后：删掉当初勾选时记下的那条记录（可撤销）；记录被外部改过则保留并提示 */
+export async function afterUndone(plugin: LubiPlugin, id: string, date: string, rerender: () => void): Promise<void> {
   const t = plugin.tasks.byId(id);
   const log = t?.doneLogs?.[date];
   if (!t || !log) return;
@@ -94,6 +131,103 @@ async function afterUndone(plugin: LubiPlugin, id: string, date: string, rerende
   });
 }
 
+/**
+ * 新增一条记录。时间类、且还没关联任务的记录会同时生成一个「已完成」任务（origin = record），
+ * 让每日页补记的事项也出现在任务页。写日记失败时回滚任务，调用方的 rec 不被修改。
+ */
+export async function addRecordAsDone(plugin: LubiPlugin, rec: Rec): Promise<Rec> {
+  const r: Rec = { ...rec, extra: { ...rec.extra } };
+  const isTime = categoryOf(plugin.settings, r.category).kind !== "money" && r.minutes > 0;
+  if (!isTime || r.task) {
+    await plugin.journal.add(r);
+    return r;
+  }
+  const task = blankTask({
+    title: r.title,
+    category: r.category,
+    date: r.date,
+    start: r.start,
+    estimate: r.minutes,
+    status: "done",
+    doneAt: new Date().toISOString(),
+    origin: "record",
+    doneLogs: { [r.date]: logOf(r) },
+  });
+  await plugin.tasks.upsert(task);
+  r.task = task.id;
+  try {
+    await plugin.journal.add(r);
+  } catch (e) {
+    await plugin.tasks.remove(task.id);
+    throw e;
+  }
+  return r;
+}
+
+/**
+ * 记录被界面修改（拖动、改时长、编辑窗口）后，保持与任务的配对：
+ * 由这条记录生成的任务同步标题 / 分类 / 时间；勾选生成的记录更新登记，取消勾选时仍能精确删掉它。
+ */
+export async function syncLinkedTask(plugin: LubiPlugin, old: Rec, next: Rec): Promise<void> {
+  const id = next.task || old.task;
+  if (!id) return;
+  const t = plugin.tasks.byId(id);
+  if (!t) return;
+  const log = t.doneLogs?.[old.date];
+  const paired = !!log && sameRecord(old, id, log);
+  if (t.origin === "record") {
+    await plugin.tasks.upsert({
+      ...t,
+      title: next.title,
+      category: categoryOf(plugin.settings, next.category).kind === "time" ? next.category : t.category,
+      start: next.start,
+      estimate: next.minutes > 0 ? next.minutes : t.estimate,
+      doneLogs: paired || !log ? { ...(t.doneLogs || {}), [old.date]: logOf(next) } : t.doneLogs,
+    });
+  } else if (paired) {
+    await plugin.tasks.setDoneLog(id, old.date, logOf(next));
+  }
+}
+
+/**
+ * 删除一条记录（带撤销）。
+ * - 由这条记录生成的任务（origin = record）一起删除；
+ * - 勾选任务时生成的记录：删除后任务回到未完成（与「取消勾选会删掉记录」对称）。
+ */
+export async function deleteRecord(plugin: LubiPlugin, date: string, row: ParsedLine, rerender: () => void): Promise<void> {
+  const r = row.rec;
+  await plugin.journal.remove(date, row.line);
+  let removedTask: Task | null = null;
+  let unchecked: { id: string; log: DoneLog } | null = null;
+  const t = r.task ? plugin.tasks.byId(r.task) : undefined;
+  if (t) {
+    const log = t.doneLogs?.[date];
+    const stillLinked = await hasLinkedRecord(plugin, t.id, date);
+    if (t.origin === "record" && !stillLinked && !plugin.tasks.children(t.id).length) {
+      removedTask = JSON.parse(JSON.stringify(t)) as Task;
+      await plugin.tasks.remove(t.id);
+    } else if (log && sameRecord(r, t.id, log)) {
+      unchecked = { id: t.id, log };
+      await plugin.tasks.setDoneLog(t.id, date, null);
+      if (plugin.tasks.isDoneOn(t, date)) await plugin.tasks.toggleDone(t.id, date);
+    }
+  }
+  const what = removedTask ? "（任务页里对应的已完成事项也已删除）" : unchecked ? "，对应任务已取消完成" : "";
+  undoNotice(`已删除 ${r.title}${what}`, async () => {
+    if (removedTask && !plugin.tasks.byId(removedTask.id)) await plugin.tasks.upsert(removedTask);
+    await plugin.journal.add({ ...r, extra: { ...r.extra } });
+    if (unchecked) {
+      const cur = plugin.tasks.byId(unchecked.id);
+      if (cur) {
+        if (!plugin.tasks.isDoneOn(cur, date)) await plugin.tasks.toggleDone(unchecked.id, date);
+        await plugin.tasks.setDoneLog(unchecked.id, date, unchecked.log);
+      }
+    }
+    rerender();
+  });
+  rerender();
+}
+
 export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: string, rerender: () => void, openNew: OpenRecord, onClick?: () => void): HTMLElement {
   const done = plugin.tasks.isDoneOn(t, date);
   const li = ul.createDiv({ cls: `lubi-task ${done ? "is-done" : ""} ${t.blocked ? "is-blocked" : ""}`.trim() });
@@ -106,7 +240,7 @@ export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: stri
     cb.dataset.busy = "1";
     try {
       const nowDone = await plugin.tasks.toggleDone(t.id, date);
-      if (nowDone) await afterDone(plugin, t, date, openNew);
+      if (nowDone) await afterDone(plugin, t, date, openNew, rerender);
       else await afterUndone(plugin, t.id, date, rerender);
     } catch (error) { new Notice(`任务更新失败：${(error as Error).message}`, 6000); }
     finally { delete cb.dataset.busy; }
@@ -119,7 +253,7 @@ export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: stri
   if (onClick) line.addEventListener("click", (e) => { e.stopPropagation(); onClick(); });
   if (t.category) catDot(line, categoryOf(plugin.settings, t.category));
   line.createSpan({ cls: "lubi-task-title-text", text: t.title });
-  if (t.blocked) icon(line, "octagon-alert", "lubi-icon lubi-blocked-icon").title = "受阻";
+  if (t.blocked) tip(icon(line, "octagon-alert", "lubi-icon lubi-blocked-icon"), "受阻");
   const parents = plugin.tasks.pathOf(t).slice(0, -1);
   const meta: string[] = [];
   if (parents.length) meta.push(parents.map((p) => p.title).join(" / "));
@@ -128,13 +262,27 @@ export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: stri
   if (t.repeat.kind !== "none") meta.push("重复");
   if (meta.length) {
     const text = meta.join(" · ");
-    const detail = body.createDiv({ cls: "lubi-task-meta", text });
-    detail.title = text;
+    tip(body.createDiv({ cls: "lubi-task-meta", text }), text);
   }
-  // ▶ 开始：以此刻为开始打开「记一条」，并关联该任务
+  // 已完成却没有对应记录（自动记录失败、记录被删）：提示并可一键补记
+  if (done && date <= todayStr() && plugin.settings.promptLogOnComplete) {
+    void hasLinkedRecord(plugin, t.id, date).then((has) => {
+      if (has || body.querySelector(".lubi-task-unlogged")) return;
+      const fix = tip(body.createEl("button", { cls: "lubi-task-unlogged", attr: { type: "button" } }), `「${t.title}」已完成，但时间线上还没有对应的记录。点击按计划时间补记`);
+      icon(fix, "clock", "lubi-icon");
+      fix.createSpan({ text: "未记时间 · 补记" });
+      fix.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const cur = plugin.tasks.byId(t.id) || t;
+        await logDone(plugin, cur, date, rerender);
+        rerender();
+      });
+    });
+  }
+  // ▶ 开始：以此刻为开始打开「新建 · 已完成」，并关联该任务
   if (!done) {
     const acts = li.createDiv({ cls: "lubi-task-actions" });
-    iconButton(acts, "play", `开始「${t.title}」：预填记一条`, () => openNew({
+    iconButton(acts, "play", `开始「${t.title}」：预填一条记录`, () => openNew({
       title: t.title,
       category: t.category || undefined,
       task: t.id,
