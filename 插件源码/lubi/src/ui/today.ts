@@ -1,4 +1,4 @@
-// 记录页：24h 时间轴 + 右侧今日摘要 + 今日待办
+// 每日页：24h 时间轴 + 右侧当天分布 + 当天待办（与任务页「今天」清单同源同步，规划都在任务页）
 
 import { Notice } from "obsidian";
 import type LubiPlugin from "../main";
@@ -9,7 +9,7 @@ import { categoryOf } from "../settings";
 import { button, catChip, catDot, donut, el, emptyState, icon, iconButton, stopAll, undoNotice } from "./components";
 import { minuteAt, startDrag } from "./drag";
 import { RecordModal, TaskModal } from "./modals";
-import { Task } from "../core/tasks";
+import { dayTasks, OpenRecord, renderDayTaskList } from "./taskList";
 
 const HOUR_PX = 56;
 const PX_PER_MIN = HOUR_PX / 60;
@@ -30,7 +30,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const stats = dayTimeStats(timed.map((row) => row.rec));
   const invalidRows = timed.filter((row) => invalidTimedSpan(row.rec));
 
-  const openNew = (defaults: Partial<Rec> = {}) => new RecordModal(plugin.app, plugin, { date, defaults, onSaved: rerender }).open();
+  const openNew: OpenRecord = (defaults = {}, onRec) => new RecordModal(plugin.app, plugin, { date, defaults, onSaved: async (rec) => { if (rec && onRec) await onRec(rec); rerender(); } }).open();
   const openEdit = (row: ParsedLine) => new RecordModal(plugin.app, plugin, { date, rec: row.rec, line: row.line, onSaved: rerender }).open();
 
   // ---------- 左：时间轴 ----------
@@ -397,7 +397,6 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const side = host.createDiv({ cls: "lubi-today-side" });
   renderSummary(plugin, side, rows.map((r) => r.rec), date);
   await renderTodayTasks(plugin, side, date, rerender, openNew);
-  renderShutdown(plugin, side, date, timed.map((row) => row.rec), gaps, openNew);
 }
 
 /** 当天 ≥ minGap 分钟的空白段。今天只算到此刻，未来日期没有黑洞。 */
@@ -421,32 +420,6 @@ export function blackHoles(recs: readonly Rec[], date: string, minGap = 30): { s
   }
   if (limit - cursor >= minGap) out.push({ start: cursor, minutes: limit - cursor });
   return out;
-}
-
-/** 晚间「今日收尾」：覆盖率 · 最大空白 · 明日首个任务（借鉴 Sunsama 的 shutdown ritual） */
-function renderShutdown(plugin: LubiPlugin, side: HTMLElement, date: string, recs: Rec[], gaps: { start: number; minutes: number }[], openNew: (d: Partial<Rec>) => void): void {
-  if (!plugin.settings.showShutdown || date !== todayStr() || hmToMin(nowHM()) < 21 * 60) return;
-  const card = side.createDiv({ cls: "lubi-card lubi-shutdown" });
-  const head = card.createDiv({ cls: "lubi-panel-head" });
-  icon(head, "sunset", "lubi-icon lubi-shutdown-icon");
-  el(head, "h3", "lubi-panel-title", "今日收尾");
-  const covered = dayTimeStats(recs).coveredMinutes;
-  const nowMin = hmToMin(nowHM());
-  const kv = (k: string, v: string) => {
-    const row = card.createDiv({ cls: "lubi-kv" });
-    row.createSpan({ text: k });
-    row.createSpan({ cls: "lubi-kv-val", text: v });
-  };
-  kv("到此刻的覆盖", `${Math.round((covered / Math.max(1, nowMin)) * 100)}%`);
-  const biggest = gaps.slice().sort((a, b) => b.minutes - a.minutes)[0];
-  kv("最大空白", biggest ? `${minToHM(biggest.start)}–${minToHM(biggest.start + biggest.minutes)} · ${fmtDuration(biggest.minutes)}` : "没有");
-  const tomorrow = shiftDate(date, 1);
-  const next = plugin.tasks.forDate(tomorrow).filter((t) => !plugin.tasks.children(t.id).length)
-    .sort((a, b) => (a.start || "99").localeCompare(b.start || "99"))[0];
-  kv("明天第一件", next ? `${next.start ? next.start + " " : ""}${next.title}` : "还没安排");
-  const acts = card.createDiv({ cls: "lubi-shutdown-actions" });
-  if (biggest) button(acts, "补记最大空白", () => openNew({ start: minToHM(biggest.start), minutes: biggest.minutes }), { cls: "lubi-btn-sm" });
-  button(acts, "安排明天", () => plugin.openDate(tomorrow, "tasks"), { cls: "lubi-btn-sm lubi-btn-ghost" });
 }
 
 function layoutLanes(rows: ParsedLine[]): Lane[] {
@@ -519,74 +492,20 @@ function renderSummary(plugin: LubiPlugin, side: HTMLElement, recs: Rec[], date:
   }
 }
 
-async function renderTodayTasks(plugin: LubiPlugin, side: HTMLElement, date: string, rerender: () => void, openNew: (d: Partial<Rec>) => void): Promise<void> {
-  const tasks = plugin.tasks.forDate(date).filter((t) => !plugin.tasks.children(t.id).length);
-  const card = side.createDiv({ cls: "lubi-card" });
+async function renderTodayTasks(plugin: LubiPlugin, side: HTMLElement, date: string, rerender: () => void, openNew: OpenRecord): Promise<void> {
+  const tasks = dayTasks(plugin, date);
+  const card = side.createDiv({ cls: "lubi-card lubi-day-tasks" });
   const head = card.createDiv({ cls: "lubi-panel-head" });
   el(head, "h3", "lubi-panel-title", date === todayStr() ? "今日待办" : `${shortDate(date)} 待办`);
   const done = tasks.filter((t) => plugin.tasks.isDoneOn(t, date)).length;
   if (tasks.length) head.createSpan({ cls: "lubi-muted", text: `${done}/${tasks.length}` });
-  iconButton(head, "list-todo", "去任务页", () => plugin.openDate(date, "tasks"), "lubi-push-right");
+  iconButton(head, "list-todo", "在任务页安排", () => plugin.openDate(date, "tasks"), "lubi-push-right");
   if (!tasks.length) {
-    card.createDiv({ cls: "lubi-muted", text: "这天没有安排任务。可到「任务」页新建或选择日期。" });
+    card.createDiv({ cls: "lubi-muted", text: "这天没有安排任务。新建和排期请到「任务」页。" });
     return;
   }
-  const ul = card.createDiv({ cls: "lubi-task-list lubi-task-list-compact" });
-  for (const t of tasks) taskRow(plugin, ul, t, date, rerender, openNew, () => new TaskModal(plugin.app, plugin, { task: t, onSaved: rerender }).open());
-}
-
-export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: string, rerender: () => void, openNew: (d: Partial<Rec>) => void, onClick?: () => void): HTMLElement {
-  const done = plugin.tasks.isDoneOn(t, date);
-  const li = ul.createDiv({ cls: `lubi-task ${done ? "is-done" : ""} ${t.blocked ? "is-blocked" : ""}`.trim() });
-  const cb = li.createEl("input", { type: "checkbox" });
-  cb.checked = done;
-  cb.setAttribute("aria-label", `${done ? "取消完成" : "完成"} ${t.title}（${date}）`);
-  cb.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    try {
-      const nowDone = await plugin.tasks.toggleDone(t.id, date);
-      if (nowDone && plugin.settings.promptLogOnComplete) {
-        const prevEnd = plugin.lastEndOf(date, date === todayStr() ? hmToMin(nowHM()) : undefined);
-        openNew({ title: t.title, category: t.category || undefined, task: t.id, minutes: t.estimate || 30, start: t.start || prevEnd || undefined });
-      }
-    } catch (error) { new Notice(`任务更新失败：${(error as Error).message}`, 6000); }
-    rerender();
-  });
-  const body = li.createDiv({ cls: "lubi-task-body" });
-  const line = onClick
-    ? body.createEl("button", { cls: "lubi-task-title lubi-task-title-button", attr: { type: "button", "aria-label": `编辑 ${t.title}` } })
-    : body.createDiv({ cls: "lubi-task-title" });
-  if (onClick) line.addEventListener("click", (e) => { e.stopPropagation(); onClick(); });
-  if (t.category) catDot(line, categoryOf(plugin.settings, t.category));
-  line.createSpan({ cls: "lubi-task-title-text", text: t.title });
-  if (t.blocked) icon(line, "octagon-alert", "lubi-icon lubi-blocked-icon").title = "受阻";
-  const parents = plugin.tasks.pathOf(t).slice(0, -1);
-  const meta: string[] = [];
-  if (parents.length) meta.push(parents.map((p) => p.title).join(" / "));
-  if (t.start) meta.push(t.start);
-  if (t.estimate) meta.push(fmtDuration(t.estimate));
-  if (t.repeat.kind !== "none") meta.push("重复");
-  if (meta.length) {
-    const text = meta.join(" · ");
-    const detail = body.createDiv({ cls: "lubi-task-meta", text });
-    detail.title = text;
-  }
-  // ▶ 开始：以此刻为开始打开「记一条」，并关联该任务（记录页与任务页共用同一行组件）
-  if (!done) {
-    const acts = li.createDiv({ cls: "lubi-task-actions" });
-    iconButton(acts, "play", `开始「${t.title}」：预填记一条`, () => openNew({
-      title: t.title,
-      category: t.category || undefined,
-      task: t.id,
-      start: date === todayStr() ? nowHM() : t.start || undefined,
-      minutes: t.estimate || 30,
-    }), "lubi-task-start");
-  }
-  if (onClick) li.addEventListener("click", (e) => {
-    if ((e.target as HTMLElement).closest("button, input")) return;
-    onClick();
-  });
-  return li;
+  const list = card.createDiv({ cls: "lubi-task-list lubi-task-list-compact" });
+  renderDayTaskList(plugin, list, date, rerender, openNew, (t) => new TaskModal(plugin.app, plugin, { task: t, onSaved: rerender }).open());
 }
 
 function renderOnboarding(plugin: LubiPlugin, host: HTMLElement, onAdd: () => void): void {

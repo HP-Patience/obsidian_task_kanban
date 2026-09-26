@@ -79,6 +79,69 @@ tk.querySelector("input[type=checkbox]").click(); await tick(); await tick();
 check(O.openModals.length === before + 1, "completing task prompts record modal");
 check(O.openModals.at(-1).contentEl.querySelector('input[type="text"]').value.length > 0, "prompt prefilled with task title: " + O.openModals.at(-1).contentEl.querySelector('input[type="text"]').value);
 O.openModals.at(-1).close();
+// ---------- 勾选 ↔ 取消：时间线记录成对出现 / 消失；每日页与任务页同源 ----------
+{
+  const D = "2026-09-24", ID = "sync-1";
+  await plugin.tasks.upsert({ ...plugin.tasks.all[0], id: ID, title: "同步测试", parent: null, status: "todo", blocked: false, date: D, start: "06:00", estimate: 30, repeat: { kind: "none", days: [] }, doneDates: [], doneLogs: undefined, startDate: "", endDate: "" });
+  const linked = () => (app.vault.files.get(`日记/${D}.md`) || "").split("\n").filter((l) => l.includes(`[任务:: ${ID}]`));
+  const row = () => [...root.querySelectorAll(".lubi-task")].find((r) => r.querySelector(".lubi-task-title-text")?.textContent === "同步测试");
+  const toggle = async () => { row().querySelector("input[type=checkbox]").click(); for (let i = 0; i < 4; i++) await tick(); };
+  const saveModal = async () => { [...O.openModals.at(-1).contentEl.querySelectorAll("button")].find((b) => b.textContent.includes("记下")).click(); for (let i = 0; i < 4; i++) await tick(); };
+  view.show("today", D); await tick();
+  const modalsBefore = O.openModals.length;
+  await toggle();
+  check(O.openModals.length === modalsBefore + 1, "sync: checking prompts record modal");
+  await saveModal();
+  check(linked().length === 1 && plugin.tasks.byId(ID).doneLogs?.[D]?.start === "06:00", "sync: saved record is registered on the task");
+  await toggle();
+  check(linked().length === 0 && !plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D) && !plugin.tasks.byId(ID).doneLogs, "sync: unchecking removes the record created by checking");
+  check(document.body.textContent.includes("已取消完成") && !!document.body.querySelector(".lubi-notice-btn"), "sync: removal is announced with undo");
+  // 撤销：记录与完成状态一起回来
+  [...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); for (let i = 0; i < 4; i++) await tick();
+  check(linked().length === 1 && plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D) && !!plugin.tasks.byId(ID).doneLogs?.[D], "sync: undo restores record, done state and registration");
+  await toggle();
+  // 反复勾选 / 取消 5 轮：任何时刻最多 1 条
+  let maxSeen = 0;
+  for (let i = 0; i < 5; i++) {
+    await toggle(); await saveModal(); maxSeen = Math.max(maxSeen, linked().length);
+    await toggle(); maxSeen = Math.max(maxSeen, linked().length);
+  }
+  check(maxSeen === 1 && linked().length === 0, `sync: 5 check/uncheck rounds never duplicate (max ${maxSeen}, end ${linked().length})`);
+  // 连点：写盘期间的第二次点击被忽略
+  row().querySelector("input[type=checkbox]").click(); row().querySelector("input[type=checkbox]").click();
+  for (let i = 0; i < 4; i++) await tick();
+  check(plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D), "sync: rapid double click toggles once");
+  O.openModals.at(-1).close(); await toggle();
+  // 已有关联记录（▶ 记的）时再勾选：不弹框、不重复；取消勾选时保留它
+  await plugin.journal.add({ date: D, start: "06:30", minutes: 20, category: "学习", title: "同步测试", task: ID, extra: {} });
+  const m2 = O.openModals.length;
+  await toggle();
+  check(O.openModals.length === m2 && linked().length === 1, "sync: no prompt when a linked record already exists");
+  await toggle();
+  check(linked().length === 1, "sync: unchecking keeps records not created by the checkbox");
+  await plugin.journal.remove(D, await plugin.journal.findLine(D, { start: "06:30", minutes: 20, category: "学习", title: "同步测试" }));
+  // 勾选时记下的记录被手动改过：取消勾选不动它
+  await toggle(); await saveModal();
+  const line = await plugin.journal.findLine(D, { start: "06:00", minutes: 30, category: "学习", title: "同步测试" });
+  const rec = (await plugin.journal.read(D)).find((r) => r.line === line).rec;
+  await plugin.journal.update(D, line, { ...rec, start: "06:10" });
+  view.show("today", D); await tick();
+  await toggle();
+  check(linked().length === 1 && O.notices.at(-1).includes("已被修改"), "sync: edited record is kept on uncheck");
+  await plugin.journal.remove(D, await plugin.journal.findLine(D, { ...rec, start: "06:10" }));
+  // 任务页勾选 → 每日页同步；两边清单一致
+  view.show("tasks", D); await tick();
+  const titles = (sel) => [...root.querySelectorAll(sel)].map((x) => x.textContent).join("|");
+  const tasksSide = titles(".lubi-tasks-left .lubi-list-card:first-child .lubi-task-title-text");
+  await toggle(); O.openModals.at(-1).close();
+  view.show("today", D); await tick();
+  check(titles(".lubi-day-tasks .lubi-task-title-text") === tasksSide, "sync: daily list mirrors task page's day list");
+  check(row()?.classList.contains("is-done"), "sync: done state set on task page shows on daily page");
+  await toggle();
+  await plugin.tasks.remove(ID);
+  // 清掉本段产生的撤销提示，避免后面的用例点到它们
+  for (const n of [...document.body.children]) if (n.querySelector?.(".lubi-notice-btn")) n.remove();
+}
 // 快速添加待办
 view.show("tasks", "2026-09-24"); await tick();
 const qa = root.querySelector(".lubi-quick-add input"); qa.value = "买牛奶"; qa.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter" })); await tick(); await tick();
@@ -183,7 +246,7 @@ check(root.querySelectorAll(".lubi-chart-legend-item").length >= 1, "chart legen
   root.querySelector(".lubi-bars").dispatchEvent(new window.PointerEvent("pointerleave", { bubbles: false }));
   check(document.body.querySelectorAll(".lubi-tip").length === 0, "tooltip removed on pointerleave");
   void barsEl; }
-// 9c. 回顾 → 点柱子跳到记录页 → 再点顶栏「回顾」能回来
+// 9c. 回顾 → 点柱子跳到每日页 → 再点顶栏「回顾」能回来
 { view.show("review"); await tick(); await tick();
   const col = [...root.querySelectorAll(".lubi-bar-col")].find((c) => !c.classList.contains("is-empty")) || root.querySelector(".lubi-bar-col");
   col.click(); await tick(); await tick();

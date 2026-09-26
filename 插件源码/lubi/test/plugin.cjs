@@ -23,7 +23,7 @@ __export(main_exports, {
   default: () => LubiPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian10 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 
 // src/settings.ts
 var DEFAULT_CATEGORIES = [
@@ -67,7 +67,6 @@ var DEFAULT_SETTINGS = {
   categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
   expenseTypes: ["\u9910\u996E", "\u5C45\u4F4F", "\u4EA4\u901A", "\u670D\u9970\u4E2A\u62A4", "\u4F11\u95F2\u5A31\u4E50", "\u533B\u7597\u4FDD\u5065", "\u6559\u80B2\u63D0\u5347", "\u5176\u4ED6"],
   dailyCapacityHours: 8,
-  showShutdown: true,
   paletteVersion: 2
 };
 function categoryOf(settings, name) {
@@ -628,6 +627,18 @@ var Tasks = class {
     await this.commit();
     return done;
   }
+  /** 登记 / 清除「勾选完成时记下的记录」 */
+  async setDoneLog(id, date, log) {
+    const t = this.byId(id);
+    if (!t) return;
+    const next = { ...t.doneLogs || {} };
+    if (log) next[date] = log;
+    else if (next[date]) delete next[date];
+    else return;
+    t.doneLogs = Object.keys(next).length ? next : void 0;
+    t.updated = (/* @__PURE__ */ new Date()).toISOString();
+    await this.commit();
+  }
   autoCompleteParent(pid) {
     const p = this.byId(pid);
     if (!p) return;
@@ -695,8 +706,17 @@ function normalize(t) {
     repeat: { kind: t.repeat?.kind || "none", days: Array.isArray(t.repeat?.days) ? t.repeat.days : [] },
     doneDates: Array.isArray(t.doneDates) ? t.doneDates : [],
     order: typeof t.order === "number" ? t.order : b.order,
-    estimate: typeof t.estimate === "number" ? t.estimate : 0
+    estimate: typeof t.estimate === "number" ? t.estimate : 0,
+    doneLogs: cleanDoneLogs(t.doneLogs)
   };
+}
+function cleanDoneLogs(v) {
+  if (!v || typeof v !== "object") return void 0;
+  const out = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (x && typeof x.start === "string" && typeof x.title === "string") out[k] = { date: x.date || k, start: x.start, title: x.title, category: x.category || "" };
+  }
+  return Object.keys(out).length ? out : void 0;
 }
 var STATUS_MAP = { pending: "todo", doing: "doing", blocked: "todo", done: "done" };
 function migrateLegacy(old) {
@@ -817,7 +837,7 @@ async function mkdirp(app, folder) {
 }
 
 // src/ui/view.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 
 // src/ui/components.ts
 var import_obsidian4 = require("obsidian");
@@ -1023,7 +1043,7 @@ function hoverTip(host, selector, content) {
 }
 
 // src/ui/today.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/core/metrics.ts
 function validClock(value) {
@@ -1328,8 +1348,8 @@ var ConfirmModal = class extends import_obsidian5.Modal {
 var SHORTCUTS = [
   ["N", "\u8BB0\u4E00\u6761"],
   ["1 / 2 / 3", "\u5207\u6362 \u8BB0\u5F55 \xB7 \u56DE\u987E \xB7 \u4EFB\u52A1"],
-  ["T", "\u8BB0\u5F55\u9875\u56DE\u5230\u4ECA\u5929"],
-  ["\u2190 / \u2192", "\u8BB0\u5F55\u9875\u524D\u4E00\u5929 / \u540E\u4E00\u5929"],
+  ["T", "\u6BCF\u65E5\u9875\u56DE\u5230\u4ECA\u5929"],
+  ["\u2190 / \u2192", "\u6BCF\u65E5\u9875\u524D\u4E00\u5929 / \u540E\u4E00\u5929"],
   ["?", "\u6253\u5F00\u672C\u901F\u67E5\u5361"],
   ["\u2191 / \u2193", "\u65F6\u95F4\u8F74\uFF1A\u9009\u4E2D\u5757\u79FB\u52A8 5 \u5206\u949F\uFF08Alt \u4E3A 1 \u5206\u949F\uFF09"],
   ["Shift + \u2191 / \u2193", "\u65F6\u95F4\u8F74\uFF1A\u6539\u65F6\u957F"],
@@ -1695,7 +1715,7 @@ var RecordModal = class extends import_obsidian5.Modal {
       if (this.editing && this.opts.line !== void 0) await this.plugin.journal.update(this.opts.date, this.opts.line, r);
       else await this.plugin.journal.add(r);
       this.close();
-      this.opts.onSaved?.();
+      this.opts.onSaved?.({ ...r, extra: { ...r.extra } });
     } catch (e) {
       formError(this.contentEl, `\u65E0\u6CD5\u4FDD\u5B58\uFF1A${e.message}`);
     } finally {
@@ -1992,6 +2012,138 @@ var TaskModal = class extends import_obsidian5.Modal {
   }
 };
 
+// src/ui/taskList.ts
+var import_obsidian6 = require("obsidian");
+function dayTasks(plugin, date) {
+  return plugin.tasks.forDate(date).filter((t) => !plugin.tasks.children(t.id).length);
+}
+function groupedRows(plugin, list, items, edit, row) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const task of items) {
+    const parents = plugin.tasks.pathOf(task).slice(0, -1);
+    const key = parents.map((p) => p.id).join("/") || "__root__";
+    if (!groups.has(key)) groups.set(key, { parent: parents[parents.length - 1], title: parents.map((p) => p.title).join(" / "), tasks: [] });
+    groups.get(key).tasks.push(task);
+  }
+  for (const group of groups.values()) {
+    const section = list.createDiv({ cls: "lubi-task-group" });
+    if (group.parent) {
+      const path = button(section, group.title, () => edit(group.parent), { cls: "lubi-task-group-title" });
+      path.title = `\u7F16\u8F91\u7236\u4EFB\u52A1\uFF1A${group.title}`;
+      path.setAttribute("aria-label", `\u7F16\u8F91\u7236\u4EFB\u52A1\uFF1A${group.title}`);
+    } else if (groups.size > 1) section.createDiv({ cls: "lubi-task-group-title lubi-muted", text: "\u72EC\u7ACB\u4EFB\u52A1" });
+    for (const task of group.tasks) row(section, task);
+  }
+}
+function renderDayTaskList(plugin, list, date, rerender, openNew, edit, decorate) {
+  const items = dayTasks(plugin, date);
+  groupedRows(plugin, list, items, edit, (group, t) => {
+    const li = taskRow(plugin, group, t, date, rerender, openNew, () => edit(t));
+    decorate?.(li, t);
+  });
+  return items;
+}
+var sameRecord = (r, taskId, log) => r.task === taskId && r.start === log.start && r.title === log.title && r.category === log.category;
+async function afterDone(plugin, t, date, openNew) {
+  if (!plugin.settings.promptLogOnComplete) return;
+  const rows = await plugin.journal.read(date);
+  if (rows.some((r) => r.rec.task === t.id)) return;
+  const prevEnd = plugin.lastEndOf(date, date === todayStr() ? hmToMin(nowHM()) : void 0);
+  openNew(
+    { title: t.title, category: t.category || void 0, task: t.id, minutes: t.estimate || 30, start: t.start || prevEnd || void 0 },
+    async (rec) => {
+      const latest = plugin.tasks.byId(t.id);
+      if (!latest || !plugin.tasks.isDoneOn(latest, date)) return;
+      await plugin.tasks.setDoneLog(t.id, date, { date: rec.date, start: rec.start, title: rec.title, category: rec.category });
+    }
+  );
+}
+async function afterUndone(plugin, id, date, rerender) {
+  const t = plugin.tasks.byId(id);
+  const log = t?.doneLogs?.[date];
+  if (!t || !log) return;
+  await plugin.tasks.setDoneLog(id, date, null);
+  const rows = await plugin.journal.read(log.date);
+  const hit = rows.find((r) => sameRecord(r.rec, id, log));
+  if (!hit) {
+    new import_obsidian6.Notice("\u52FE\u9009\u65F6\u8BB0\u4E0B\u7684\u90A3\u6761\u8BB0\u5F55\u5DF2\u88AB\u4FEE\u6539\u6216\u5220\u9664\uFF0C\u65F6\u95F4\u7EBF\u672A\u4F5C\u6539\u52A8");
+    return;
+  }
+  await plugin.journal.remove(log.date, hit.line);
+  const removed = hit.rec;
+  undoNotice(`\u5DF2\u53D6\u6D88\u5B8C\u6210\uFF0C\u5E76\u4ECE\u65F6\u95F4\u7EBF\u79FB\u9664\u300C${removed.title}\u300D`, async () => {
+    const cur = plugin.tasks.byId(id);
+    if (!cur) {
+      new import_obsidian6.Notice("\u4EFB\u52A1\u5DF2\u5220\u9664\uFF0C\u65E0\u6CD5\u64A4\u9500");
+      return;
+    }
+    await plugin.journal.add({ ...removed, extra: { ...removed.extra } });
+    if (!plugin.tasks.isDoneOn(cur, date)) await plugin.tasks.toggleDone(id, date);
+    await plugin.tasks.setDoneLog(id, date, log);
+    rerender();
+  });
+}
+function taskRow(plugin, ul, t, date, rerender, openNew, onClick) {
+  const done = plugin.tasks.isDoneOn(t, date);
+  const li = ul.createDiv({ cls: `lubi-task ${done ? "is-done" : ""} ${t.blocked ? "is-blocked" : ""}`.trim() });
+  const cb = li.createEl("input", { type: "checkbox" });
+  cb.checked = done;
+  cb.setAttribute("aria-label", `${done ? "\u53D6\u6D88\u5B8C\u6210" : "\u5B8C\u6210"} ${t.title}\uFF08${date}\uFF09`);
+  cb.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (cb.dataset.busy) {
+      e.preventDefault();
+      return;
+    }
+    cb.dataset.busy = "1";
+    try {
+      const nowDone = await plugin.tasks.toggleDone(t.id, date);
+      if (nowDone) await afterDone(plugin, t, date, openNew);
+      else await afterUndone(plugin, t.id, date, rerender);
+    } catch (error) {
+      new import_obsidian6.Notice(`\u4EFB\u52A1\u66F4\u65B0\u5931\u8D25\uFF1A${error.message}`, 6e3);
+    } finally {
+      delete cb.dataset.busy;
+    }
+    rerender();
+  });
+  const body = li.createDiv({ cls: "lubi-task-body" });
+  const line = onClick ? body.createEl("button", { cls: "lubi-task-title lubi-task-title-button", attr: { type: "button", "aria-label": `\u7F16\u8F91 ${t.title}` } }) : body.createDiv({ cls: "lubi-task-title" });
+  if (onClick) line.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  if (t.category) catDot(line, categoryOf(plugin.settings, t.category));
+  line.createSpan({ cls: "lubi-task-title-text", text: t.title });
+  if (t.blocked) icon(line, "octagon-alert", "lubi-icon lubi-blocked-icon").title = "\u53D7\u963B";
+  const parents = plugin.tasks.pathOf(t).slice(0, -1);
+  const meta = [];
+  if (parents.length) meta.push(parents.map((p) => p.title).join(" / "));
+  if (t.start) meta.push(t.start);
+  if (t.estimate) meta.push(fmtDuration(t.estimate));
+  if (t.repeat.kind !== "none") meta.push("\u91CD\u590D");
+  if (meta.length) {
+    const text = meta.join(" \xB7 ");
+    const detail = body.createDiv({ cls: "lubi-task-meta", text });
+    detail.title = text;
+  }
+  if (!done) {
+    const acts = li.createDiv({ cls: "lubi-task-actions" });
+    iconButton(acts, "play", `\u5F00\u59CB\u300C${t.title}\u300D\uFF1A\u9884\u586B\u8BB0\u4E00\u6761`, () => openNew({
+      title: t.title,
+      category: t.category || void 0,
+      task: t.id,
+      start: date === todayStr() ? nowHM() : t.start || void 0,
+      minutes: t.estimate || 30
+    }), "lubi-task-start");
+  }
+  if (onClick) li.addEventListener("click", (e) => {
+    if (e.target.closest("button, input")) return;
+    onClick();
+  });
+  return li;
+}
+
 // src/ui/today.ts
 var HOUR_PX = 56;
 var PX_PER_MIN = HOUR_PX / 60;
@@ -2004,7 +2156,10 @@ async function renderToday(plugin, host, date, rerender) {
   const money = rows.filter((r) => r.rec.minutes <= 0);
   const stats = dayTimeStats(timed.map((row) => row.rec));
   const invalidRows = timed.filter((row) => invalidTimedSpan(row.rec));
-  const openNew = (defaults = {}) => new RecordModal(plugin.app, plugin, { date, defaults, onSaved: rerender }).open();
+  const openNew = (defaults = {}, onRec) => new RecordModal(plugin.app, plugin, { date, defaults, onSaved: async (rec) => {
+    if (rec && onRec) await onRec(rec);
+    rerender();
+  } }).open();
   const openEdit = (row) => new RecordModal(plugin.app, plugin, { date, rec: row.rec, line: row.line, onSaved: rerender }).open();
   const left = host.createDiv({ cls: "lubi-today-main" });
   if (!plugin.settings.onboardingDone && plugin.journal.dates().length === 0) renderOnboarding(plugin, left, () => openNew());
@@ -2077,7 +2232,7 @@ async function renderToday(plugin, host, date, rerender) {
     try {
       await plugin.journal.update(date, row.line, next);
     } catch (e) {
-      new import_obsidian6.Notice(e.message, 6e3);
+      new import_obsidian7.Notice(e.message, 6e3);
       rerender();
       return;
     }
@@ -2137,9 +2292,9 @@ ${invalid ? "\u5148\u6821\u5BF9\u8BB0\u5F55" : "\u62D6\u52A8\u79FB\u52A8 \xB7 \u
       const copy = { ...r, date: plugin.shiftDate(date, 1), extra: { ...r.extra } };
       try {
         await plugin.journal.add(copy);
-        new import_obsidian6.Notice(`\u5DF2\u590D\u5236\u5230 ${copy.date}`);
+        new import_obsidian7.Notice(`\u5DF2\u590D\u5236\u5230 ${copy.date}`);
       } catch (e) {
-        new import_obsidian6.Notice(e.message);
+        new import_obsidian7.Notice(e.message);
       }
     });
     iconButton(acts, "trash-2", "\u5220\u9664", async () => {
@@ -2261,7 +2416,7 @@ ${invalid ? "\u5148\u6821\u5BF9\u8BB0\u5F55" : "\u62D6\u52A8\u79FB\u52A8 \xB7 \u
     const r = selected.row.rec;
     if (invalidTimedSpan(r) && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       e.preventDefault();
-      new import_obsidian6.Notice("\u8BF7\u5148\u5728\u7F16\u8F91\u8868\u5355\u6821\u5BF9\u8FD9\u6761\u8DE8\u65E5\u8BB0\u5F55\u7684\u65F6\u957F");
+      new import_obsidian7.Notice("\u8BF7\u5148\u5728\u7F16\u8F91\u8868\u5355\u6821\u5BF9\u8FD9\u6761\u8DE8\u65E5\u8BB0\u5F55\u7684\u65F6\u957F");
       return;
     }
     const s = hmToMin(r.start);
@@ -2340,7 +2495,6 @@ ${invalid ? "\u5148\u6821\u5BF9\u8BB0\u5F55" : "\u62D6\u52A8\u79FB\u52A8 \xB7 \u
   const side = host.createDiv({ cls: "lubi-today-side" });
   renderSummary(plugin, side, rows.map((r) => r.rec), date);
   await renderTodayTasks(plugin, side, date, rerender, openNew);
-  renderShutdown(plugin, side, date, timed.map((row) => row.rec), gaps, openNew);
 }
 function blackHoles(recs, date, minGap = 30) {
   const today = todayStr();
@@ -2359,29 +2513,6 @@ function blackHoles(recs, date, minGap = 30) {
   }
   if (limit - cursor >= minGap) out.push({ start: cursor, minutes: limit - cursor });
   return out;
-}
-function renderShutdown(plugin, side, date, recs, gaps, openNew) {
-  if (!plugin.settings.showShutdown || date !== todayStr() || hmToMin(nowHM()) < 21 * 60) return;
-  const card = side.createDiv({ cls: "lubi-card lubi-shutdown" });
-  const head = card.createDiv({ cls: "lubi-panel-head" });
-  icon(head, "sunset", "lubi-icon lubi-shutdown-icon");
-  el(head, "h3", "lubi-panel-title", "\u4ECA\u65E5\u6536\u5C3E");
-  const covered = dayTimeStats(recs).coveredMinutes;
-  const nowMin = hmToMin(nowHM());
-  const kv = (k, v) => {
-    const row = card.createDiv({ cls: "lubi-kv" });
-    row.createSpan({ text: k });
-    row.createSpan({ cls: "lubi-kv-val", text: v });
-  };
-  kv("\u5230\u6B64\u523B\u7684\u8986\u76D6", `${Math.round(covered / Math.max(1, nowMin) * 100)}%`);
-  const biggest = gaps.slice().sort((a, b) => b.minutes - a.minutes)[0];
-  kv("\u6700\u5927\u7A7A\u767D", biggest ? `${minToHM(biggest.start)}\u2013${minToHM(biggest.start + biggest.minutes)} \xB7 ${fmtDuration(biggest.minutes)}` : "\u6CA1\u6709");
-  const tomorrow = shiftDate(date, 1);
-  const next = plugin.tasks.forDate(tomorrow).filter((t) => !plugin.tasks.children(t.id).length).sort((a, b) => (a.start || "99").localeCompare(b.start || "99"))[0];
-  kv("\u660E\u5929\u7B2C\u4E00\u4EF6", next ? `${next.start ? next.start + " " : ""}${next.title}` : "\u8FD8\u6CA1\u5B89\u6392");
-  const acts = card.createDiv({ cls: "lubi-shutdown-actions" });
-  if (biggest) button(acts, "\u8865\u8BB0\u6700\u5927\u7A7A\u767D", () => openNew({ start: minToHM(biggest.start), minutes: biggest.minutes }), { cls: "lubi-btn-sm" });
-  button(acts, "\u5B89\u6392\u660E\u5929", () => plugin.openDate(tomorrow, "tasks"), { cls: "lubi-btn-sm lubi-btn-ghost" });
 }
 function layoutLanes(rows) {
   const out = [];
@@ -2451,74 +2582,19 @@ function renderSummary(plugin, side, recs, date) {
   }
 }
 async function renderTodayTasks(plugin, side, date, rerender, openNew) {
-  const tasks = plugin.tasks.forDate(date).filter((t) => !plugin.tasks.children(t.id).length);
-  const card = side.createDiv({ cls: "lubi-card" });
+  const tasks = dayTasks(plugin, date);
+  const card = side.createDiv({ cls: "lubi-card lubi-day-tasks" });
   const head = card.createDiv({ cls: "lubi-panel-head" });
   el(head, "h3", "lubi-panel-title", date === todayStr() ? "\u4ECA\u65E5\u5F85\u529E" : `${shortDate(date)} \u5F85\u529E`);
   const done = tasks.filter((t) => plugin.tasks.isDoneOn(t, date)).length;
   if (tasks.length) head.createSpan({ cls: "lubi-muted", text: `${done}/${tasks.length}` });
-  iconButton(head, "list-todo", "\u53BB\u4EFB\u52A1\u9875", () => plugin.openDate(date, "tasks"), "lubi-push-right");
+  iconButton(head, "list-todo", "\u5728\u4EFB\u52A1\u9875\u5B89\u6392", () => plugin.openDate(date, "tasks"), "lubi-push-right");
   if (!tasks.length) {
-    card.createDiv({ cls: "lubi-muted", text: "\u8FD9\u5929\u6CA1\u6709\u5B89\u6392\u4EFB\u52A1\u3002\u53EF\u5230\u300C\u4EFB\u52A1\u300D\u9875\u65B0\u5EFA\u6216\u9009\u62E9\u65E5\u671F\u3002" });
+    card.createDiv({ cls: "lubi-muted", text: "\u8FD9\u5929\u6CA1\u6709\u5B89\u6392\u4EFB\u52A1\u3002\u65B0\u5EFA\u548C\u6392\u671F\u8BF7\u5230\u300C\u4EFB\u52A1\u300D\u9875\u3002" });
     return;
   }
-  const ul = card.createDiv({ cls: "lubi-task-list lubi-task-list-compact" });
-  for (const t of tasks) taskRow(plugin, ul, t, date, rerender, openNew, () => new TaskModal(plugin.app, plugin, { task: t, onSaved: rerender }).open());
-}
-function taskRow(plugin, ul, t, date, rerender, openNew, onClick) {
-  const done = plugin.tasks.isDoneOn(t, date);
-  const li = ul.createDiv({ cls: `lubi-task ${done ? "is-done" : ""} ${t.blocked ? "is-blocked" : ""}`.trim() });
-  const cb = li.createEl("input", { type: "checkbox" });
-  cb.checked = done;
-  cb.setAttribute("aria-label", `${done ? "\u53D6\u6D88\u5B8C\u6210" : "\u5B8C\u6210"} ${t.title}\uFF08${date}\uFF09`);
-  cb.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    try {
-      const nowDone = await plugin.tasks.toggleDone(t.id, date);
-      if (nowDone && plugin.settings.promptLogOnComplete) {
-        const prevEnd = plugin.lastEndOf(date, date === todayStr() ? hmToMin(nowHM()) : void 0);
-        openNew({ title: t.title, category: t.category || void 0, task: t.id, minutes: t.estimate || 30, start: t.start || prevEnd || void 0 });
-      }
-    } catch (error) {
-      new import_obsidian6.Notice(`\u4EFB\u52A1\u66F4\u65B0\u5931\u8D25\uFF1A${error.message}`, 6e3);
-    }
-    rerender();
-  });
-  const body = li.createDiv({ cls: "lubi-task-body" });
-  const line = onClick ? body.createEl("button", { cls: "lubi-task-title lubi-task-title-button", attr: { type: "button", "aria-label": `\u7F16\u8F91 ${t.title}` } }) : body.createDiv({ cls: "lubi-task-title" });
-  if (onClick) line.addEventListener("click", (e) => {
-    e.stopPropagation();
-    onClick();
-  });
-  if (t.category) catDot(line, categoryOf(plugin.settings, t.category));
-  line.createSpan({ cls: "lubi-task-title-text", text: t.title });
-  if (t.blocked) icon(line, "octagon-alert", "lubi-icon lubi-blocked-icon").title = "\u53D7\u963B";
-  const parents = plugin.tasks.pathOf(t).slice(0, -1);
-  const meta = [];
-  if (parents.length) meta.push(parents.map((p) => p.title).join(" / "));
-  if (t.start) meta.push(t.start);
-  if (t.estimate) meta.push(fmtDuration(t.estimate));
-  if (t.repeat.kind !== "none") meta.push("\u91CD\u590D");
-  if (meta.length) {
-    const text = meta.join(" \xB7 ");
-    const detail = body.createDiv({ cls: "lubi-task-meta", text });
-    detail.title = text;
-  }
-  if (!done) {
-    const acts = li.createDiv({ cls: "lubi-task-actions" });
-    iconButton(acts, "play", `\u5F00\u59CB\u300C${t.title}\u300D\uFF1A\u9884\u586B\u8BB0\u4E00\u6761`, () => openNew({
-      title: t.title,
-      category: t.category || void 0,
-      task: t.id,
-      start: date === todayStr() ? nowHM() : t.start || void 0,
-      minutes: t.estimate || 30
-    }), "lubi-task-start");
-  }
-  if (onClick) li.addEventListener("click", (e) => {
-    if (e.target.closest("button, input")) return;
-    onClick();
-  });
-  return li;
+  const list = card.createDiv({ cls: "lubi-task-list lubi-task-list-compact" });
+  renderDayTaskList(plugin, list, date, rerender, openNew, (t) => new TaskModal(plugin.app, plugin, { task: t, onSaved: rerender }).open());
 }
 function renderOnboarding(plugin, host, onAdd) {
   const box = host.createDiv({ cls: "lubi-onboard" });
@@ -2570,7 +2646,7 @@ async function renderReview(plugin, host, state, setState) {
   const dailyStats = new Map([...data].map(([date, recs]) => [date, dayTimeStats(recs)]));
   const invalidDates = [...dailyStats].filter(([, stats]) => stats.invalidCount).map(([date]) => date).sort();
   if (!timed.length && !all.length) {
-    emptyState(host, "calendar-search", `${label} \u6CA1\u6709\u8BB0\u5F55`, "\u5207\u6362\u5468\u671F\uFF0C\u6216\u56DE\u5230\u8BB0\u5F55\u9875\u8865\u8BB0\u3002");
+    emptyState(host, "calendar-search", `${label} \u6CA1\u6709\u8BB0\u5F55`, "\u5207\u6362\u5468\u671F\uFF0C\u6216\u56DE\u5230\u6BCF\u65E5\u9875\u8865\u8BB0\u3002");
     return;
   }
   const previous = range({ period: state.period, anchor: step(state, -1) });
@@ -2929,13 +3005,13 @@ function step(state, dir) {
 }
 
 // src/ui/tasks.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 var HOUR_PX2 = 44;
 var SNAP = 15;
 async function updateScheduleWithUndo(plugin, id, patch, message, rerender) {
   const task = plugin.tasks.byId(id);
   if (!task) {
-    new import_obsidian7.Notice("\u4EFB\u52A1\u5DF2\u4E0D\u5B58\u5728\uFF0C\u65E0\u6CD5\u8C03\u6574");
+    new import_obsidian8.Notice("\u4EFB\u52A1\u5DF2\u4E0D\u5B58\u5728\uFF0C\u65E0\u6CD5\u8C03\u6574");
     return;
   }
   const keys = Object.keys(patch);
@@ -2951,7 +3027,7 @@ async function updateScheduleWithUndo(plugin, id, patch, message, rerender) {
     undoNotice(message, async () => {
       const latest = plugin.tasks.byId(id);
       if (!latest) {
-        new import_obsidian7.Notice("\u4EFB\u52A1\u5DF2\u5220\u9664\uFF0C\u65E0\u6CD5\u64A4\u9500");
+        new import_obsidian8.Notice("\u4EFB\u52A1\u5DF2\u5220\u9664\uFF0C\u65E0\u6CD5\u64A4\u9500");
         return;
       }
       const restored = {};
@@ -2961,27 +3037,30 @@ async function updateScheduleWithUndo(plugin, id, patch, message, rerender) {
         else conflicts++;
       }
       if (!Object.keys(restored).length) {
-        new import_obsidian7.Notice("\u4EFB\u52A1\u7684\u6392\u671F\u5DF2\u518D\u6B21\u4FEE\u6539\uFF0C\u672A\u8986\u76D6\u65B0\u4FEE\u6539");
+        new import_obsidian8.Notice("\u4EFB\u52A1\u7684\u6392\u671F\u5DF2\u518D\u6B21\u4FEE\u6539\uFF0C\u672A\u8986\u76D6\u65B0\u4FEE\u6539");
         return;
       }
       try {
         await plugin.tasks.upsert({ ...latest, ...restored });
-        if (conflicts) new import_obsidian7.Notice("\u5DF2\u64A4\u9500\u672A\u518D\u6B21\u4FEE\u6539\u7684\u6392\u671F\u5B57\u6BB5\uFF1B\u5176\u4ED6\u4FEE\u6539\u5DF2\u4FDD\u7559");
+        if (conflicts) new import_obsidian8.Notice("\u5DF2\u64A4\u9500\u672A\u518D\u6B21\u4FEE\u6539\u7684\u6392\u671F\u5B57\u6BB5\uFF1B\u5176\u4ED6\u4FEE\u6539\u5DF2\u4FDD\u7559");
         rerender();
       } catch (e) {
-        new import_obsidian7.Notice(`\u64A4\u9500\u5931\u8D25\uFF1A${e.message}`, 6e3);
+        new import_obsidian8.Notice(`\u64A4\u9500\u5931\u8D25\uFF1A${e.message}`, 6e3);
       }
     });
     rerender();
   } catch (e) {
-    new import_obsidian7.Notice(`\u8C03\u6574\u5931\u8D25\uFF1A${e.message}`, 6e3);
+    new import_obsidian8.Notice(`\u8C03\u6574\u5931\u8D25\uFF1A${e.message}`, 6e3);
     rerender();
   }
 }
 function renderTasks(plugin, host, date, state, rerender) {
   host.empty();
   host.addClass("lubi-tasks");
-  const openNew = (d) => new RecordModal(plugin.app, plugin, { date, defaults: d, onSaved: rerender }).open();
+  const openNew = (d, onRec) => new RecordModal(plugin.app, plugin, { date, defaults: d, onSaved: async (rec) => {
+    if (rec && onRec) await onRec(rec);
+    rerender();
+  } }).open();
   const edit = (t) => new TaskModal(plugin.app, plugin, { task: t, onSaved: rerender }).open();
   const create = (defaults = {}) => new TaskModal(plugin.app, plugin, { defaults, onSaved: rerender }).open();
   const top = host.createDiv({ cls: "lubi-tasks-top" });
@@ -2995,7 +3074,7 @@ function renderTasks(plugin, host, date, state, rerender) {
   renderProjects(plugin, host.createDiv({ cls: "lubi-tasks-projects" }), state, rerender, edit, create);
 }
 function renderLists(plugin, host, date, rerender, openNew, edit, create) {
-  const today = plugin.tasks.forDate(date).filter((t) => !plugin.tasks.children(t.id).length);
+  const today = dayTasks(plugin, date);
   const card = host.createDiv({ cls: "lubi-card lubi-list-card" });
   const head = card.createDiv({ cls: "lubi-panel-head" });
   el(head, "h3", "lubi-panel-title", date === todayStr() ? "\u4ECA\u5929" : `${shortDate(date)} \u5468${weekdayZh(date)}`);
@@ -3004,10 +3083,7 @@ function renderLists(plugin, host, date, rerender, openNew, edit, create) {
   iconButton(head, "plus", "\u65B0\u5EFA\u4EFB\u52A1", () => create({ date }), "lubi-push-right");
   const list = card.createDiv({ cls: "lubi-task-list" });
   if (!today.length) list.createDiv({ cls: "lubi-muted lubi-pad", text: "\u8FD9\u5929\u6CA1\u6709\u5B89\u6392\u3002\u53EF\u4ECE\u4E0B\u65B9\u300C\u672A\u5B89\u6392\u300D\u9009\u62E9\u65E5\u671F\uFF0C\u6216\u6DFB\u52A0\u5F85\u529E\u3002" });
-  groupedRows(plugin, list, today, edit, (group, t) => {
-    const li = taskRow(plugin, group, t, date, rerender, openNew, () => edit(t));
-    makeDraggable(li, t);
-  });
+  renderDayTaskList(plugin, list, date, rerender, openNew, edit, (li, t) => makeDraggable(li, t));
   const quick = card.createDiv({ cls: "lubi-quick-add" });
   icon(quick, "plus", "lubi-icon");
   const input = quick.createEl("input", { type: "text", attr: { placeholder: "\u6DFB\u52A0\u5F85\u529E\uFF08\u5B89\u6392\u5728\u5F53\u5929\uFF09", "aria-label": `\u6DFB\u52A0 ${date} \u7684\u5F85\u529E`, "data-lubi-focus": "quick-add" } });
@@ -3025,7 +3101,7 @@ function renderLists(plugin, host, date, rerender, openNew, edit, create) {
       input.value = "";
       rerender();
     } catch (e) {
-      new import_obsidian7.Notice(`\u6DFB\u52A0\u5931\u8D25\uFF1A${e.message}`, 6e3);
+      new import_obsidian8.Notice(`\u6DFB\u52A0\u5931\u8D25\uFF1A${e.message}`, 6e3);
     } finally {
       saving = false;
     }
@@ -3051,24 +3127,6 @@ function renderLists(plugin, host, date, rerender, openNew, edit, create) {
     iconButton(act, "calendar-plus", `\u5B89\u6392 ${t.title} \u5230 ${date}\uFF08\u53EF\u64A4\u9500\uFF09`, () => void updateScheduleWithUndo(plugin, t.id, { date, start: "" }, `${t.title} \u2192 ${date}`, rerender));
     iconButton(act, "calendar-days", `\u4E3A ${t.title} \u9009\u62E9\u65E5\u671F\u548C\u65F6\u95F4`, () => new TaskModal(plugin.app, plugin, { task: t, focusDate: true, onSaved: rerender }).open());
   });
-}
-function groupedRows(plugin, list, items, edit, row) {
-  const groups = /* @__PURE__ */ new Map();
-  for (const task of items) {
-    const parents = plugin.tasks.pathOf(task).slice(0, -1);
-    const key = parents.map((p) => p.id).join("/") || "__root__";
-    if (!groups.has(key)) groups.set(key, { parent: parents[parents.length - 1], title: parents.map((p) => p.title).join(" / "), tasks: [] });
-    groups.get(key).tasks.push(task);
-  }
-  for (const group of groups.values()) {
-    const section = list.createDiv({ cls: "lubi-task-group" });
-    if (group.parent) {
-      const path = button(section, group.title, () => edit(group.parent), { cls: "lubi-task-group-title" });
-      path.title = `\u7F16\u8F91\u7236\u4EFB\u52A1\uFF1A${group.title}`;
-      path.setAttribute("aria-label", `\u7F16\u8F91\u7236\u4EFB\u52A1\uFF1A${group.title}`);
-    } else if (groups.size > 1) section.createDiv({ cls: "lubi-task-group-title lubi-muted", text: "\u72EC\u7ACB\u4EFB\u52A1" });
-    for (const task of group.tasks) row(section, task);
-  }
 }
 function makeDraggable(elm, t) {
   elm.draggable = true;
@@ -3112,7 +3170,10 @@ function renderAgenda(plugin, host, state, rerender, edit) {
     const tasks = plugin.tasks.forDate(d).filter((t) => !plugin.tasks.children(t.id).length);
     if (!tasks.length) list.createDiv({ cls: "lubi-muted lubi-pad-sm", text: "\u6CA1\u6709\u5B89\u6392" });
     else for (const task of tasks) {
-      taskRow(plugin, list, task, d, rerender, (defaults) => new RecordModal(plugin.app, plugin, { date: d, defaults, onSaved: rerender }).open(), () => edit(task));
+      taskRow(plugin, list, task, d, rerender, (defaults, onRec) => new RecordModal(plugin.app, plugin, { date: d, defaults, onSaved: async (rec) => {
+        if (rec && onRec) await onRec(rec);
+        rerender();
+      } }).open(), () => edit(task));
     }
     button(section, `\u5728 ${shortDate(d)} \u65B0\u5EFA\u4EFB\u52A1`, () => new TaskModal(plugin.app, plugin, { defaults: { date: d }, onSaved: rerender }).open(), { cls: "lubi-btn-ghost lubi-btn-sm lubi-agenda-add" });
   }
@@ -3264,7 +3325,7 @@ ${t.start} \xB7 ${fmtDuration(dur)}
                 if (mode === "move") {
                   const nd = days[dayIdx + st.col];
                   if (cur.repeat.kind !== "none" && nd !== d) {
-                    new import_obsidian7.Notice("\u91CD\u590D\u4EFB\u52A1\u4E0D\u80FD\u7528\u62D6\u52A8\u6362\u5929\uFF1B\u8BF7\u5728\u7F16\u8F91\u4E2D\u8C03\u6574\u91CD\u590D\u89C4\u5219");
+                    new import_obsidian8.Notice("\u91CD\u590D\u4EFB\u52A1\u4E0D\u80FD\u7528\u62D6\u52A8\u6362\u5929\uFF1B\u8BF7\u5728\u7F16\u8F91\u4E2D\u8C03\u6574\u91CD\u590D\u89C4\u5219");
                     rerender();
                     return;
                   }
@@ -3345,7 +3406,7 @@ function bindDrop(plugin, target, date, startH, rerender) {
     const task = plugin.tasks.byId(id);
     if (!task) return;
     if (task.repeat.kind !== "none") {
-      new import_obsidian7.Notice("\u91CD\u590D\u4EFB\u52A1\u8BF7\u5728\u7F16\u8F91\u4E2D\u8C03\u6574\u89C4\u5219\u6216\u65F6\u95F4");
+      new import_obsidian8.Notice("\u91CD\u590D\u4EFB\u52A1\u8BF7\u5728\u7F16\u8F91\u4E2D\u8C03\u6574\u89C4\u5219\u6216\u65F6\u95F4");
       return;
     }
     await updateScheduleWithUndo(plugin, id, { date, start }, `${task.title} \u2192 ${date}${start ? ` ${start}` : " \u5168\u5929"}`, rerender);
@@ -3542,7 +3603,7 @@ ${span.from} \u2192 ${span.to}${kids.length ? `
 
 // src/ui/view.ts
 var VIEW_TYPE = "lubi-dashboard";
-var DashboardView = class _DashboardView extends import_obsidian8.ItemView {
+var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -3609,7 +3670,7 @@ var DashboardView = class _DashboardView extends import_obsidian8.ItemView {
     this.todayBtn.addEventListener("click", () => this.setDate(todayStr()));
     this.contextLabel = left.createDiv({ cls: "lubi-context", attr: { "aria-live": "polite" } });
     const tabs = segmented(bar, [
-      { id: "today", label: "\u8BB0\u5F55", icon: "hourglass" },
+      { id: "today", label: "\u6BCF\u65E5", icon: "hourglass" },
       { id: "review", label: "\u56DE\u987E", icon: "bar-chart-3" },
       { id: "tasks", label: "\u4EFB\u52A1", icon: "list-todo" }
     ], this.tab, (t) => this.setTab(t));
@@ -3634,7 +3695,7 @@ var DashboardView = class _DashboardView extends import_obsidian8.ItemView {
     new RecordModal(this.app, this.plugin, { date: this.activeDate(), onSaved: () => this.refresh() }).open();
   }
   openMore(e) {
-    const menu = new import_obsidian8.Menu();
+    const menu = new import_obsidian9.Menu();
     menu.addItem((i) => i.setTitle("\u6253\u5F00\u65E5\u8BB0\u6587\u4EF6").setIcon("file-text").onClick(() => void this.plugin.openJournal(this.activeDate())));
     menu.addItem((i) => i.setTitle("\u5FEB\u6377\u952E").setIcon("keyboard").onClick(() => new ShortcutsModal(this.app).open()));
     menu.addItem((i) => i.setTitle("\u8BBE\u7F6E").setIcon("settings").onClick(() => this.plugin.openSettings()));
@@ -3795,7 +3856,7 @@ var DashboardView = class _DashboardView extends import_obsidian8.ItemView {
 };
 
 // src/ui/settingsTab.ts
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/core/color.ts
 var OBSIDIAN_DEFAULT_COLORS = {
@@ -3877,7 +3938,7 @@ function resolveLive(value) {
   probe.remove();
   return rgb;
 }
-var LubiSettingTab = class extends import_obsidian9.PluginSettingTab {
+var LubiSettingTab = class extends import_obsidian10.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -3888,38 +3949,34 @@ var LubiSettingTab = class extends import_obsidian9.PluginSettingTab {
     containerEl.addClass("lubi-settings");
     const s = this.plugin.settings;
     const save = () => void this.plugin.saveSettings();
-    new import_obsidian9.Setting(containerEl).setName("\u65E5\u8BB0\u6587\u4EF6\u5939").setDesc("\u6BCF\u5929\u4E00\u4E2A YYYY-MM-DD.md\uFF0C\u8BB0\u5F55\u5199\u5728 ## \u8BB0\u5F55 \u4E0B").addText((t) => t.setValue(s.journalFolder).onChange((v) => {
+    new import_obsidian10.Setting(containerEl).setName("\u65E5\u8BB0\u6587\u4EF6\u5939").setDesc("\u6BCF\u5929\u4E00\u4E2A YYYY-MM-DD.md\uFF0C\u8BB0\u5F55\u5199\u5728 ## \u8BB0\u5F55 \u4E0B").addText((t) => t.setValue(s.journalFolder).onChange((v) => {
       s.journalFolder = v.trim() || "\u65E5\u8BB0";
       save();
     }));
-    new import_obsidian9.Setting(containerEl).setName("\u4EFB\u52A1\u6570\u636E\u6587\u4EF6").addText((t) => t.setValue(s.taskFile).onChange((v) => {
+    new import_obsidian10.Setting(containerEl).setName("\u4EFB\u52A1\u6570\u636E\u6587\u4EF6").addText((t) => t.setValue(s.taskFile).onChange((v) => {
       s.taskFile = v.trim() || "\u4EFB\u52A1/\u4EFB\u52A1\u6570\u636E.json";
       save();
     }));
-    new import_obsidian9.Setting(containerEl).setName("\u5907\u4EFD\u6587\u4EF6\u5939").setDesc("\u8FC1\u79FB\u65E7\u6570\u636E\u524D\u7684\u6574\u4EFD\u5907\u4EFD\u653E\u5728\u8FD9\u91CC").addText((t) => t.setValue(s.backupFolder).onChange((v) => {
+    new import_obsidian10.Setting(containerEl).setName("\u5907\u4EFD\u6587\u4EF6\u5939").setDesc("\u8FC1\u79FB\u65E7\u6570\u636E\u524D\u7684\u6574\u4EFD\u5907\u4EFD\u653E\u5728\u8FD9\u91CC").addText((t) => t.setValue(s.backupFolder).onChange((v) => {
       s.backupFolder = v.trim() || "\u5907\u4EFD";
       save();
     }));
-    new import_obsidian9.Setting(containerEl).setName("\u65E5\u7A0B\u663E\u793A\u65F6\u6BB5").setDesc("\u4EFB\u52A1\u9875\u5468\u65E5\u7A0B\u7684\u8D77\u6B62\u5C0F\u65F6").addText((t) => t.setPlaceholder("6").setValue(String(s.scheduleStartHour)).onChange((v) => {
+    new import_obsidian10.Setting(containerEl).setName("\u65E5\u7A0B\u663E\u793A\u65F6\u6BB5").setDesc("\u4EFB\u52A1\u9875\u5468\u65E5\u7A0B\u7684\u8D77\u6B62\u5C0F\u65F6").addText((t) => t.setPlaceholder("6").setValue(String(s.scheduleStartHour)).onChange((v) => {
       s.scheduleStartHour = clamp(Number(v), 0, 23, 6);
       save();
     })).addText((t) => t.setPlaceholder("24").setValue(String(s.scheduleEndHour)).onChange((v) => {
       s.scheduleEndHour = clamp(Number(v), 1, 24, 24);
       save();
     }));
-    new import_obsidian9.Setting(containerEl).setName("\u52FE\u6389\u4EFB\u52A1\u65F6\u987A\u624B\u8BB0\u4E00\u6761").setDesc("\u5B8C\u6210\u4EFB\u52A1\u540E\u81EA\u52A8\u5F39\u51FA\u8BB0\u5F55\u7A97\u53E3\uFF0C\u9884\u586B\u4EFB\u52A1\u540D\u4E0E\u9884\u8BA1\u65F6\u957F").addToggle((t) => t.setValue(s.promptLogOnComplete).onChange((v) => {
+    new import_obsidian10.Setting(containerEl).setName("\u52FE\u6389\u4EFB\u52A1\u65F6\u987A\u624B\u8BB0\u4E00\u6761").setDesc("\u5B8C\u6210\u4EFB\u52A1\u540E\u81EA\u52A8\u5F39\u51FA\u8BB0\u5F55\u7A97\u53E3\uFF0C\u9884\u586B\u4EFB\u52A1\u540D\u4E0E\u9884\u8BA1\u65F6\u957F").addToggle((t) => t.setValue(s.promptLogOnComplete).onChange((v) => {
       s.promptLogOnComplete = v;
       save();
     }));
-    new import_obsidian9.Setting(containerEl).setName("\u6BCF\u65E5\u53EF\u7528\u5C0F\u65F6").setDesc("\u4EFB\u52A1\u9875\u5468\u65E5\u7A0B\u8868\u5934\u7684\u8D1F\u8F7D\u6761\uFF1A\u8BA1\u5212\u65F6\u957F \xF7 \u53EF\u7528\u5C0F\u65F6\uFF0C\u226590% \u53D8\u6A59\u3001\u8D85\u8FC7\u53D8\u7EA2").addText((t) => t.setPlaceholder("8").setValue(String(s.dailyCapacityHours ?? 8)).onChange((v) => {
+    new import_obsidian10.Setting(containerEl).setName("\u6BCF\u65E5\u53EF\u7528\u5C0F\u65F6").setDesc("\u4EFB\u52A1\u9875\u5468\u65E5\u7A0B\u8868\u5934\u7684\u8D1F\u8F7D\u6761\uFF1A\u8BA1\u5212\u65F6\u957F \xF7 \u53EF\u7528\u5C0F\u65F6\uFF0C\u226590% \u53D8\u6A59\u3001\u8D85\u8FC7\u53D8\u7EA2").addText((t) => t.setPlaceholder("8").setValue(String(s.dailyCapacityHours ?? 8)).onChange((v) => {
       s.dailyCapacityHours = clamp(Number(v), 1, 24, 8);
       save();
     }));
-    new import_obsidian9.Setting(containerEl).setName("\u665A\u95F4\u300C\u4ECA\u65E5\u6536\u5C3E\u300D\u5361\u7247").setDesc("21:00 \u540E\u5728\u8BB0\u5F55\u9875\u53F3\u4FA7\u663E\u793A\u8986\u76D6\u7387\u3001\u6700\u5927\u7A7A\u767D\u548C\u660E\u5929\u7684\u7B2C\u4E00\u4EF6\u4E8B").addToggle((t) => t.setValue(s.showShutdown !== false).onChange((v) => {
-      s.showShutdown = v;
-      save();
-    }));
-    new import_obsidian9.Setting(containerEl).setName("\u5206\u7C7B").setHeading();
+    new import_obsidian10.Setting(containerEl).setName("\u5206\u7C7B").setHeading();
     containerEl.createEl("p", { cls: "lubi-muted", text: "\u300C\u65F6\u95F4\u300D\u7C7B\u8BB0\u65F6\u957F\uFF0C\u300C\u91D1\u94B1\u300D\u7C7B\u8BB0\u91D1\u989D\u3002\u56FE\u6807\u540D\u6765\u81EA lucide.dev\u3002\u52FE\u9009\u300C\u80CC\u666F\u300D\u7684\u5206\u7C7B\uFF08\u5982\u7761\u7720\uFF09\u5728\u65F6\u95F4\u8F74\u4E0E\u56FE\u8868\u4E2D\u4EE5\u659C\u7EB9\u964D\u6743\u663E\u793A\u3002" });
     const warn = containerEl.createDiv({ cls: "lubi-settings-warn" });
     const list = containerEl.createDiv({ cls: "lubi-cat-settings" });
@@ -3933,7 +3990,7 @@ var LubiSettingTab = class extends import_obsidian9.PluginSettingTab {
       list.empty();
       checkAccent();
       s.categories.forEach((c, i) => {
-        const st = new import_obsidian9.Setting(list);
+        const st = new import_obsidian10.Setting(list);
         st.addText((t) => t.setPlaceholder("\u540D\u79F0").setValue(c.name).onChange((v) => {
           c.name = v.trim() || c.name;
           save();
@@ -3974,7 +4031,7 @@ var LubiSettingTab = class extends import_obsidian9.PluginSettingTab {
           draw();
         }));
       });
-      const add = new import_obsidian9.Setting(list);
+      const add = new import_obsidian10.Setting(list);
       add.addButton((b) => b.setButtonText("\u6DFB\u52A0\u5206\u7C7B").onClick(() => {
         s.categories.push({ name: "\u65B0\u5206\u7C7B", icon: "tag", color: "var(--color-base-60)", kind: "time" });
         save();
@@ -3987,19 +4044,19 @@ var LubiSettingTab = class extends import_obsidian9.PluginSettingTab {
       }));
     };
     draw();
-    new import_obsidian9.Setting(containerEl).setName("\u652F\u51FA\u7C7B\u522B").setDesc("\u9017\u53F7\u5206\u9694").addTextArea((t) => t.setValue(s.expenseTypes.join(", ")).onChange((v) => {
+    new import_obsidian10.Setting(containerEl).setName("\u652F\u51FA\u7C7B\u522B").setDesc("\u9017\u53F7\u5206\u9694").addTextArea((t) => t.setValue(s.expenseTypes.join(", ")).onChange((v) => {
       s.expenseTypes = v.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
       if (!s.expenseTypes.length) s.expenseTypes = ["\u5176\u4ED6"];
       save();
     }));
-    new import_obsidian9.Setting(containerEl).setName("\u6570\u636E").setHeading();
-    new import_obsidian9.Setting(containerEl).setName("\u8FC1\u79FB\u65E7\u7248\u6570\u636E").setDesc("\u628A\u65E7\u7248 HTML \u5361\u7247\u65E5\u8BB0\u548C v13 \u4EFB\u52A1\u6570\u636E\u8F6C\u6362\u4E3A\u65B0\u683C\u5F0F\u3002\u8F6C\u6362\u524D\u4F1A\u6574\u4EFD\u5907\u4EFD\u5230\u5907\u4EFD\u6587\u4EF6\u5939\u3002\u53EF\u91CD\u590D\u6267\u884C\uFF0C\u5DF2\u8F6C\u6362\u7684\u6587\u4EF6\u4F1A\u8DF3\u8FC7\u3002").addButton((b) => b.setButtonText("\u68C0\u67E5\u5E76\u8FC1\u79FB").setCta().onClick(() => {
+    new import_obsidian10.Setting(containerEl).setName("\u6570\u636E").setHeading();
+    new import_obsidian10.Setting(containerEl).setName("\u8FC1\u79FB\u65E7\u7248\u6570\u636E").setDesc("\u628A\u65E7\u7248 HTML \u5361\u7247\u65E5\u8BB0\u548C v13 \u4EFB\u52A1\u6570\u636E\u8F6C\u6362\u4E3A\u65B0\u683C\u5F0F\u3002\u8F6C\u6362\u524D\u4F1A\u6574\u4EFD\u5907\u4EFD\u5230\u5907\u4EFD\u6587\u4EF6\u5939\u3002\u53EF\u91CD\u590D\u6267\u884C\uFF0C\u5DF2\u8F6C\u6362\u7684\u6587\u4EF6\u4F1A\u8DF3\u8FC7\u3002").addButton((b) => b.setButtonText("\u68C0\u67E5\u5E76\u8FC1\u79FB").setCta().onClick(() => {
       new ConfirmModal(this.app, "\u8FC1\u79FB\u65E7\u6570\u636E\uFF1F", "\u4F1A\u5148\u5907\u4EFD\uFF0C\u518D\u6539\u5199\u65E5\u8BB0\u6587\u4EF6\u4E0E\u4EFB\u52A1\u6570\u636E\u3002", () => void this.plugin.runMigration(true), "\u5F00\u59CB\u8FC1\u79FB", false).open();
     }));
-    new import_obsidian9.Setting(containerEl).setName("\u91CD\u65B0\u663E\u793A\u4E0A\u624B\u5F15\u5BFC").addButton((b) => b.setButtonText("\u663E\u793A").onClick(() => {
+    new import_obsidian10.Setting(containerEl).setName("\u91CD\u65B0\u663E\u793A\u4E0A\u624B\u5F15\u5BFC").addButton((b) => b.setButtonText("\u663E\u793A").onClick(() => {
       s.onboardingDone = false;
       save();
-      new import_obsidian9.Notice("\u4E0B\u6B21\u6253\u5F00\u8BB0\u5F55\u9875\u4F1A\u663E\u793A\u5F15\u5BFC");
+      new import_obsidian10.Notice("\u4E0B\u6B21\u6253\u5F00\u6BCF\u65E5\u9875\u4F1A\u663E\u793A\u5F15\u5BFC");
     }));
   }
 };
@@ -4009,7 +4066,7 @@ function clamp(n, lo, hi, dflt) {
 }
 
 // src/main.ts
-var LubiPlugin = class extends import_obsidian10.Plugin {
+var LubiPlugin = class extends import_obsidian11.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -4026,7 +4083,7 @@ var LubiPlugin = class extends import_obsidian10.Plugin {
     this.addSettingTab(new LubiSettingTab(this.app, this));
     this.addCommand({ id: "open", name: "\u6253\u5F00\u9762\u677F", callback: () => void this.activateView() });
     this.addCommand({ id: "log", name: "\u8BB0\u4E00\u6761", callback: () => this.quickLog() });
-    this.addCommand({ id: "open-today", name: "\u6253\u5F00\u9762\u677F \xB7 \u8BB0\u5F55\u9875", callback: () => void this.activateView("today") });
+    this.addCommand({ id: "open-today", name: "\u6253\u5F00\u9762\u677F \xB7 \u6BCF\u65E5\u9875", callback: () => void this.activateView("today") });
     this.addCommand({ id: "open-review", name: "\u6253\u5F00\u9762\u677F \xB7 \u56DE\u987E\u9875", callback: () => void this.activateView("review") });
     this.addCommand({ id: "open-tasks", name: "\u6253\u5F00\u9762\u677F \xB7 \u4EFB\u52A1\u9875", callback: () => void this.activateView("tasks") });
     this.addCommand({ id: "open-journal", name: "\u6253\u5F00\u4ECA\u5929\u7684\u65E5\u8BB0\u6587\u4EF6", callback: () => void this.openJournal(todayStr()) });
@@ -4040,7 +4097,7 @@ var LubiPlugin = class extends import_obsidian10.Plugin {
     }));
     this.app.workspace.onLayoutReady(() => {
       void this.tasks.load().then(() => {
-        if (this.tasks.lastMigrationBackup) new import_obsidian10.Notice(`\u4EFB\u52A1\u6570\u636E\u5DF2\u5347\u7EA7\u5230 v14\uFF0C\u65E7\u6587\u4EF6\u5907\u4EFD\u5728 ${this.tasks.lastMigrationBackup}`, 8e3);
+        if (this.tasks.lastMigrationBackup) new import_obsidian11.Notice(`\u4EFB\u52A1\u6570\u636E\u5DF2\u5347\u7EA7\u5230 v14\uFF0C\u65E7\u6587\u4EF6\u5907\u4EFD\u5728 ${this.tasks.lastMigrationBackup}`, 8e3);
         void this.warmRecent();
         void this.runMigration(false);
       });
@@ -4104,10 +4161,10 @@ var LubiPlugin = class extends import_obsidian10.Plugin {
     return shiftDate(date, days);
   }
   onFileChange(path) {
-    const p = (0, import_obsidian10.normalizePath)(path);
-    const inJournal = p.startsWith((0, import_obsidian10.normalizePath)(this.settings.journalFolder) + "/");
+    const p = (0, import_obsidian11.normalizePath)(path);
+    const inJournal = p.startsWith((0, import_obsidian11.normalizePath)(this.settings.journalFolder) + "/");
     if (inJournal) this.refreshViews();
-    else if (p === (0, import_obsidian10.normalizePath)(this.settings.taskFile)) void this.tasks.load(true).then(() => this.refreshViews());
+    else if (p === (0, import_obsidian11.normalizePath)(this.settings.taskFile)) void this.tasks.load(true).then(() => this.refreshViews());
   }
   // ---------- 联想 / 接着记 ----------
   async warmRecent() {
@@ -4137,12 +4194,12 @@ var LubiPlugin = class extends import_obsidian10.Plugin {
   async runMigration(explicit) {
     const legacy = await detectLegacyJournals(this.app, this.settings);
     if (!legacy.length) {
-      if (explicit) new import_obsidian10.Notice("\u6CA1\u6709\u9700\u8981\u8FC1\u79FB\u7684\u65E5\u8BB0\u6587\u4EF6\u3002");
+      if (explicit) new import_obsidian11.Notice("\u6CA1\u6709\u9700\u8981\u8FC1\u79FB\u7684\u65E5\u8BB0\u6587\u4EF6\u3002");
       return;
     }
     const go = async () => {
       const r = await migrateJournals(this.app, this.settings);
-      new import_obsidian10.Notice(`\u5DF2\u8FC1\u79FB ${r.files} \u4E2A\u65E5\u8BB0\u6587\u4EF6\u3001${r.records} \u6761\u8BB0\u5F55\u3002\u5907\u4EFD\uFF1A${r.backupFolder}`, 1e4);
+      new import_obsidian11.Notice(`\u5DF2\u8FC1\u79FB ${r.files} \u4E2A\u65E5\u8BB0\u6587\u4EF6\u3001${r.records} \u6761\u8BB0\u5F55\u3002\u5907\u4EFD\uFF1A${r.backupFolder}`, 1e4);
       this.refreshViews();
     };
     if (explicit) await go();
@@ -4150,6 +4207,6 @@ var LubiPlugin = class extends import_obsidian10.Plugin {
   }
   fileFor(path) {
     const f = this.app.vault.getAbstractFileByPath(path);
-    return f instanceof import_obsidian10.TFile ? f : null;
+    return f instanceof import_obsidian11.TFile ? f : null;
   }
 };

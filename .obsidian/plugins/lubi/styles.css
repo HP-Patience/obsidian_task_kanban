@@ -114,7 +114,7 @@
 .lubi-body { flex: 1; min-height: 0; overflow: auto; background: var(--background-secondary); }
 .lubi-page { padding: var(--lubi-gap-4); min-height: 100%; box-sizing: border-box; }
 
-/* ---------- 记录页 ---------- */
+/* ---------- 每日页 ---------- */
 .lubi-today { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--lubi-gap-4); align-items: start; }
 @media (max-width: 900px) { .lubi-today { grid-template-columns: 1fr; } }
 .lubi-today-main { display: flex; flex-direction: column; gap: var(--lubi-gap-3); min-width: 0; }
@@ -827,7 +827,7 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-root .lubi-topbar-cta { padding: 0 12px 0 10px; }
 .lubi-root .lubi-topbar-tabs .lubi-seg-item[aria-pressed="true"] { color: var(--text-normal); font-weight: 600; }
 
-/* ---------- 记录页：时间轴 ---------- */
+/* ---------- 每日页：时间轴 ---------- */
 .lubi-root .lubi-page.lubi-today { padding-bottom: var(--lubi-gap-3); }
 .lubi-timeline-wrap { position: relative; }
 .lubi-root .lubi-timeline-scroll {
@@ -916,9 +916,6 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-root .lubi-task-start svg { color: var(--lubi-ok); }
 .lubi-root .lubi-task:focus-within .lubi-task-actions { display: inline-flex; }
 /* 今日收尾 */
-.lubi-shutdown .lubi-shutdown-icon svg { color: var(--lubi-warn); }
-.lubi-shutdown .lubi-kv:first-of-type { border-top: 0; margin-top: 0; }
-.lubi-shutdown-actions { display: flex; gap: 6px; margin-top: var(--lubi-gap-3); flex-wrap: wrap; }
 
 /* ---------- 回顾页 ---------- */
 .lubi-root .lubi-kpis-v2 { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: var(--lubi-gap-3); }

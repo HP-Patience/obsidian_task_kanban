@@ -29,7 +29,7 @@ export default class LubiPlugin extends Plugin {
 
     this.addCommand({ id: "open", name: "打开面板", callback: () => void this.activateView() });
     this.addCommand({ id: "log", name: "记一条", callback: () => this.quickLog() });
-    this.addCommand({ id: "open-today", name: "打开面板 · 记录页", callback: () => void this.activateView("today") });
+    this.addCommand({ id: "open-today", name: "打开面板 · 每日页", callback: () => void this.activateView("today") });
     this.addCommand({ id: "open-review", name: "打开面板 · 回顾页", callback: () => void this.activateView("review") });
     this.addCommand({ id: "open-tasks", name: "打开面板 · 任务页", callback: () => void this.activateView("tasks") });
     this.addCommand({ id: "open-journal", name: "打开今天的日记文件", callback: () => void this.openJournal(todayStr()) });

@@ -62,7 +62,7 @@ fs.writeFileSync = (url, html) => {
   origWrite(new URL(name, outDark), html.replace('<body class="theme-light">', '<body class="theme-dark">'));
 };
 
-// 1. 记录页
+// 1. 每日页
 fs.writeFileSync(new URL("today.html", out), page("today", freeze(root)));
 // 2. 回顾页
 view.show("review"); await tick(200);

@@ -21,8 +21,6 @@ export interface LubiSettings {
   expenseTypes: string[];
   /** 任务页每日负载条的可用小时数 */
   dailyCapacityHours: number;
-  /** 晚间在记录页显示「今日收尾」卡片 */
-  showShutdown: boolean;
   /** 默认色板版本：2 = v1.4 避开强调色的色板 */
   paletteVersion: number;
 }
@@ -74,7 +72,6 @@ export const DEFAULT_SETTINGS: LubiSettings = {
   categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
   expenseTypes: ["餐饮", "居住", "交通", "服饰个护", "休闲娱乐", "医疗保健", "教育提升", "其他"],
   dailyCapacityHours: 8,
-  showShutdown: true,
   paletteVersion: 2,
 };
 

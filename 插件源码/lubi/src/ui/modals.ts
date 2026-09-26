@@ -69,8 +69,8 @@ export class ConfirmModal extends Modal {
 export const SHORTCUTS: [string, string][] = [
   ["N", "记一条"],
   ["1 / 2 / 3", "切换 记录 · 回顾 · 任务"],
-  ["T", "记录页回到今天"],
-  ["← / →", "记录页前一天 / 后一天"],
+  ["T", "每日页回到今天"],
+  ["← / →", "每日页前一天 / 后一天"],
   ["?", "打开本速查卡"],
   ["↑ / ↓", "时间轴：选中块移动 5 分钟（Alt 为 1 分钟）"],
   ["Shift + ↑ / ↓", "时间轴：改时长"],
@@ -104,7 +104,8 @@ export interface RecordModalOptions {
   rec?: Rec;
   line?: number;
   defaults?: Partial<Rec>;
-  onSaved?: () => void;
+  /** 保存后回调；新增 / 修改时带上保存的记录，删除时不带 */
+  onSaved?: (rec?: Rec) => void;
 }
 
 export class RecordModal extends Modal {
@@ -463,7 +464,7 @@ export class RecordModal extends Modal {
       if (this.editing && this.opts.line !== undefined) await this.plugin.journal.update(this.opts.date, this.opts.line, r);
       else await this.plugin.journal.add(r);
       this.close();
-      this.opts.onSaved?.();
+      this.opts.onSaved?.({ ...r, extra: { ...r.extra } });
     } catch (e) {
       formError(this.contentEl, `无法保存：${(e as Error).message}`);
     } finally {

@@ -48,7 +48,6 @@ export class LubiSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("日程显示时段").setDesc("任务页周日程的起止小时").addText((t) => t.setPlaceholder("6").setValue(String(s.scheduleStartHour)).onChange((v) => { s.scheduleStartHour = clamp(Number(v), 0, 23, 6); save(); })).addText((t) => t.setPlaceholder("24").setValue(String(s.scheduleEndHour)).onChange((v) => { s.scheduleEndHour = clamp(Number(v), 1, 24, 24); save(); }));
     new Setting(containerEl).setName("勾掉任务时顺手记一条").setDesc("完成任务后自动弹出记录窗口，预填任务名与预计时长").addToggle((t) => t.setValue(s.promptLogOnComplete).onChange((v) => { s.promptLogOnComplete = v; save(); }));
     new Setting(containerEl).setName("每日可用小时").setDesc("任务页周日程表头的负载条：计划时长 ÷ 可用小时，≥90% 变橙、超过变红").addText((t) => t.setPlaceholder("8").setValue(String(s.dailyCapacityHours ?? 8)).onChange((v) => { s.dailyCapacityHours = clamp(Number(v), 1, 24, 8); save(); }));
-    new Setting(containerEl).setName("晚间「今日收尾」卡片").setDesc("21:00 后在记录页右侧显示覆盖率、最大空白和明天的第一件事").addToggle((t) => t.setValue(s.showShutdown !== false).onChange((v) => { s.showShutdown = v; save(); }));
 
     // 分类
     new Setting(containerEl).setName("分类").setHeading();
@@ -94,7 +93,7 @@ export class LubiSettingTab extends PluginSettingTab {
       .addButton((b) => b.setButtonText("检查并迁移").setCta().onClick(() => {
         new ConfirmModal(this.app, "迁移旧数据？", "会先备份，再改写日记文件与任务数据。", () => void this.plugin.runMigration(true), "开始迁移", false).open();
       }));
-    new Setting(containerEl).setName("重新显示上手引导").addButton((b) => b.setButtonText("显示").onClick(() => { s.onboardingDone = false; save(); new Notice("下次打开记录页会显示引导"); }));
+    new Setting(containerEl).setName("重新显示上手引导").addButton((b) => b.setButtonText("显示").onClick(() => { s.onboardingDone = false; save(); new Notice("下次打开每日页会显示引导"); }));
   }
 }
 

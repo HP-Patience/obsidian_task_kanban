@@ -1,6 +1,6 @@
 {
   "name": "lubi",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "柳比歇夫时间记录：记录 · 回顾 · 任务",
   "main": "main.js",
   "scripts": {

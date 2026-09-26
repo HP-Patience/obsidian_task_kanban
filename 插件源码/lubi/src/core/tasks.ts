@@ -32,6 +32,16 @@ export interface Task {
   doneAt: string;
   created: string;
   updated: string;
+  /** 勾选完成时顺手记下的记录（完成日期 → 记录标识），取消勾选时据此删掉那条记录 */
+  doneLogs?: Record<string, DoneLog>;
+}
+
+/** 用开始时间 + 标题 + 分类（+ 关联任务）定位一条记录；不含时长，跨夜拆分后仍能找到 */
+export interface DoneLog {
+  date: string;
+  start: string;
+  title: string;
+  category: string;
 }
 
 export interface TaskStore {
@@ -241,6 +251,19 @@ export class Tasks {
     return done;
   }
 
+  /** 登记 / 清除「勾选完成时记下的记录」 */
+  async setDoneLog(id: string, date: string, log: DoneLog | null): Promise<void> {
+    const t = this.byId(id);
+    if (!t) return;
+    const next = { ...(t.doneLogs || {}) };
+    if (log) next[date] = log;
+    else if (next[date]) delete next[date];
+    else return;
+    t.doneLogs = Object.keys(next).length ? next : undefined;
+    t.updated = new Date().toISOString();
+    await this.commit();
+  }
+
   private autoCompleteParent(pid: string): void {
     const p = this.byId(pid);
     if (!p) return;
@@ -318,7 +341,17 @@ function normalize(t: Partial<Task>): Task {
     doneDates: Array.isArray(t.doneDates) ? t.doneDates : [],
     order: typeof t.order === "number" ? t.order : b.order,
     estimate: typeof t.estimate === "number" ? t.estimate : 0,
+    doneLogs: cleanDoneLogs(t.doneLogs),
   };
+}
+
+function cleanDoneLogs(v: unknown): Record<string, DoneLog> | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const out: Record<string, DoneLog> = {};
+  for (const [k, x] of Object.entries(v as Record<string, Partial<DoneLog>>)) {
+    if (x && typeof x.start === "string" && typeof x.title === "string") out[k] = { date: x.date || k, start: x.start, title: x.title, category: x.category || "" };
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 // ---------- v13 → v14 ----------

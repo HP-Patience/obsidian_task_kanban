@@ -620,6 +620,18 @@ var Tasks = class {
     await this.commit();
     return done;
   }
+  /** 登记 / 清除「勾选完成时记下的记录」 */
+  async setDoneLog(id, date, log) {
+    const t = this.byId(id);
+    if (!t) return;
+    const next = { ...t.doneLogs || {} };
+    if (log) next[date] = log;
+    else if (next[date]) delete next[date];
+    else return;
+    t.doneLogs = Object.keys(next).length ? next : void 0;
+    t.updated = (/* @__PURE__ */ new Date()).toISOString();
+    await this.commit();
+  }
   autoCompleteParent(pid) {
     const p = this.byId(pid);
     if (!p) return;
@@ -687,8 +699,17 @@ function normalize(t) {
     repeat: { kind: t.repeat?.kind || "none", days: Array.isArray(t.repeat?.days) ? t.repeat.days : [] },
     doneDates: Array.isArray(t.doneDates) ? t.doneDates : [],
     order: typeof t.order === "number" ? t.order : b.order,
-    estimate: typeof t.estimate === "number" ? t.estimate : 0
+    estimate: typeof t.estimate === "number" ? t.estimate : 0,
+    doneLogs: cleanDoneLogs(t.doneLogs)
   };
+}
+function cleanDoneLogs(v) {
+  if (!v || typeof v !== "object") return void 0;
+  const out = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (x && typeof x.start === "string" && typeof x.title === "string") out[k] = { date: x.date || k, start: x.start, title: x.title, category: x.category || "" };
+  }
+  return Object.keys(out).length ? out : void 0;
 }
 var STATUS_MAP = { pending: "todo", doing: "doing", blocked: "todo", done: "done" };
 function migrateLegacy(old) {
@@ -940,7 +961,6 @@ var DEFAULT_SETTINGS = {
   categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
   expenseTypes: ["\u9910\u996E", "\u5C45\u4F4F", "\u4EA4\u901A", "\u670D\u9970\u4E2A\u62A4", "\u4F11\u95F2\u5A31\u4E50", "\u533B\u7597\u4FDD\u5065", "\u6559\u80B2\u63D0\u5347", "\u5176\u4ED6"],
   dailyCapacityHours: 8,
-  showShutdown: true,
   paletteVersion: 2
 };
 export {

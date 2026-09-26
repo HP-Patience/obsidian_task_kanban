@@ -51,7 +51,7 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   const invalidDates = [...dailyStats].filter(([, stats]) => stats.invalidCount).map(([date]) => date).sort();
 
   if (!timed.length && !all.length) {
-    emptyState(host, "calendar-search", `${label} 没有记录`, "切换周期，或回到记录页补记。");
+    emptyState(host, "calendar-search", `${label} 没有记录`, "切换周期，或回到每日页补记。");
     return;
   }
 
@@ -336,7 +336,7 @@ function kpi(parent: HTMLElement, label: string, value: string, sub?: string, cl
   return k;
 }
 
-/** 年视图：GitHub 式覆盖热力图（颜色 = 当天覆盖率），点击某天跳到记录页 */
+/** 年视图：GitHub 式覆盖热力图（颜色 = 当天覆盖率），点击某天跳到每日页 */
 function renderHeatmap(plugin: LubiPlugin, host: HTMLElement, from: string, to: string, dailyStats: Map<string, { coveredMinutes: number; invalidCount: number }>): void {
   const card = host.createDiv({ cls: "lubi-card lubi-heat-card" });
   const head = card.createDiv({ cls: "lubi-panel-head" });

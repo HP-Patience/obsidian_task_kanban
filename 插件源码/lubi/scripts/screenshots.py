@@ -31,7 +31,7 @@ async def main():
         # ---------- 教学手册（1x） ----------
         pg = await page(1400, 900, 1)
         await go(pg, "empty"); save(await pg.screenshot(clip={"x":0,"y":0,"width":1400,"height":560}), MAN/"01-首次打开.webp")
-        await go(pg, "today"); save(await pg.screenshot(), MAN/"02-记录页.webp")
+        await go(pg, "today"); save(await pg.screenshot(), MAN/"02-每日页.webp")
         save(await pg.screenshot(clip={"x":0,"y":0,"width":1400,"height":56}), MAN/"00-顶栏.webp")
         await hover_big(pg); await pg.wait_for_timeout(150)
         box = await (await pg.query_selector(".lubi-timeline-wrap")).bounding_box()

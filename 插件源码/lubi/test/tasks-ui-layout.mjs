@@ -65,7 +65,7 @@ if (!browser) {
       const page = `<!doctype html><meta charset="utf-8">${styles}<body class="theme-${item.theme}">
         <div class="lubi-root" style="width:${item.width}px;height:1100px">
           <div class="lubi-topbar"><div class="lubi-seg lubi-topbar-tabs">
-            <button class="lubi-seg-item" id="recordTab" aria-pressed="false">记录</button>
+            <button class="lubi-seg-item" id="recordTab" aria-pressed="false">每日</button>
             <button class="lubi-seg-item" id="reviewTab" aria-pressed="false">回顾</button>
             <button class="lubi-seg-item" id="taskTab" aria-pressed="true">任务</button>
           </div><button class="lubi-date-label is-today" id="dateLabel">9月25日</button></div>

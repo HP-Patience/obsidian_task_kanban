@@ -91,7 +91,7 @@ export class DashboardView extends ItemView {
     this.contextLabel = left.createDiv({ cls: "lubi-context", attr: { "aria-live": "polite" } });
 
     const tabs = segmented<Tab>(bar, [
-      { id: "today", label: "记录", icon: "hourglass" },
+      { id: "today", label: "每日", icon: "hourglass" },
       { id: "review", label: "回顾", icon: "bar-chart-3" },
       { id: "tasks", label: "任务", icon: "list-todo" },
     ], this.tab, (t) => this.setTab(t));
