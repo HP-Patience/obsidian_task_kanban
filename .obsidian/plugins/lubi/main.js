@@ -740,10 +740,6 @@ function occursOn(t, date) {
   if (t.repeat.kind === "monthly") return t.repeat.days.includes(d.getDate());
   return false;
 }
-function weekOf(date) {
-  const s = weekStart(date);
-  return Array.from({ length: 7 }, (_, i) => shiftDate(s, i));
-}
 async function ensureFolder(app, folder) {
   if (!folder) return;
   const parts = folder.split("/");
@@ -3491,7 +3487,7 @@ function renderAgenda(plugin, host, state, rerender, edit) {
   const navigate = (target) => {
     state.agendaDate = target;
     state.selectedDate = target;
-    state.weekAnchor = target;
+    state.weekAnchor = recenterWeek(state.weekAnchor, target);
     rerender();
   };
   const nav = head.createDiv({ cls: "lubi-nav lubi-push-right" });
@@ -3519,30 +3515,36 @@ function renderAgenda(plugin, host, state, rerender, edit) {
     button(section, `\u5728 ${shortDate(d)} \u65B0\u5EFA\u4EFB\u52A1`, () => new TaskModal(plugin.app, plugin, { defaults: { date: d }, onSaved: rerender }).open(), { cls: "lubi-btn-ghost lubi-btn-sm lubi-agenda-add" });
   }
 }
+function weekWindow(anchor) {
+  return Array.from({ length: 7 }, (_, i) => shiftDate(anchor, i - 3));
+}
+function recenterWeek(anchor, d) {
+  return Math.abs(daysBetween(anchor, d)) <= 3 ? anchor : d;
+}
 function renderWeek(plugin, host, date, state, rerender, edit) {
   const s = plugin.settings;
   const startH = Math.max(0, Math.min(23, s.scheduleStartHour));
   const endH = Math.max(startH + 1, Math.min(24, s.scheduleEndHour));
-  const days = weekOf(state.weekAnchor);
+  const days = weekWindow(state.weekAnchor);
   const card = host.createDiv({ cls: "lubi-card lubi-week-card" });
   const head = card.createDiv({ cls: "lubi-panel-head" });
   el(head, "h3", "lubi-panel-title", "\u5468\u65E5\u7A0B");
   head.createSpan({ cls: "lubi-muted", text: `${shortDate(days[0])} \u2013 ${shortDate(days[6])}` });
   const nav = head.createDiv({ cls: "lubi-nav lubi-push-right" });
-  iconButton(nav, "chevron-left", "\u4E0A\u4E00\u5468", () => {
+  iconButton(nav, "chevron-left", "\u5411\u524D 7 \u5929", () => {
     state.weekAnchor = shiftDate(state.weekAnchor, -7);
     state.selectedDate = shiftDate(state.selectedDate, -7);
     state.agendaDate = state.selectedDate;
     rerender();
   });
-  const wk = nav.createEl("button", { cls: "lubi-btn lubi-btn-sm", text: "\u672C\u5468" });
+  const wk = nav.createEl("button", { cls: "lubi-btn lubi-btn-sm", text: "\u4ECA\u5929" });
   wk.addEventListener("click", () => {
     state.weekAnchor = todayStr();
     state.selectedDate = todayStr();
     state.agendaDate = state.selectedDate;
     rerender();
   });
-  iconButton(nav, "chevron-right", "\u4E0B\u4E00\u5468", () => {
+  iconButton(nav, "chevron-right", "\u5411\u540E 7 \u5929", () => {
     state.weekAnchor = shiftDate(state.weekAnchor, 7);
     state.selectedDate = shiftDate(state.selectedDate, 7);
     state.agendaDate = state.selectedDate;
@@ -4159,17 +4161,16 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
   }
   contextText() {
     if (this.tab === "review") {
-      const a = this.review.anchor;
+      const a2 = this.review.anchor;
       if (this.review.period === "week") {
-        const f2 = weekStart(a);
-        return `\u56DE\u987E \xB7 ${shortDate(f2)} \u2013 ${shortDate(shiftDate(f2, 6))}`;
+        const f = weekStart(a2);
+        return `\u56DE\u987E \xB7 ${shortDate(f)} \u2013 ${shortDate(shiftDate(f, 6))}`;
       }
-      if (this.review.period === "month") return `\u56DE\u987E \xB7 ${shortDate(monthStart(a))} \u2013 ${shortDate(monthEnd(a))}`;
-      return `\u56DE\u987E \xB7 ${a.slice(0, 4)} \u5E74`;
+      if (this.review.period === "month") return `\u56DE\u987E \xB7 ${shortDate(monthStart(a2))} \u2013 ${shortDate(monthEnd(a2))}`;
+      return `\u56DE\u987E \xB7 ${a2.slice(0, 4)} \u5E74`;
     }
-    const f = weekStart(this.tasksState.weekAnchor);
-    const thisWeek = weekStart(todayStr()) === f;
-    return `\u4EFB\u52A1 \xB7 ${thisWeek ? "\u672C\u5468 " : ""}${shortDate(f)} \u2013 ${shortDate(shiftDate(f, 6))}`;
+    const a = this.tasksState.weekAnchor;
+    return `\u4EFB\u52A1 \xB7 ${shortDate(shiftDate(a, -3))} \u2013 ${shortDate(shiftDate(a, 3))}`;
   }
   activeDate() {
     return this.tab === "today" ? this.date : this.tab === "tasks" ? this.tasksState.selectedDate : todayStr();
@@ -4178,7 +4179,7 @@ var DashboardView = class _DashboardView extends import_obsidian9.ItemView {
   syncTasksDate(d) {
     const s = this.tasksState;
     s.selectedDate = d;
-    s.weekAnchor = d;
+    s.weekAnchor = recenterWeek(s.weekAnchor, d);
     s.agendaDate = d;
   }
   setDate(d) {

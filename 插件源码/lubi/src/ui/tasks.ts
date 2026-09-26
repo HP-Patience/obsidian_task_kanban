@@ -1,8 +1,8 @@
-// 任务页：左 今日清单 + 未安排；右 本周日程（拖放）；底部 项目（极简甘特）
+// 任务页：左 今日清单 + 未安排；右 七日日程（今天居中）（拖放）；底部 项目（极简甘特）
 
 import { Notice } from "obsidian";
 import type LubiPlugin from "../main";
-import { Task, weekOf, blankTask } from "../core/tasks";
+import { Task, blankTask } from "../core/tasks";
 import { daysBetween, eachDate, fmtDuration, hmToMin, minToHM, nowHM, shiftDate, shortDate, todayStr, weekdayZh, weekStart } from "../core/time";
 import { categoryOf } from "../settings";
 import { button, catDot, el, emptyState, HOUR_PX, icon, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
@@ -156,7 +156,7 @@ function renderAgenda(plugin: LubiPlugin, host: HTMLElement, state: TasksState, 
   const navigate = (target: string) => {
     state.agendaDate = target;
     state.selectedDate = target;
-    state.weekAnchor = target;
+    state.weekAnchor = recenterWeek(state.weekAnchor, target);
     rerender();
   };
   const nav = head.createDiv({ cls: "lubi-nav lubi-push-right" });
@@ -184,31 +184,41 @@ function renderAgenda(plugin: LubiPlugin, host: HTMLElement, state: TasksState, 
 
 // ---------- 七日周日程（宽面板保留拖动） ----------
 
+/** 周日程窗口：以锚点日为中心的连续 7 天（前 3 天 · 锚点 · 后 3 天），默认锚点是今天，今天就在正中 */
+export function weekWindow(anchor: string): string[] {
+  return Array.from({ length: 7 }, (_, i) => shiftDate(anchor, i - 3));
+}
+
+/** 选中日期仍在当前 7 天窗口里就不挪窗口（点表头不会让整张表跳动），跳出窗口才以它为新中心 */
+export function recenterWeek(anchor: string, d: string): string {
+  return Math.abs(daysBetween(anchor, d)) <= 3 ? anchor : d;
+}
+
 function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: TasksState, rerender: () => void, edit: (t: Task) => void): void {
   const s = plugin.settings;
   const startH = Math.max(0, Math.min(23, s.scheduleStartHour));
   const endH = Math.max(startH + 1, Math.min(24, s.scheduleEndHour));
-  const days = weekOf(state.weekAnchor);
+  const days = weekWindow(state.weekAnchor);
 
   const card = host.createDiv({ cls: "lubi-card lubi-week-card" });
   const head = card.createDiv({ cls: "lubi-panel-head" });
   el(head, "h3", "lubi-panel-title", "周日程");
   head.createSpan({ cls: "lubi-muted", text: `${shortDate(days[0])} – ${shortDate(days[6])}` });
   const nav = head.createDiv({ cls: "lubi-nav lubi-push-right" });
-  iconButton(nav, "chevron-left", "上一周", () => {
+  iconButton(nav, "chevron-left", "向前 7 天", () => {
     state.weekAnchor = shiftDate(state.weekAnchor, -7);
     state.selectedDate = shiftDate(state.selectedDate, -7);
     state.agendaDate = state.selectedDate;
     rerender();
   });
-  const wk = nav.createEl("button", { cls: "lubi-btn lubi-btn-sm", text: "本周" });
+  const wk = nav.createEl("button", { cls: "lubi-btn lubi-btn-sm", text: "今天" });
   wk.addEventListener("click", () => {
     state.weekAnchor = todayStr();
     state.selectedDate = todayStr();
     state.agendaDate = state.selectedDate;
     rerender();
   });
-  iconButton(nav, "chevron-right", "下一周", () => {
+  iconButton(nav, "chevron-right", "向后 7 天", () => {
     state.weekAnchor = shiftDate(state.weekAnchor, 7);
     state.selectedDate = shiftDate(state.selectedDate, 7);
     state.agendaDate = state.selectedDate;
@@ -450,7 +460,7 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
     });
     bindDrop(plugin, col, d, startH, rerender);
   });
-  // 首屏：本周 = 现在 − 1h；其他周 = 最早的定时任务（没有则从头）
+  // 首屏：窗口含今天 = 现在 − 1h；否则 = 最早的定时任务（没有则从头）
   const scrollEl = card.querySelector(".lubi-week-body") as HTMLElement | null;
   const earliest = Math.min(...days.flatMap((d) => plugin.tasks.forDate(d).filter((t) => t.start).map((t) => hmToMin(t.start))), Infinity);
   const targetMin = days.includes(todayStr()) ? hmToMin(nowHM()) - 60 : Number.isFinite(earliest) ? earliest - 30 : startH * 60;

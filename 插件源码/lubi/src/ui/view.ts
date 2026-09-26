@@ -6,7 +6,7 @@ import { shiftDate, shortDate, todayStr, weekdayZh, weekStart, monthStart, month
 import { iconButton, segmented, button, debounce, hideTip, tip } from "./components";
 import { renderToday } from "./today";
 import { renderReview, ReviewState } from "./review";
-import { renderTasks, TasksState } from "./tasks";
+import { recenterWeek, renderTasks, TasksState } from "./tasks";
 import { RecordModal, ShortcutsModal, TaskModal } from "./modals";
 
 export const VIEW_TYPE = "lubi-dashboard";
@@ -160,9 +160,8 @@ export class DashboardView extends ItemView {
       if (this.review.period === "month") return `回顾 · ${shortDate(monthStart(a))} – ${shortDate(monthEnd(a))}`;
       return `回顾 · ${a.slice(0, 4)} 年`;
     }
-    const f = weekStart(this.tasksState.weekAnchor);
-    const thisWeek = weekStart(todayStr()) === f;
-    return `任务 · ${thisWeek ? "本周 " : ""}${shortDate(f)} – ${shortDate(shiftDate(f, 6))}`;
+    const a = this.tasksState.weekAnchor;
+    return `任务 · ${shortDate(shiftDate(a, -3))} – ${shortDate(shiftDate(a, 3))}`;
   }
 
   activeDate(): string {
@@ -173,7 +172,7 @@ export class DashboardView extends ItemView {
   private syncTasksDate(d: string): void {
     const s = this.tasksState;
     s.selectedDate = d;
-    s.weekAnchor = d;
+    s.weekAnchor = recenterWeek(s.weekAnchor, d);
     s.agendaDate = d;
   }
 

@@ -420,7 +420,8 @@ check(root.querySelectorAll(".lubi-chart-legend-item").length >= 1, "chart legen
   tabs[1].click(); await tick(); await tick();
   check(view.tab === "review" && root.querySelector(".lubi-bars") !== null, "clicking 回顾 returns to review page"); }
 // 10. 周日程 pointer 拖动：跨列 + 改时间
-plugin.settings.scheduleStartHour = 0; view.show("tasks", "2026-09-24"); await tick();
+plugin.settings.scheduleStartHour = 0; view.tasksState.weekAnchor = "2026-09-24"; view.show("tasks", "2026-09-24"); await tick(); // 窗口固定为 9/21–9/27
+{ const cols = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => b.getAttribute("aria-label")); check(cols.length === 7 && cols[3].includes("2026-09-24"), `week window centred on anchor: ${cols[3]}`); }
 const wb = root.querySelector(".lubi-wblock");
 const wt = plugin.tasks.all.find((t) => t.title === wb.querySelector(".lubi-wblock-title").textContent);
 const beforeDate = plugin.tasks.forDate("2026-09-25").some((t) => t.id === wt.id) ? "2026-09-25" : null;
