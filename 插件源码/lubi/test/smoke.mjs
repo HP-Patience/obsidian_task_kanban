@@ -100,7 +100,8 @@ view.show("today"); await tick();
   await toggle();
   check(O.openModals.length === modalsBefore, "sync: checking does not open a dialog");
   check(linked().length === 1 && linked()[0].startsWith("- 06:00–06:30") && plugin.tasks.byId(ID).doneLogs?.[D]?.start === "06:00", "sync: checking writes the planned slot and registers it");
-  check(document.body.textContent.includes("已记录「同步测试」"), "sync: auto record is announced with undo");
+  check(document.body.textContent.includes("已按计划记下「同步测试」"), "sync: auto record is announced with undo");
+  check(linked()[0]?.includes("[待确认:: 按计划]"), "sync: auto record is marked 待确认 (planned, not actual)");
   // 撤销自动记录 = 撤销这次勾选
   [...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); for (let i = 0; i < 4; i++) await tick();
   check(linked().length === 0 && !plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D) && !plugin.tasks.byId(ID).doneLogs, "sync: undo removes the record and unchecks the task");
@@ -170,7 +171,7 @@ view.show("today"); await tick();
   view.show("today", D); await tick();
   plugin.quickLog();
   const m = O.openModals.at(-1);
-  check(m.constructor.name === "RecordModal" && !!m.contentEl.querySelector(".lubi-kind-seg"), "new: daily page opens the unified dialog on 已完成");
+  check(m.constructor.name === "RecordModal" && !!m.contentEl.querySelector(".lubi-kind-seg"), "new: daily page opens the unified dialog on 记录");
   check(![...m.contentEl.querySelectorAll(".lubi-ghost-btn")].some((b) => b.textContent.includes("关联")), "new: the manual 关联待办 field is gone");
   const tt = m.contentEl.querySelector('input[type="text"]'); tt.value = "补记午饭后散步"; tt.dispatchEvent(new window.Event("input"));
   const st = m.contentEl.querySelector('input[type="time"]'); st.value = "05:00"; st.dispatchEvent(new window.Event("change"));
@@ -193,16 +194,16 @@ view.show("today"); await tick();
   check(!plugin.tasks.byId(t.id) && !app.vault.files.get(`日记/${D}.md`).includes("补记午饭后散步"), "new: deleting the record also deletes its generated task");
   [...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); await settle();
   check(!!plugin.tasks.byId(t.id) && app.vault.files.get(`日记/${D}.md`).includes(`[任务:: ${t.id}]`), "new: undo restores both record and task");
-  // 切到「待做」：带着内容换成任务表单
+  // 切到「任务」：带着内容换成任务表单
   plugin.quickLog();
   const m2 = O.openModals.at(-1);
   const t2 = m2.contentEl.querySelector('input[type="text"]'); t2.value = "明天买菜"; t2.dispatchEvent(new window.Event("input"));
-  [...m2.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].find((x) => x.textContent.includes("待做")).click(); await tick();
+  [...m2.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].find((x) => x.textContent.includes("任务")).click(); await tick();
   const tm = O.openModals.at(-1);
-  check(!O.openModals.includes(m2) && tm.constructor.name === "TaskModal" && tm.t.title === "明天买菜" && tm.t.date === D, "new: switching to 待做 carries the draft into the task form");
-  [...tm.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].find((x) => x.textContent.includes("已完成")).click(); await tick();
+  check(!O.openModals.includes(m2) && tm.constructor.name === "TaskModal" && tm.t.title === "明天买菜" && tm.t.date === D, "new: switching to 任务 carries the draft into the task form");
+  [...tm.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].find((x) => x.textContent.includes("记录")).click(); await tick();
   const back = O.openModals.at(-1);
-  check(back.constructor.name === "RecordModal" && back.rec.title === "明天买菜", "new: switching back to 已完成 keeps the draft");
+  check(back.constructor.name === "RecordModal" && back.rec.title === "明天买菜", "new: switching back to 记录 keeps the draft");
   back.close();
   await plugin.tasks.remove(t.id);
   await plugin.journal.remove(D, await plugin.journal.findLine(D, { start: "05:00", minutes: 20, category: t.category, title: "补记午饭后散步" }));
@@ -321,7 +322,8 @@ const statusBtn = (modal, value) => modal.contentEl.querySelector(`.lubi-status-
 check(statusBtn(statusDraft, "todo")?.getAttribute("aria-pressed") === "true" && !!statusBtn(statusDraft, "todo")?.querySelector(".lubi-status-check"), "initial task state is marked in the modal");
 statusBtn(statusDraft, "doing").click();
 check(statusBtn(statusDraft, "doing")?.getAttribute("aria-pressed") === "true" && statusBtn(statusDraft, "todo")?.getAttribute("aria-pressed") === "false", "clicking task state updates selected button immediately");
-check(statusDraft.contentEl.querySelector('[role="status"]')?.textContent.includes("进行中") && statusDraft.contentEl.querySelector('[role="status"]')?.textContent.includes("保存后生效"), "status change explains the pending save");
+await tick();
+check(statusDraft.titleEl.querySelector(".lubi-dirty")?.classList.contains("is-on") && !statusDraft.contentEl.querySelector(".lubi-status-hint"), "status change is flagged only by the unsaved marker");
 check(plugin.tasks.byId(milk.id).status === "todo", "state draft is not persisted before save");
 statusDraft.contentEl.querySelector(".lubi-modal-actions .lubi-btn-ghost").click();
 check(!O.openModals.includes(statusDraft) && plugin.tasks.byId(milk.id).status === "todo", "cancel leaves task state unchanged");
@@ -337,7 +339,7 @@ check(plugin.tasks.byId(milk.id).status === "done" && plugin.tasks.byId(milk.id)
 if (!window.PointerEvent) window.PointerEvent = class extends window.MouseEvent { constructor(t, o = {}) { super(t, o); this.pointerId = o.pointerId ?? 1; } };
 const pe = (el, type, y, x = 0, extra = {}) => el.dispatchEvent(new window.PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, pointerId: 1, ...extra }));
 const drag = async (el, y0, y1, x0 = 0, x1 = 0, opts = {}) => { pe(el, "pointerdown", y0, x0); pe(window, "pointermove", y0 + 3, x0); pe(window, "pointermove", y1, x1, opts); if (opts.cancel) window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); else pe(window, "pointerup", y1, x1, opts); await tick(); await tick(); await new Promise((r) => setTimeout(r, 200)); };
-const PXM = 56 / 60;
+const PXM = 48 / 60;
 const journal = () => app.vault.files.get("日记/2026-09-24.md");
 for (const n of [...document.body.children]) if (n.querySelector?.(".lubi-notice-btn")) n.remove();
 view.show("today", "2026-09-24"); await tick(); await new Promise((r) => setTimeout(r, 200));
@@ -423,19 +425,19 @@ const wb = root.querySelector(".lubi-wblock");
 const wt = plugin.tasks.all.find((t) => t.title === wb.querySelector(".lubi-wblock-title").textContent);
 const beforeDate = plugin.tasks.forDate("2026-09-25").some((t) => t.id === wt.id) ? "2026-09-25" : null;
 const origStart = wt.start;
-await drag(wb, 100, 100 + 44, 0, 1);
+await drag(wb, 100, 100 + 48, 0, 1);
 const after = plugin.tasks.byId(wt.id);
 check(after.start === (() => { const [h, m] = origStart.split(":").map(Number); const v = Math.round((h * 60 + m + 60) / 15) * 15; return `${String(Math.floor(v / 60)).padStart(2, "0")}:${String(v % 60).padStart(2, "0")}`; })(), `week block moved +1h (snapped to 15min): ${origStart} → ${after.start}`);
 check(plugin.tasks.forDate("2026-09-25").some((t) => t.id === wt.id) !== !!beforeDate, `week block moved to next column (was ${beforeDate ? "9/25" : "other day"})`);
 const wb2 = [...root.querySelectorAll(".lubi-wblock")].find((x) => x.querySelector(".lubi-wblock-title").textContent === wt.title);
 check(!!wb2.querySelector(".lubi-block-handle.is-bottom"), "week block has resize handle");
 const est0 = plugin.tasks.byId(wt.id).estimate || 30;
-await drag(wb2.querySelector(".lubi-block-handle.is-bottom"), 200, 200 + 22);
+await drag(wb2.querySelector(".lubi-block-handle.is-bottom"), 200, 200 + 24);
 check((plugin.tasks.byId(wt.id).estimate || 0) === est0 + 30, `week block resize +30min estimate: ${est0} → ${plugin.tasks.byId(wt.id).estimate}`);
 // 11. 周日程 上边缘拉伸：开始提前 30min，预计 +30
 const wb3 = [...root.querySelectorAll(".lubi-wblock")].find((x) => x.querySelector(".lubi-wblock-title").textContent === wt.title);
 const s0 = plugin.tasks.byId(wt.id).start, e0 = plugin.tasks.byId(wt.id).estimate;
-await drag(wb3.querySelector(".lubi-block-handle.is-top"), 300, 300 - 22);
+await drag(wb3.querySelector(".lubi-block-handle.is-top"), 300, 300 - 24);
 { const t2 = plugin.tasks.byId(wt.id); const toMin = (hm) => { const [h, m] = hm.split(":").map(Number); return h * 60 + m; };
   check(toMin(t2.start) === toMin(s0) - 30 && t2.estimate === e0 + 30, `week block resize-start: ${s0}/${e0} → ${t2.start}/${t2.estimate}`); }
 // 12a. 周日程空白处拖出新任务（与每日页时间轴一致）
@@ -443,7 +445,7 @@ await drag(wb3.querySelector(".lubi-block-handle.is-top"), 300, 300 - 22);
   view.show("tasks", "2026-09-24"); await tick();
   const cols = [...root.querySelectorAll(".lubi-week-col")];
   const wkDays = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => b.getAttribute("aria-label").match(/\d{4}-\d{2}-\d{2}/)[0]);
-  const ci = 2, col = cols[ci], sh = plugin.settings.scheduleStartHour, px = 44 / 60;
+  const ci = 2, col = cols[ci], sh = plugin.settings.scheduleStartHour, px = 48 / 60;
   const yAt = (hm) => { const [h, m] = hm.split(":").map(Number); return ((h - sh) * 60 + m) * px + 1; };
   const before = O.openModals.length;
   const ghostOn = () => col.querySelector(".lubi-wghost.is-on");
@@ -598,6 +600,43 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   if (anyTask) { anyTask.click(); await tick(); scan("task-modal", O.openModals.at(-1).modalEl); O.openModals.at(-1).close(); }
   check(dupes.length === 0, `tooltip: no element uses a native title tooltip (${dupes.length}${dupes.length ? ": " + dupes.slice(0, 6).join(", ") : ""})`);
   check(root.querySelectorAll(".lubi-icon-btn[aria-label]").length > 0, "tooltip: icon buttons keep their Obsidian tooltip (aria-label)");
+}
+
+// ---------- v1.5：计划层 + 待确认记录 ----------
+{
+  const D = "2026-09-26", ID = "plan-1";
+  const settle = async () => { for (let i = 0; i < 5; i++) await tick(); };
+  for (const n of [...document.body.children]) if (n.querySelector?.(".lubi-notice-btn")) n.remove();
+  await plugin.tasks.upsert({ ...plugin.tasks.all[0], id: ID, title: "计划层测试", category: "学习", parent: null, status: "todo", blocked: false, date: D, start: "15:00", estimate: 60, repeat: { kind: "none", days: [] }, doneDates: [], doneLogs: undefined, startDate: "", endDate: "", origin: undefined });
+  view.show("today", D); await settle();
+  const plan = [...root.querySelectorAll(".lubi-plan")].find((x) => x.textContent.includes("计划层测试"));
+  check(!!plan && !!root.querySelector(".lubi-tl-canvas.has-plans"), "plan: a timed task is drawn in the plan lane");
+  check(!!root.querySelector(".lubi-plan-card"), "plan: side panel shows plan progress");
+  plan?.click(); await tick();
+  const pm = O.openModals.at(-1);
+  check(pm?.constructor.name === "RecordModal" && pm.rec.task === ID && pm.rec.start === "15:00" && pm.rec.minutes === 60, "plan: clicking a plan pre-fills a linked record");
+  pm?.contentEl.querySelector(".lubi-modal-actions .mod-cta").click(); await settle();
+  check(plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D) && plugin.tasks.byId(ID).doneLogs?.[D]?.start === "15:00", "plan: saving the record completes the task");
+  check(!(app.vault.files.get(`日记/${D}.md`) || "").includes("[待确认::"), "plan: a record confirmed in the form is not pending");
+  view.show("today", D); await settle();
+  check(![...root.querySelectorAll(".lubi-plan")].some((x) => x.textContent.includes("计划层测试")), "plan: a completed plan leaves the plan lane");
+  // 待确认：虚线 + 徽标；点 ✓ 去掉标记
+  await plugin.journal.add({ date: D, start: "17:00", minutes: 30, category: "学习", title: "待确认测试", extra: { 待确认: "按计划" } });
+  view.show("today", D); await settle();
+  const pb = [...root.querySelectorAll(".lubi-block.is-pending")].find((x) => x.textContent.includes("待确认测试"));
+  check(!!pb?.querySelector(".lubi-pending-badge"), "pending: an estimated record is flagged on the timeline");
+  view.show("review", D); await settle();
+  check(!!root.querySelector(".lubi-kpi-pending"), "pending: review KPI calls out estimated time");
+  view.show("today", D); await settle();
+  const pb2 = [...root.querySelectorAll(".lubi-block.is-pending")].find((x) => x.textContent.includes("待确认测试"));
+  pb2?.querySelector('.lubi-block-actions [aria-label="确认：时间与计划一致"]')?.click(); await settle();
+  check(!(app.vault.files.get(`日记/${D}.md`) || "").includes("[待确认::"), "pending: ✓ confirms the record");
+  // 主按钮文字随页面变化
+  view.show("tasks", D); await settle();
+  check(root.querySelector(".lubi-topbar-cta")?.textContent.includes("加任务"), "cta: task page button reads 加任务");
+  view.show("today", D); await settle();
+  check(root.querySelector(".lubi-topbar-cta")?.textContent.includes("记一条"), "cta: daily page button reads 记一条");
+  check(!root.querySelector(".lubi-error"), "no render errors after plan / pending flows");
 }
 
 console.log("data file now:", app.vault.files.get("任务/任务数据.json").slice(0, 120).replace(/\n/g, " "));

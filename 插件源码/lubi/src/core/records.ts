@@ -117,6 +117,23 @@ export function serializeRecord(r: Rec): string {
   return parts.join(" ");
 }
 
+/**
+ * 「待确认」：按计划 / 预计时长自动生成、还没被人核对过的记录。
+ * 写成 `[待确认:: 按计划]`，人能读、Dataview 能查；编辑保存、拖动调整或点「确认」后去掉。
+ */
+export const PENDING_KEY = "待确认";
+
+export function isPending(r: Rec): boolean {
+  return !!r.extra?.[PENDING_KEY];
+}
+
+/** 去掉「待确认」标记后的副本 */
+export function confirmed(r: Rec): Rec {
+  const extra = { ...(r.extra || {}) };
+  delete extra[PENDING_KEY];
+  return { ...r, extra };
+}
+
 export function endMin(r: Rec): number {
   return hmToMin(r.start) + r.minutes;
 }

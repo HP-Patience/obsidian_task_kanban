@@ -1,17 +1,18 @@
-// 每日页：24h 时间轴（已完成 = 记录）+ 右侧当天分布。待做的任务只在任务页；勾选完成会直接出现在这里的时间轴上
+// 每日页：24h 时间轴（实线 = 记录，虚线 = 当天有开始时间的计划）+ 右侧当天分布 / 空白时段 / 未定时的计划。
+// 计划只读展示：点计划块 = 按实际时间记一条并完成任务；排期仍在任务页。
 
 import { Notice } from "obsidian";
 import type LubiPlugin from "../main";
-import { ParsedLine, Rec } from "../core/records";
+import { confirmed, isPending, ParsedLine, Rec } from "../core/records";
 import { fmtDuration, fmtHours, hmToMin, minToHM, nowHM, shiftDate, shortDate, todayStr } from "../core/time";
 import { dayTimeStats, invalidTimedSpan } from "../core/metrics";
 import { categoryOf } from "../settings";
-import { button, catChip, catDot, donut, el, emptyState, icon, iconButton, stopAll, tip, undoNotice } from "./components";
+import { button, catChip, catDot, donut, el, emptyState, HOUR_PX, icon, iconButton, stopAll, tip, undoNotice } from "./components";
 import { minuteAt, startDrag } from "./drag";
 import { RecordModal } from "./modals";
-import { addRecordAsDone, deleteRecord, OpenRecord, syncLinkedTask } from "./taskList";
+import { addRecordAsDone, afterDone, completeFromRecord, dayTasks, deleteRecord, OpenRecord, syncLinkedTask } from "./taskList";
+import type { Task } from "../core/tasks";
 
-const HOUR_PX = 56;
 const PX_PER_MIN = HOUR_PX / 60;
 const snap5 = (m: number) => Math.max(0, Math.min(1440, Math.round(m / 5) * 5));
 
@@ -86,7 +87,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const hoverLabel = hover.createSpan({ cls: "lubi-tl-hover-label" });
   let dragging = false;
   canvas.addEventListener("pointermove", (e) => {
-    if (dragging || (e.target as HTMLElement).closest(".lubi-block")) {
+    if (dragging || (e.target as HTMLElement).closest(".lubi-block, .lubi-plan")) {
       hover.removeClass("is-on");
       return;
     }
@@ -114,7 +115,8 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const commit = async (row: ParsedLine, start: number, minutes: number) => {
     const old = row.rec;
     if (hmToMin(old.start) === start && old.minutes === minutes) return;
-    const next: Rec = { ...old, start: minToHM(start), minutes, extra: { ...old.extra } };
+    // 拖到实际时间即视为已核对：去掉「待确认」
+    const next: Rec = confirmed({ ...old, start: minToHM(start), minutes, extra: { ...old.extra } });
     try {
       await plugin.journal.update(date, row.line, next);
       await syncLinkedTask(plugin, old, next);
@@ -140,6 +142,48 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
     selected = { row, el: blockEl };
   };
 
+  // ---------- 计划层：当天有开始时间、还没完成的任务，画在记录右侧的虚线列 ----------
+  const planned = dayTasks(plugin, date);
+  // 已经有关联记录的计划（比如用 ▶ 记过、还没勾完成）不再画虚线块，避免同一件事出现两次
+  const loggedTasks = new Set(rows.map((r) => r.rec.task).filter((id): id is string => !!id));
+  const openPlans = planned.filter((t) => !plugin.tasks.isDoneOn(t, date) && !loggedTasks.has(t.id));
+  const timedPlans = openPlans.filter((t) => t.start);
+  const untimedPlans = openPlans.filter((t) => !t.start);
+  canvas.toggleClass("has-plans", timedPlans.length > 0);
+  const logPlan = (t: Task) => openNew({
+    title: t.title,
+    category: t.category && categoryOf(plugin.settings, t.category).kind === "time" ? t.category : undefined,
+    task: t.id,
+    start: t.start || (date === todayStr() ? nowHM() : undefined),
+    minutes: t.estimate || 30,
+  }, (rec) => completeFromRecord(plugin, t.id, date, rec));
+  if (timedPlans.length) {
+    const lane = canvas.createDiv({ cls: "lubi-plan-lane", attr: { "aria-label": "当天计划" } });
+    lane.createDiv({ cls: "lubi-plan-lane-title", text: "计划" });
+    for (const t of timedPlans) {
+      const cat = categoryOf(plugin.settings, t.category);
+      const s0 = hmToMin(t.start);
+      const mins = Math.max(15, t.estimate || 30);
+      const h = Math.max(Math.min(mins, 1440 - s0) * PX_PER_MIN, 20);
+      const pb = lane.createEl("button", { cls: "lubi-plan", attr: { type: "button" } });
+      pb.style.top = `${s0 * PX_PER_MIN}px`;
+      pb.style.height = `${h - 2}px`;
+      pb.style.setProperty("--chip", cat.color);
+      pb.toggleClass("is-compact", h < 34);
+      const ph = pb.createDiv({ cls: "lubi-plan-head" });
+      ph.createSpan({ cls: "lubi-plan-title", text: t.title });
+      pb.createDiv({ cls: "lubi-plan-time", text: `${t.start}–${minToHM(s0 + mins)}` });
+      const late = date === todayStr() && s0 + mins < hmToMin(nowHM());
+      pb.toggleClass("is-late", late);
+      tip(pb, `计划 ${t.start}–${minToHM(s0 + mins)} · ${t.title}${late ? "（已过计划时间）" : ""}。点击按实际时间记一条，保存后任务自动完成`);
+      pb.addEventListener("pointerdown", (e) => e.stopPropagation());
+      pb.addEventListener("click", (e) => {
+        stopAll(e);
+        logPlan(t);
+      });
+    }
+  }
+
   const lanes = layoutLanes(timed);
   for (const { row, lane, lanes: n } of lanes) {
     const r = row.rec;
@@ -151,12 +195,14 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
     const height = Math.max(Math.min(r.minutes, 1440 - startMin) * PX_PER_MIN, 18);
     block.style.top = `${top}px`;
     block.style.height = `${height - 2}px`;
-    block.style.left = `calc(${(lane / n) * 100}% + ${lane ? 2 : 0}px)`;
-    block.style.width = `calc(${100 / n}% - ${lane ? 2 : 0}px)`;
+    block.style.left = `calc(var(--lubi-rec-w) * ${lane / n} + ${lane ? 2 : 0}px)`;
+    block.style.width = `calc(var(--lubi-rec-w) * ${1 / n} - ${lane ? 2 : 0}px)`;
     block.style.setProperty("--chip", cat.color);
     block.toggleClass("is-invalid", invalid);
     block.toggleClass("is-rest", !!cat.rest);
     block.toggleClass("is-parallel", n > 1);
+    const pending = isPending(r);
+    block.toggleClass("is-pending", pending);
     block.setAttribute("tabindex", "0");
     block.setAttribute("role", "button");
     block.addEventListener("focus", () => select(row, block));
@@ -169,13 +215,22 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
     const head = block.createDiv({ cls: "lubi-block-head" });
     icon(head, cat.icon, "lubi-icon lubi-block-icon");
     head.createSpan({ cls: "lubi-block-title", text: r.title });
+    if (pending) head.createSpan({ cls: "lubi-pending-badge", text: "待确认" });
     const durEl = head.createSpan({ cls: "lubi-block-dur", text: fmtDuration(r.minutes) });
     const meta = block.createDiv({ cls: "lubi-block-meta" });
     const timeEl = meta.createSpan({ cls: "lubi-block-time", text: invalid ? `${r.start} · 需校对` : `${r.start}–${minToHM(startMin + r.minutes)}` });
     const subParts = [r.task && plugin.tasks.byId(r.task) ? "关联任务" : "", r.notes || ""].filter(Boolean);
     if (subParts.length) meta.createSpan({ cls: "lubi-block-sub", text: subParts.join(" · ") });
-    tip(block, `${invalid ? `${r.start} · 时长跨出当天，需校对` : `${r.start}–${minToHM(startMin + r.minutes)}`} ${r.category} · ${r.title}，${fmtDuration(r.minutes)}${r.notes ? `（${r.notes}）` : ""}。${invalid ? "点击或回车校对" : "拖动移动 · 拉边缘改时长 · 回车编辑"}`);
+    tip(block, `${invalid ? `${r.start} · 时长跨出当天，需校对` : `${r.start}–${minToHM(startMin + r.minutes)}`} ${r.category} · ${r.title}，${fmtDuration(r.minutes)}${r.notes ? `（${r.notes}）` : ""}。${pending ? "按计划自动记下，待确认：拖到实际时间或点 ✓。" : ""}${invalid ? "点击或回车校对" : "拖动移动 · 拉边缘改时长 · 回车编辑"}`);
     const acts = block.createDiv({ cls: "lubi-block-actions" });
+    if (pending) iconButton(acts, "check", "确认：时间与计划一致", async () => {
+      try {
+        await plugin.journal.update(date, row.line, confirmed(r));
+      } catch (e) {
+        new Notice((e as Error).message, 6000);
+      }
+      rerender();
+    });
     iconButton(acts, "pencil", "编辑", () => openEdit(row));
     iconButton(acts, "copy", "复制到明天", async () => {
       const copy: Rec = { ...r, date: plugin.shiftDate(date, 1), task: undefined, extra: { ...r.extra } };
@@ -263,7 +318,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const ghost = canvas.createDiv({ cls: "lubi-block lubi-block-ghost" });
   const ghostLabel = ghost.createDiv({ cls: "lubi-block-head" });
   canvas.addEventListener("pointerdown", (e) => {
-    if ((e.target as HTMLElement).closest(".lubi-block, .lubi-gap-btn")) return;
+    if ((e.target as HTMLElement).closest(".lubi-block, .lubi-gap-btn, .lubi-plan")) return;
     const at = snap5(minuteAt(e.clientY, canvas, PX_PER_MIN));
     startDrag(e, {
       mode: "create",
@@ -294,7 +349,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
     });
   });
   canvas.addEventListener("dblclick", (e) => {
-    if ((e.target as HTMLElement).closest(".lubi-block, .lubi-gap-btn")) return;
+    if ((e.target as HTMLElement).closest(".lubi-block, .lubi-gap-btn, .lubi-plan")) return;
     const m = Math.round(minuteAt(e.clientY, canvas, PX_PER_MIN) / 15) * 15;
     openNew({ start: minToHM(m) });
   });
@@ -384,6 +439,67 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   // ---------- 右：摘要 ----------
   const side = host.createDiv({ cls: "lubi-today-side" });
   renderSummary(plugin, side, rows.map((r) => r.rec), date);
+  renderPlanCard(plugin, side, date, planned, openPlans.length, untimedPlans, logPlan, rerender);
+  renderGapCard(side, gaps, scrollToMin, openNew);
+}
+
+/** 当天计划的完成情况 + 没定时间的计划（定了时间的已经画在时间轴上，不重复列出） */
+function renderPlanCard(plugin: LubiPlugin, side: HTMLElement, date: string, planned: Task[], openCount: number, untimed: Task[], logPlan: (t: Task) => void, rerender: () => void): void {
+  if (!planned.length) return;
+  const card = side.createDiv({ cls: "lubi-card lubi-plan-card" });
+  const head = card.createDiv({ cls: "lubi-panel-head" });
+  el(head, "h3", "lubi-panel-title", date === todayStr() ? "今日计划" : "当天计划");
+  const done = planned.length - openCount;
+  head.createSpan({ cls: "lubi-muted", text: `${done}/${planned.length} 已做` });
+  const bar = card.createDiv({ cls: "lubi-plan-progress", attr: { role: "meter", "aria-valuemin": "0", "aria-valuemax": String(planned.length), "aria-valuenow": String(done), "aria-label": "计划完成度（已完成或已有记录）" } });
+  bar.createDiv({ cls: "lubi-plan-progress-fill" }).style.width = `${Math.round((done / planned.length) * 100)}%`;
+  if (!untimed.length) {
+    card.createDiv({ cls: "lubi-muted lubi-plan-note", text: done === planned.length ? "都完成了。" : "定了时间的计划画在时间轴右侧的虚线列里，点一下即可记录。" });
+    return;
+  }
+  card.createDiv({ cls: "lubi-muted lubi-plan-note", text: "没定时间：" });
+  const list = card.createDiv({ cls: "lubi-plan-list" });
+  for (const t of untimed) {
+    const cat = categoryOf(plugin.settings, t.category);
+    const row = list.createDiv({ cls: "lubi-plan-row" });
+    const b = row.createEl("button", { cls: "lubi-plan-row-main", attr: { type: "button" } });
+    if (t.category) catDot(b, cat);
+    b.createSpan({ cls: "lubi-plan-row-title", text: t.title });
+    if (t.estimate) b.createSpan({ cls: "lubi-muted lubi-plan-row-est", text: fmtDuration(t.estimate) });
+    tip(b, `记一条「${t.title}」，保存后任务自动完成`);
+    b.addEventListener("click", () => logPlan(t));
+    iconButton(row, "check", `按预计时长直接完成「${t.title}」（记录标为待确认）`, async () => {
+      try {
+        await plugin.tasks.toggleDone(t.id, date);
+        await afterDone(plugin, t, date, undefined, rerender);
+      } catch (e) {
+        new Notice(`任务更新失败：${(e as Error).message}`, 6000);
+      }
+      rerender();
+    }, "lubi-plan-row-done");
+  }
+}
+
+/** 空白时段：最长的几段，点一下滚到那里 / 直接补记 */
+function renderGapCard(side: HTMLElement, gaps: { start: number; minutes: number }[], scrollTo: (m: number) => void, openNew: OpenRecord): void {
+  if (!gaps.length) return;
+  const card = side.createDiv({ cls: "lubi-card lubi-gap-card" });
+  const head = card.createDiv({ cls: "lubi-panel-head" });
+  el(head, "h3", "lubi-panel-title", "空白时段");
+  const total = gaps.reduce((s, g) => s + g.minutes, 0);
+  head.createSpan({ cls: "lubi-muted", text: `${gaps.length} 段 · ${fmtHours(total)}` });
+  const list = card.createDiv({ cls: "lubi-gap-list" });
+  const top = gaps.slice().sort((a, b) => b.minutes - a.minutes).slice(0, 4).sort((a, b) => a.start - b.start);
+  for (const g of top) {
+    const row = list.createDiv({ cls: "lubi-gap-row" });
+    const jump = row.createEl("button", { cls: "lubi-gap-row-main", attr: { type: "button" } });
+    jump.createSpan({ cls: "lubi-gap-row-time", text: `${minToHM(g.start)}–${minToHM(g.start + g.minutes)}` });
+    jump.createSpan({ cls: "lubi-muted", text: fmtDuration(g.minutes) });
+    tip(jump, "在时间轴上定位");
+    jump.addEventListener("click", () => scrollTo(g.start));
+    iconButton(row, "plus", `补记 ${minToHM(g.start)}–${minToHM(g.start + g.minutes)}`, () => openNew({ start: minToHM(g.start), minutes: g.minutes }), "lubi-gap-row-add");
+  }
+  if (gaps.length > top.length) card.createDiv({ cls: "lubi-muted lubi-plan-note", text: `另有 ${gaps.length - top.length} 段较短的空白` });
 }
 
 /** 当天 ≥ minGap 分钟的空白段。今天只算到此刻，未来日期没有黑洞。 */

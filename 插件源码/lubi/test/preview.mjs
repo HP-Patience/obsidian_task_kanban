@@ -12,7 +12,8 @@ const tick = (ms = 40) => new Promise((r) => setTimeout(r, ms));
 
 const app = new O.App();
 const today = new Date();
-const demo = demoData(today);
+// 至少生成到 14:00 的当天记录：深夜 / 清晨运行时时间轴也不为空，预览与布局用例不随运行时刻变化
+const demo = demoData(today, Math.max(today.getHours() * 60 + today.getMinutes(), 14 * 60));
 const T = demo.today;
 seedVault(app.vault, demo);
 
@@ -79,7 +80,8 @@ view.show("tasks"); await tick(200);
 fs.writeFileSync(new URL("tasks.html", out), page("tasks", freeze(root)));
 // 4. 编辑模态
 view.show("today"); await tick(200);
-const b = [...root.querySelectorAll(".lubi-block")].find((x) => x.textContent.includes("线性代数"));
+const blocks = [...root.querySelectorAll(".lubi-block:not(.lubi-block-ghost)")];
+const b = blocks.find((x) => x.textContent.includes("线性代数")) || blocks.find((x) => x.querySelector(".lubi-block-meta")) || blocks[0];
 if (!window.PointerEvent) window.PointerEvent = class extends window.MouseEvent { constructor(t, o = {}) { super(t, o); this.pointerId = 1; } };
 b.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, clientY: 100, button: 0 }));
 window.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, clientY: 100, button: 0 }));
@@ -97,7 +99,8 @@ fs.writeFileSync(new URL("modal-new.html", out), page("modal-new", `<div class="
 nm.close();
 // 6. 任务模态：点任务页里的一行
 view.show("tasks"); await tick(200);
-const rowEl = [...root.querySelectorAll(".lubi-task")].find((x) => x.textContent.includes("线性代数"));
+const rows = [...root.querySelectorAll(".lubi-task")];
+const rowEl = rows.find((x) => x.textContent.includes("线性代数")) || rows[0];
 rowEl.click(); await tick();
 const tm = O.openModals.at(-1); tm.modalEl.classList.add("modal"); tm.titleEl.classList.add("modal-title"); tm.contentEl.classList.add("modal-content");
 fs.writeFileSync(new URL("modal-task.html", out), page("modal-task", `<div class="lubi-root" style="height:100vh;background:var(--background-secondary)"></div><div class="modal-bg"></div>${freeze(tm.modalEl)}`)); tm.close();

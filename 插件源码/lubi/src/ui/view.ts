@@ -21,6 +21,7 @@ export class DashboardView extends ItemView {
   private dateLabel!: HTMLElement;
   private todayBtn!: HTMLButtonElement;
   private contextLabel!: HTMLElement;
+  private ctaLabel?: HTMLElement;
   private keyHandler?: (e: KeyboardEvent) => void;
   private serial = 0;
   private lastRenderKey = "";
@@ -103,8 +104,9 @@ export class DashboardView extends ItemView {
     });
 
     const right = bar.createDiv({ cls: "lubi-topbar-right" });
-    const cta = button(right, "新建", () => this.openNew(), { primary: true, icon: "plus", cls: "lubi-topbar-cta" });
-    tip(cta, "新建（N）：每日页默认「已完成」，任务页默认「待做」，窗口顶部可切换");
+    const cta = button(right, this.ctaText(), () => this.openNew(), { primary: true, icon: "plus", cls: "lubi-topbar-cta" });
+    this.ctaLabel = cta.querySelector<HTMLElement>("span:not(.lubi-icon)") || undefined;
+    tip(cta, "新建（N）：每日 / 回顾页记一条，任务页加任务；窗口顶部可在「记录 | 任务」之间切换");
     cta.createSpan({ cls: "lubi-kbd lubi-kbd-cta", text: "N" });
     iconButton(right, "more-horizontal", "更多", () => undefined, "lubi-more-btn").addEventListener("click", (e) => this.openMore(e));
 
@@ -193,8 +195,14 @@ export class DashboardView extends ItemView {
     void this.render();
   }
 
+  /** 主按钮文字跟着页面走：说清楚按下去会得到什么 */
+  private ctaText(): string {
+    return this.tab === "tasks" ? "加任务" : "记一条";
+  }
+
   private syncTabs(): void {
     this.contentEl.dataset.tab = this.tab;
+    this.ctaLabel?.setText(this.ctaText());
     this.contentEl.querySelectorAll(".lubi-topbar-tabs .lubi-seg-item").forEach((b, i) => b.setAttribute("aria-pressed", String(["today", "review", "tasks"][i] === this.tab)));
   }
 

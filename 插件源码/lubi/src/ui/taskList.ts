@@ -4,7 +4,7 @@
 
 import { Notice } from "obsidian";
 import type LubiPlugin from "../main";
-import { ParsedLine, Rec } from "../core/records";
+import { ParsedLine, PENDING_KEY, Rec } from "../core/records";
 import { Task, DoneLog, blankTask } from "../core/tasks";
 import { fmtDuration, hmToMin, minToHM, nowHM, todayStr } from "../core/time";
 import { categoryOf } from "../settings";
@@ -66,6 +66,7 @@ export async function hasLinkedRecord(plugin: LubiPlugin, taskId: string, date: 
  * 按任务直接在时间线上记一条（不弹窗）：
  * 开始 = 任务的计划开始；没有计划时，今天按「此刻往前推预计时长」，其他日子接在当天最后一条记录后（没有则 09:00）。
  * 时长 = 预计时长（没填按 30 分钟）。生成后登记到任务上，并给出「撤销」。
+ * 这条记录是按计划估出来的，不是实际用时：标记为「待确认」，在时间轴上虚线显示，回顾页单独提示。
  */
 export async function logDone(plugin: LubiPlugin, t: Task, date: string, rerender?: () => void): Promise<Rec | null> {
   const minutes = Math.max(5, t.estimate || 30);
@@ -75,7 +76,7 @@ export async function logDone(plugin: LubiPlugin, t: Task, date: string, rerende
     else start = plugin.lastEndOf(date) || "09:00";
   }
   const category = t.category && categoryOf(plugin.settings, t.category).kind === "time" ? t.category : firstTimeCategory(plugin);
-  const rec: Rec = { date, start, minutes, category, title: t.title, task: t.id, extra: {} };
+  const rec: Rec = { date, start, minutes, category, title: t.title, task: t.id, extra: { [PENDING_KEY]: "按计划" } };
   try {
     await plugin.journal.add(rec);
   } catch (e) {
@@ -84,7 +85,7 @@ export async function logDone(plugin: LubiPlugin, t: Task, date: string, rerende
   }
   const latest = plugin.tasks.byId(t.id);
   if (latest && plugin.tasks.isDoneOn(latest, date)) await plugin.tasks.setDoneLog(t.id, date, logOf(rec));
-  undoNotice(`已记录「${t.title}」${start}–${minToHM(hmToMin(start) + minutes)}，可在时间轴拖动调整`, async () => {
+  undoNotice(`已按计划记下「${t.title}」${start}–${minToHM(hmToMin(start) + minutes)}（待确认）：在时间轴拖到实际时间，或点 ✓ 确认`, async () => {
     const line = await plugin.journal.findLine(date, rec);
     if (line !== null) await plugin.journal.remove(date, line);
     const cur = plugin.tasks.byId(t.id);
@@ -105,6 +106,17 @@ export async function afterDone(plugin: LubiPlugin, t: Task, date: string, _open
   if (!plugin.settings.promptLogOnComplete) return;
   if (await hasLinkedRecord(plugin, t.id, date)) return; // 已有关联记录（比如用 ▶ 记过），不重复记
   await logDone(plugin, t, date, rerender);
+}
+
+/**
+ * 用一条已保存的记录完成任务（点时间轴上的计划块 → 填实际时间 → 保存）：
+ * 勾上任务并登记这条记录，之后取消勾选仍能精确撤掉它。已完成的任务只补登记。
+ */
+export async function completeFromRecord(plugin: LubiPlugin, taskId: string, date: string, rec: Rec): Promise<void> {
+  const t = plugin.tasks.byId(taskId);
+  if (!t) return;
+  if (!plugin.tasks.isDoneOn(t, date)) await plugin.tasks.toggleDone(taskId, date);
+  await plugin.tasks.setDoneLog(taskId, date, logOf(rec));
 }
 
 /** 取消勾选后：删掉当初勾选时记下的那条记录（可撤销）；记录被外部改过则保留并提示 */

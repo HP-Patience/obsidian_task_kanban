@@ -1,7 +1,7 @@
 // 回顾页：周 / 月 / 年 汇总。柳比歇夫法的核心是"月末算账"。
 
 import type LubiPlugin from "../main";
-import { Rec } from "../core/records";
+import { isPending, Rec } from "../core/records";
 import { eachDate, fmtDuration, fmtHours, monthEnd, monthStart, parseDate, shiftDate, shortDate, weekStart, weekdayZh, todayStr, dateStr } from "../core/time";
 import { categoryOf } from "../settings";
 import { dayTimeStats } from "../core/metrics";
@@ -77,6 +77,14 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
     delta.createSpan({ cls: "lubi-muted", text: ` 较上一期 ${fmtHours(oldTotal)}` });
   } else {
     primary.createDiv({ cls: "lubi-muted lubi-kpi-sub", text: invalidDates.length ? "有待校对的异常日，暂不做环比" : "上一期记录不足，暂不做环比" });
+  }
+  // 按计划自动记下、还没核对的记录：时长是估计值，单独提示，避免把「计划」当成「实际」
+  const pendingRecs = timed.filter((r) => isPending(r));
+  if (pendingRecs.length) {
+    const pm = pendingRecs.reduce((sum, r) => sum + r.minutes, 0);
+    const note = primary.createDiv({ cls: "lubi-kpi-pending" });
+    note.setText(`其中 ${fmtHours(pm)} 按计划估计 · ${pendingRecs.length} 条待确认`);
+    tip(note, "勾选任务时按计划时间 / 预计时长自动生成的记录。在每日页拖到实际时间或点 ✓ 确认后计入实际。");
   }
   const secondary = kpis.createDiv({ cls: "lubi-kpi-grid" });
   kpi(secondary, "有记录的天数", `${daysLogged} / ${eachDate(from, to).filter((d) => d <= todayStr()).length}`);

@@ -28,7 +28,7 @@ export default class LubiPlugin extends Plugin {
     this.addSettingTab(new LubiSettingTab(this.app, this));
 
     this.addCommand({ id: "open", name: "打开面板", callback: () => void this.activateView() });
-    this.addCommand({ id: "log", name: "新建（已完成 / 支出 / 待做）", callback: () => this.quickLog() });
+    this.addCommand({ id: "log", name: "新建（记录 / 任务）", callback: () => this.quickLog() });
     this.addCommand({ id: "open-today", name: "打开面板 · 每日页", callback: () => void this.activateView("today") });
     this.addCommand({ id: "open-review", name: "打开面板 · 回顾页", callback: () => void this.activateView("review") });
     this.addCommand({ id: "open-tasks", name: "打开面板 · 任务页", callback: () => void this.activateView("tasks") });

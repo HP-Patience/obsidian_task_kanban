@@ -5,13 +5,12 @@ import type LubiPlugin from "../main";
 import { Task, weekOf, blankTask } from "../core/tasks";
 import { daysBetween, eachDate, fmtDuration, hmToMin, minToHM, nowHM, shiftDate, shortDate, todayStr, weekdayZh, weekStart } from "../core/time";
 import { categoryOf } from "../settings";
-import { button, catDot, el, emptyState, icon, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
+import { button, catDot, el, emptyState, HOUR_PX, icon, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
 import { TaskModal, RecordModal } from "./modals";
 import { dayTasks, groupedRows, OpenRecord, renderDayTaskList, taskRow } from "./taskList";
 import { startDrag } from "./drag";
 import { Rec } from "../core/records";
 
-const HOUR_PX = 44;
 const SNAP = 15;
 
 export interface TasksState {
