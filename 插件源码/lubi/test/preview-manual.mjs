@@ -1,4 +1,4 @@
-// 生成静态预览 HTML（jsdom 渲染 + Obsidian 变量垫片），配合 test/shot.py 截图做视觉检查。
+// 生成教学手册 / README 截图用的静态预览页（演示数据，亮色 + 暗色），输出到 preview/manual/，配合 scripts/screenshots.py 使用。
 import * as O from "./mock-obsidian.js";
 import fs from "fs";
 import { demoData, seedVault } from "./demo-data.mjs";
@@ -52,7 +52,7 @@ const freeze = (el) => { for (const i of el.querySelectorAll("input, textarea"))
 // 与真实视图一致：按 data-scroll-target 定位首屏
 const boot = `<script>addEventListener("load",()=>{for(const el of document.querySelectorAll("[data-scroll-target]"))el.scrollTop=Number(el.dataset.scrollTarget)||0;});</script>`;
 const page = (title, body, dark = false) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${shim}${styles}</style></head><body class="${dark ? "theme-dark" : "theme-light"}">${body}${boot}</body></html>`;
-const out = new URL("../preview/", import.meta.url);
+const out = new URL("../preview/manual/", import.meta.url);
 const outDark = new URL("dark/", out);
 fs.mkdirSync(outDark, { recursive: true });
 const origWrite = fs.writeFileSync.bind(fs);
@@ -101,6 +101,23 @@ const rowEl = [...root.querySelectorAll(".lubi-task")].find((x) => x.textContent
 rowEl.click(); await tick();
 const tm = O.openModals.at(-1); tm.modalEl.classList.add("modal"); tm.titleEl.classList.add("modal-title"); tm.contentEl.classList.add("modal-content");
 fs.writeFileSync(new URL("modal-task.html", out), page("modal-task", `<div class="lubi-root" style="height:100vh;background:var(--background-secondary)"></div><div class="modal-bg"></div>${freeze(tm.modalEl)}`)); tm.close();
+
+const wrapModal = (mm, name) => { mm.modalEl.classList.add("modal"); mm.titleEl.classList.add("modal-title"); mm.contentEl.classList.add("modal-content");
+  fs.writeFileSync(new URL(name + ".html", out), page(name, `<div class="lubi-root" style="height:100vh;background:var(--background-secondary)"></div><div class="modal-bg"></div>${freeze(mm.modalEl)}`)); mm.close(); };
+plugin.quickLog(); await tick();
+{ const qm = O.openModals.at(-1); const inp = qm.contentEl.querySelector('input[type="text"]');
+  inp.value = "9:00-10:30 学习 三明治定理"; inp.dispatchEvent(new window.Event("input", { bubbles: true })); await tick();
+  wrapModal(qm, "modal-quick"); }
+view.show("today"); await tick(200);
+root.dispatchEvent(new window.KeyboardEvent("keydown", { key: "?", bubbles: true })); await tick();
+{ const sm = O.openModals.at(-1); if (sm && sm.contentEl.querySelector(".lubi-shortcuts")) wrapModal(sm, "modal-keys"); }
+{
+  const app2 = new O.App();
+  const p2 = new LubiPlugin(app2, { id: "lubi", version: "1.4.0" });
+  await p2.onload(); for (const fn of app2.workspace._ready) await fn(); await tick();
+  const v2 = await p2.activateView("today", T); await tick(200);
+  fs.writeFileSync(new URL("empty.html", out), page("empty", freeze(v2.contentEl)));
+}
 console.log("preview written to", out.pathname);
 process.exit(0);
 
