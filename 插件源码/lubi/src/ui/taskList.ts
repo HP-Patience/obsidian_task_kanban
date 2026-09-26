@@ -202,29 +202,39 @@ export async function syncLinkedTask(plugin: LubiPlugin, old: Rec, next: Rec): P
 }
 
 /**
- * 删除一条记录（带撤销）。
- * - 由这条记录生成的任务（origin = record）一起删除；
- * - 勾选任务时生成的记录：删除后任务回到未完成（与「取消勾选会删掉记录」对称）。
+ * 删除一条记录，并同步任务页：
+ * - 关联的是一次性任务（不重复、没有子任务），且时间线上已没有别的记录关联它 → 任务一起删除；
+ * - 重复任务 / 带子任务的项目 / 还有别的记录关联 → 不删任务，只取消当天完成（当天已没有关联记录，或删的正是勾选时生成的那条）。
+ * 全部可撤销。
  */
 export async function deleteRecord(plugin: LubiPlugin, date: string, row: ParsedLine, rerender: () => void): Promise<void> {
   const r = row.rec;
   await plugin.journal.remove(date, row.line);
   let removedTask: Task | null = null;
-  let unchecked: { id: string; log: DoneLog } | null = null;
+  let unchecked: { id: string; log: DoneLog | null } | null = null;
+  let keptFor = "";
   const t = r.task ? plugin.tasks.byId(r.task) : undefined;
   if (t) {
-    const log = t.doneLogs?.[date];
-    const stillLinked = await hasLinkedRecord(plugin, t.id, date);
-    if (t.origin === "record" && !stillLinked && !plugin.tasks.children(t.id).length) {
+    const log = t.doneLogs?.[date] ?? null;
+    const project = plugin.tasks.children(t.id).length > 0;
+    const others = (await plugin.journal.linkedTo(new Set([t.id]))).length;
+    if (t.repeat.kind === "none" && !project && !others) {
       removedTask = JSON.parse(JSON.stringify(t)) as Task;
       await plugin.tasks.remove(t.id);
-    } else if (log && sameRecord(r, t.id, log)) {
-      unchecked = { id: t.id, log };
-      await plugin.tasks.setDoneLog(t.id, date, null);
-      if (plugin.tasks.isDoneOn(t, date)) await plugin.tasks.toggleDone(t.id, date);
+    } else {
+      keptFor = t.repeat.kind !== "none" ? "重复任务" : project ? "项目" : `还有 ${others} 条记录关联`;
+      const ownLog = !!log && sameRecord(r, t.id, log);
+      const stillToday = await hasLinkedRecord(plugin, t.id, date);
+      if (plugin.tasks.isDoneOn(t, date) && (ownLog || !stillToday)) {
+        unchecked = { id: t.id, log };
+        await plugin.tasks.toggleDone(t.id, date);
+      }
+      if (ownLog) await plugin.tasks.setDoneLog(t.id, date, null);
     }
   }
-  const what = removedTask ? "（任务页里对应的已完成事项也已删除）" : unchecked ? "，对应任务已取消完成" : "";
+  const what = removedTask ? `，任务页里的「${removedTask.title}」也已删除`
+    : unchecked ? `，「${t!.title}」是${keptFor}，已保留、只取消当天完成`
+    : keptFor ? `，「${t!.title}」是${keptFor}，已保留` : "";
   undoNotice(`已删除 ${r.title}${what}`, async () => {
     if (removedTask && !plugin.tasks.byId(removedTask.id)) await plugin.tasks.upsert(removedTask);
     await plugin.journal.add({ ...r, extra: { ...r.extra } });
@@ -232,7 +242,7 @@ export async function deleteRecord(plugin: LubiPlugin, date: string, row: Parsed
       const cur = plugin.tasks.byId(unchecked.id);
       if (cur) {
         if (!plugin.tasks.isDoneOn(cur, date)) await plugin.tasks.toggleDone(unchecked.id, date);
-        await plugin.tasks.setDoneLog(unchecked.id, date, unchecked.log);
+        if (unchecked.log) await plugin.tasks.setDoneLog(unchecked.id, date, unchecked.log);
       }
     }
     rerender();

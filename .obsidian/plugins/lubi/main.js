@@ -1498,20 +1498,27 @@ async function deleteRecord(plugin, date, row, rerender) {
   await plugin.journal.remove(date, row.line);
   let removedTask = null;
   let unchecked = null;
+  let keptFor = "";
   const t = r.task ? plugin.tasks.byId(r.task) : void 0;
   if (t) {
-    const log = t.doneLogs?.[date];
-    const stillLinked = await hasLinkedRecord(plugin, t.id, date);
-    if (t.origin === "record" && !stillLinked && !plugin.tasks.children(t.id).length) {
+    const log = t.doneLogs?.[date] ?? null;
+    const project = plugin.tasks.children(t.id).length > 0;
+    const others = (await plugin.journal.linkedTo(/* @__PURE__ */ new Set([t.id]))).length;
+    if (t.repeat.kind === "none" && !project && !others) {
       removedTask = JSON.parse(JSON.stringify(t));
       await plugin.tasks.remove(t.id);
-    } else if (log && sameRecord(r, t.id, log)) {
-      unchecked = { id: t.id, log };
-      await plugin.tasks.setDoneLog(t.id, date, null);
-      if (plugin.tasks.isDoneOn(t, date)) await plugin.tasks.toggleDone(t.id, date);
+    } else {
+      keptFor = t.repeat.kind !== "none" ? "\u91CD\u590D\u4EFB\u52A1" : project ? "\u9879\u76EE" : `\u8FD8\u6709 ${others} \u6761\u8BB0\u5F55\u5173\u8054`;
+      const ownLog = !!log && sameRecord(r, t.id, log);
+      const stillToday = await hasLinkedRecord(plugin, t.id, date);
+      if (plugin.tasks.isDoneOn(t, date) && (ownLog || !stillToday)) {
+        unchecked = { id: t.id, log };
+        await plugin.tasks.toggleDone(t.id, date);
+      }
+      if (ownLog) await plugin.tasks.setDoneLog(t.id, date, null);
     }
   }
-  const what = removedTask ? "\uFF08\u4EFB\u52A1\u9875\u91CC\u5BF9\u5E94\u7684\u5DF2\u5B8C\u6210\u4E8B\u9879\u4E5F\u5DF2\u5220\u9664\uFF09" : unchecked ? "\uFF0C\u5BF9\u5E94\u4EFB\u52A1\u5DF2\u53D6\u6D88\u5B8C\u6210" : "";
+  const what = removedTask ? `\uFF0C\u4EFB\u52A1\u9875\u91CC\u7684\u300C${removedTask.title}\u300D\u4E5F\u5DF2\u5220\u9664` : unchecked ? `\uFF0C\u300C${t.title}\u300D\u662F${keptFor}\uFF0C\u5DF2\u4FDD\u7559\u3001\u53EA\u53D6\u6D88\u5F53\u5929\u5B8C\u6210` : keptFor ? `\uFF0C\u300C${t.title}\u300D\u662F${keptFor}\uFF0C\u5DF2\u4FDD\u7559` : "";
   undoNotice(`\u5DF2\u5220\u9664 ${r.title}${what}`, async () => {
     if (removedTask && !plugin.tasks.byId(removedTask.id)) await plugin.tasks.upsert(removedTask);
     await plugin.journal.add({ ...r, extra: { ...r.extra } });
@@ -1519,7 +1526,7 @@ async function deleteRecord(plugin, date, row, rerender) {
       const cur = plugin.tasks.byId(unchecked.id);
       if (cur) {
         if (!plugin.tasks.isDoneOn(cur, date)) await plugin.tasks.toggleDone(unchecked.id, date);
-        await plugin.tasks.setDoneLog(unchecked.id, date, unchecked.log);
+        if (unchecked.log) await plugin.tasks.setDoneLog(unchecked.id, date, unchecked.log);
       }
     }
     rerender();

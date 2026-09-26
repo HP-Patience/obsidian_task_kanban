@@ -159,8 +159,23 @@ view.show("today"); await tick();
   view.show("today", D); await tick();
   const b2 = [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试");
   b2.querySelector('.lubi-block-actions [aria-label="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
-  check(linked().length === 0 && !plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D), "sync: deleting the checkbox record unchecks the task");
-  await plugin.tasks.remove(ID);
+  check(linked().length === 0 && !plugin.tasks.byId(ID), "sync: deleting the only record of a one-off task on the daily page deletes the task too");
+  check(O.notices.at(-1)?.includes("也已删除") || document.body.textContent.includes("也已删除"), "sync: task deletion is announced");
+  [...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); for (let i = 0; i < 4; i++) await tick();
+  check(linked().length === 1 && plugin.tasks.byId(ID) && plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D), "sync: undo brings back both the record and the task");
+  // 还有别的记录关联：任务保留，只取消当天完成
+  await plugin.journal.add({ date: "2026-09-23", start: "07:00", minutes: 20, category: "学习", title: "同步测试", task: ID, extra: {} });
+  view.show("today", D); await tick();
+  [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试").querySelector('.lubi-block-actions [aria-label="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
+  check(linked().length === 0 && plugin.tasks.byId(ID) && !plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D), "sync: a task with other linked records is kept and unchecked");
+  await plugin.journal.remove("2026-09-23", await plugin.journal.findLine("2026-09-23", { start: "07:00", minutes: 20, category: "学习", title: "同步测试" }));
+  // 重复任务：保留任务，只取消当天完成
+  await plugin.tasks.upsert({ ...plugin.tasks.byId(ID), repeat: { kind: "daily", days: [] }, status: "todo", doneDates: [D], doneLogs: undefined });
+  await plugin.journal.add({ date: D, start: "06:40", minutes: 20, category: "学习", title: "同步测试", task: ID, extra: {} });
+  view.show("today", D); await tick();
+  [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试").querySelector('.lubi-block-actions [aria-label="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
+  check(linked().length === 0 && plugin.tasks.byId(ID) && !plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D), "sync: deleting a repeating task's record keeps the task, unchecks the day");
+  if (plugin.tasks.byId(ID)) await plugin.tasks.remove(ID);
   // 清掉本段产生的撤销提示，避免后面的用例点到它们
   for (const n of [...document.body.children]) if (n.querySelector?.(".lubi-notice-btn")) n.remove();
 }
