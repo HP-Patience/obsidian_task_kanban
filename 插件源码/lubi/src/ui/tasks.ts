@@ -229,8 +229,9 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
     dayButton.addEventListener("click", () => plugin.openDate(d, "tasks"));
     renderLoad(plugin, h, d);
     const allDay = plugin.tasks.forDate(d).filter((t) => !t.start && !plugin.tasks.children(t.id).length);
-    const strip = h.createDiv({ cls: "lubi-allday" });
-    for (const t of allDay) {
+    // 没有全天任务就不占表头高度；表头本身仍是全天任务的拖放区
+    const strip = allDay.length ? h.createDiv({ cls: "lubi-allday" }) : null;
+    if (strip) for (const t of allDay) {
       const doneChip = plugin.tasks.isDoneOn(t, d);
       const chip = tip(strip.createEl("button", { cls: `lubi-allday-chip ${doneChip ? "is-done" : ""}`, attr: { type: "button" } }), `${d} 全天任务 ${t.title}${doneChip ? "（已完成）" : ""}：点击编辑，拖到下方时段可定时`);
       chip.style.setProperty("--chip", categoryOf(s, t.category).color);
@@ -466,15 +467,17 @@ function renderLoad(plugin: LubiPlugin, host: HTMLElement, d: string): void {
   const planned = plugin.tasks.forDate(d)
     .filter((t) => !plugin.tasks.children(t.id).length && !plugin.tasks.isDoneOn(t, d))
     .reduce((sum, t) => sum + (t.estimate || 0), 0);
+  // 没排计划的日子不画空负载条，免得整行都是灰条和“—”
+  if (!planned) return;
   const ratio = planned / capacity;
-  const level = ratio > 1 ? "is-over" : ratio >= 0.9 ? "is-high" : planned ? "is-ok" : "is-empty";
+  const level = ratio > 1 ? "is-over" : ratio >= 0.9 ? "is-high" : "is-ok";
   const load = host.createDiv({ cls: `lubi-load ${level}`, attr: {
     role: "meter", "aria-valuemin": "0", "aria-valuemax": String(capacity), "aria-valuenow": String(Math.min(planned, capacity * 2)),
   } });
-  tip(load, planned ? `${d} 计划 ${fmtDuration(planned)} / 可用 ${fmtDuration(capacity)}${ratio > 1 ? " · 排太满了" : ""}` : `${d} 还没有计划时长 · 可用 ${fmtDuration(capacity)}`);
+  tip(load, `${d} 计划 ${fmtDuration(planned)} / 可用 ${fmtDuration(capacity)}${ratio > 1 ? " · 排太满了" : ""}`);
   const track = load.createDiv({ cls: "lubi-load-track" });
   track.createDiv({ cls: "lubi-load-fill" }).style.width = `${Math.min(100, ratio * 100)}%`;
-  load.createSpan({ cls: "lubi-load-text", text: planned ? `${fmtHoursShort(planned)}/${fmtHoursShort(capacity)}` : "—" });
+  load.createSpan({ cls: "lubi-load-text", text: `${fmtHoursShort(planned)}/${fmtHoursShort(capacity)}` });
 }
 
 function fmtHoursShort(min: number): string {

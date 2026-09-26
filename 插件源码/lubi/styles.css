@@ -1219,3 +1219,6 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 
 /* 周日程表头与表身列对齐：表头多一条与滚动条等宽的轨道（宽度由 tasks.ts 实测写入 --lubi-week-sbw） */
 .lubi-root .lubi-week { grid-template-columns: 48px repeat(7, minmax(0, 1fr)) var(--lubi-week-sbw, 0px); }
+/* 周日程表头：没有负载条/全天任务时收紧高度，日期按钮贴顶 */
+.lubi-root .lubi-week-day { min-height: 0; padding: 4px 4px; display: flex; flex-direction: column; }
+.lubi-root .lubi-week-day .lubi-load { margin-top: 2px; }

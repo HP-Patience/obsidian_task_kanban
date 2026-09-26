@@ -3561,8 +3561,8 @@ function renderWeek(plugin, host, date, state, rerender, edit) {
     dayButton.addEventListener("click", () => plugin.openDate(d, "tasks"));
     renderLoad(plugin, h, d);
     const allDay = plugin.tasks.forDate(d).filter((t) => !t.start && !plugin.tasks.children(t.id).length);
-    const strip = h.createDiv({ cls: "lubi-allday" });
-    for (const t of allDay) {
+    const strip = allDay.length ? h.createDiv({ cls: "lubi-allday" }) : null;
+    if (strip) for (const t of allDay) {
       const doneChip = plugin.tasks.isDoneOn(t, d);
       const chip = tip(strip.createEl("button", { cls: `lubi-allday-chip ${doneChip ? "is-done" : ""}`, attr: { type: "button" } }), `${d} \u5168\u5929\u4EFB\u52A1 ${t.title}${doneChip ? "\uFF08\u5DF2\u5B8C\u6210\uFF09" : ""}\uFF1A\u70B9\u51FB\u7F16\u8F91\uFF0C\u62D6\u5230\u4E0B\u65B9\u65F6\u6BB5\u53EF\u5B9A\u65F6`);
       chip.style.setProperty("--chip", categoryOf(s, t.category).color);
@@ -3796,18 +3796,19 @@ function renderWeek(plugin, host, date, state, rerender, edit) {
 function renderLoad(plugin, host, d) {
   const capacity = Math.max(1, plugin.settings.dailyCapacityHours || 8) * 60;
   const planned = plugin.tasks.forDate(d).filter((t) => !plugin.tasks.children(t.id).length && !plugin.tasks.isDoneOn(t, d)).reduce((sum2, t) => sum2 + (t.estimate || 0), 0);
+  if (!planned) return;
   const ratio = planned / capacity;
-  const level = ratio > 1 ? "is-over" : ratio >= 0.9 ? "is-high" : planned ? "is-ok" : "is-empty";
+  const level = ratio > 1 ? "is-over" : ratio >= 0.9 ? "is-high" : "is-ok";
   const load = host.createDiv({ cls: `lubi-load ${level}`, attr: {
     role: "meter",
     "aria-valuemin": "0",
     "aria-valuemax": String(capacity),
     "aria-valuenow": String(Math.min(planned, capacity * 2))
   } });
-  tip(load, planned ? `${d} \u8BA1\u5212 ${fmtDuration(planned)} / \u53EF\u7528 ${fmtDuration(capacity)}${ratio > 1 ? " \xB7 \u6392\u592A\u6EE1\u4E86" : ""}` : `${d} \u8FD8\u6CA1\u6709\u8BA1\u5212\u65F6\u957F \xB7 \u53EF\u7528 ${fmtDuration(capacity)}`);
+  tip(load, `${d} \u8BA1\u5212 ${fmtDuration(planned)} / \u53EF\u7528 ${fmtDuration(capacity)}${ratio > 1 ? " \xB7 \u6392\u592A\u6EE1\u4E86" : ""}`);
   const track = load.createDiv({ cls: "lubi-load-track" });
   track.createDiv({ cls: "lubi-load-fill" }).style.width = `${Math.min(100, ratio * 100)}%`;
-  load.createSpan({ cls: "lubi-load-text", text: planned ? `${fmtHoursShort(planned)}/${fmtHoursShort(capacity)}` : "\u2014" });
+  load.createSpan({ cls: "lubi-load-text", text: `${fmtHoursShort(planned)}/${fmtHoursShort(capacity)}` });
 }
 function fmtHoursShort(min) {
   const h = Math.round(min / 60 * 10) / 10;
