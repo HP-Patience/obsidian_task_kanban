@@ -10,6 +10,16 @@ const require = createRequire(import.meta.url);
 const LubiPlugin = require("./plugin.cjs").default;
 const tick = (ms = 40) => new Promise((r) => setTimeout(r, ms));
 
+// 时钟固定在当天 14:30（照常走秒）：清晨 / 深夜运行时截图内容也一致（当天记录、现在线、逾期计划）
+{
+  const RealDate = Date;
+  const base = new RealDate(); base.setHours(14, 30, 0, 0);
+  const off = base.getTime() - RealDate.now();
+  globalThis.Date = class extends RealDate {
+    constructor(...a) { if (a.length) super(...a); else super(RealDate.now() + off); }
+    static now() { return RealDate.now() + off; }
+  };
+}
 const app = new O.App();
 const today = new Date();
 const demo = demoData(today);
@@ -104,6 +114,7 @@ fs.writeFileSync(new URL("modal-task.html", out), page("modal-task", `<div class
 
 const wrapModal = (mm, name) => { mm.modalEl.classList.add("modal"); mm.titleEl.classList.add("modal-title"); mm.contentEl.classList.add("modal-content");
   fs.writeFileSync(new URL(name + ".html", out), page(name, `<div class="lubi-root" style="height:100vh;background:var(--background-secondary)"></div><div class="modal-bg"></div>${freeze(mm.modalEl)}`)); mm.close(); };
+view.show("today", T); await tick(200); // 任务页的「新建」默认是任务；一行快速记录要在每日页打开
 plugin.quickLog(); await tick();
 { const qm = O.openModals.at(-1); const inp = qm.contentEl.querySelector('input[type="text"]');
   inp.value = "9:00-10:30 学习 三明治定理"; inp.dispatchEvent(new window.Event("input", { bubbles: true })); await tick();

@@ -15,6 +15,16 @@
 | 7 | 顶栏主按钮「新建」含义模糊 | 每日 / 回顾页显示「记一条」，任务页显示「加任务」 | `插件源码/lubi/src/ui/view.ts` |
 | 8 | 预览生成依赖运行时刻，深夜运行时布局用例失败 | 演示数据至少生成到 14:00；取块 / 任务行时有兜底 | `插件源码/lubi/test/preview.mjs` |
 
+## 发布前追加（同为 v1.5.0）
+
+| # | 问题 | 改动 | 文件 |
+|---|---|---|---|
+| 9 | 周日程表头与表身列线错位（表身滚动条挤窄了 7 列，越往右偏得越多） | 表头多一条与滚动条等宽的轨道，宽度由 ResizeObserver 实测写入 `--lubi-week-sbw` | `插件源码/lubi/src/ui/tasks.ts`、`插件源码/lubi/styles.css`、`插件源码/lubi/test/preview.mjs` |
+| 10 | 表头每天都有空负载条和「—」，没有全天任务也留空白 | 没排计划不画负载条，没有全天任务不建全天条，表头收紧 | `插件源码/lubi/src/ui/tasks.ts`、`插件源码/lubi/styles.css` |
+| 11 | 周日程固定周一开始，周日时今天挤在最右 | 改为以当前日期为中心的连续 7 天；「本周」改「今天」；点窗口内的日期不挪窗口 | `插件源码/lubi/src/ui/tasks.ts`、`插件源码/lubi/src/ui/view.ts` |
+| 12 | 每日页删除关联记录后任务还留在任务页 | 一次性任务且无其他关联记录 → 一起删除；重复任务 / 项目 / 仍有关联 → 只取消当天完成；可撤销 | `插件源码/lubi/src/ui/taskList.ts` |
+| 13 | README / 教学手册 / 截图停留在 v1.4 | 教学手册按 v1.5 重写相关章节；演示数据补计划列与待确认示例；截图脚本时钟固定 14:30、刻度改 48px、支持 Windows 字体；全部截图重拍 | `Lubi 教学手册.md`、`README.md`、`插件源码/lubi/test/demo-data.mjs`、`插件源码/lubi/test/preview-manual.mjs`、`插件源码/lubi/scripts/screenshots.py`、`docs/images/`、`附件/lubi手册/` |
+
 ## 验证
 
 - `npx tsc -noEmit -skipLibCheck` 通过。

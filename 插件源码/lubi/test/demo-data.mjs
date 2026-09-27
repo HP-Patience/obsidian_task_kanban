@@ -74,6 +74,8 @@ export function demoData(today = new Date(), nowMin = today.getHours() * 60 + to
     [510, 660, "学习", "线性代数 第 4 章", " [任务:: demo-la] [备注:: 完成 4.1–4.3]"],
     [570, 600, "日常", "接电话"],
     [725, 765, "饮食", "午饭"],
+    // 在任务页勾选完成时按计划自动记下的一条：「待确认」（虚线 + 徽标）
+    [790, 820, "学习", "单词复习", " [任务:: demo-vocab] [待确认:: 按计划]"],
     [800, 890, "学习", "读《原则》"],
     [900, 915, "日常", "收拾桌面"],
   ].filter(([, e]) => e <= nowMin).map(([s, e, c, t, x = ""]) => line(s, e, c, t, x));
@@ -88,6 +90,10 @@ export function demoData(today = new Date(), nowMin = today.getHours() * 60 + to
     task({ id: "demo-la", title: "线性代数 第 4 章", date: T, start: "08:30", estimate: 150, status: "doing", order: 0, parent: "demo-p1" }),
     task({ id: "demo-run", title: "跑步 5 公里", category: "运动", start: "18:00", estimate: 45, repeat: { kind: "weekly", days: [1, 3, 6] }, order: 1 }),
     task({ id: "demo-notes", title: "整理本周笔记", date: T, estimate: 30, order: 2 }),
+    // 每日页「计划」列：已过点未记（标橙）+ 稍后的计划；已勾选完成（记录待确认）
+    task({ id: "demo-mail", title: "回复导师邮件", category: "日常", date: T, start: "13:45", estimate: 15, order: 2.1 }),
+    task({ id: "demo-listen", title: "英语听力", date: T, start: "16:00", estimate: 60, order: 2.2 }),
+    task({ id: "demo-vocab", title: "单词复习", date: T, start: "13:10", estimate: 30, status: "done", order: 2.3 }),
     // 项目 1：期末复习
     task({ id: "demo-p1", title: "期末复习", startDate: day(-dow - 7), endDate: day(14), order: 3 }),
     task({ id: "demo-p1a", title: "高数 · 极限与导数", parent: "demo-p1", date: day(-dow), start: "09:00", estimate: 120, status: "done", order: 0 }),

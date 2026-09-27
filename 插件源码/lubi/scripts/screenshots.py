@@ -4,7 +4,8 @@
 #   TZ=Asia/Shanghai node test/preview-manual.mjs    # 渲染静态预览页到 preview/manual/
 #   pip install playwright pillow && python -m playwright install chromium
 #   TZ=Asia/Shanghai python scripts/screenshots.py
-# 字体默认 Noto Sans CJK，可用 LUBI_FONT / LUBI_FONT_BOLD 指定。
+# 字体默认 Noto Sans CJK，可用 LUBI_FONT / LUBI_FONT_BOLD / LUBI_FONT_INDEX 指定
+# （Windows：LUBI_FONT=C:/Windows/Fonts/msyh.ttc LUBI_FONT_BOLD=C:/Windows/Fonts/msyhbd.ttc LUBI_FONT_INDEX=0）。
 import os
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import asyncio, pathlib, io
@@ -16,7 +17,7 @@ RD = ROOT.parents[1] / "docs" / "images"                     # README 配图
 MAN.mkdir(parents=True, exist_ok=True); RD.mkdir(parents=True, exist_ok=True)
 def save(png, path, q=84):
     Image.open(io.BytesIO(png)).convert("RGB").save(path, "WEBP", quality=q, method=6)
-SCROLL = "(()=>{const s=document.querySelector('.lubi-timeline-scroll'); if(s) s.scrollTop=7*56-8; const w=document.querySelector('.lubi-week-body'); if(w) w.scrollTop=2*44-6;})()"
+SCROLL = "(()=>{const s=document.querySelector('.lubi-timeline-scroll'); if(s) s.scrollTop=7*48-8; const w=document.querySelector('.lubi-week-body'); if(w) w.scrollTop=2*48-6;})()"
 async def hover_big(pg):
     gaps = await pg.query_selector_all(".lubi-gap")
     best = max([(((await g.bounding_box()) or {"height":0})["height"], i) for i, g in enumerate(gaps)])
@@ -70,7 +71,8 @@ def hero():
         d.line([(0, y), (W, y)], fill=c)
     font = os.environ.get("LUBI_FONT_BOLD", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc")
     reg = os.environ.get("LUBI_FONT", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
-    F = lambda p, s, i=2: ImageFont.truetype(p, s, index=i)  # index 2 = SC
+    FI = int(os.environ.get("LUBI_FONT_INDEX", "2"))  # Noto CJK .ttc 里 index 2 = SC；Windows 微软雅黑用 0
+    F = lambda p, s, i=FI: ImageFont.truetype(p, s, index=i)
     def card(path, w):
         im = Image.open(path).convert("RGB")
         h = int(im.height * w / im.width); im = im.resize((w, h), Image.LANCZOS)
@@ -90,7 +92,7 @@ def hero():
     y = 392
     for t in ["记一条 · 时间轴与一行快速记录", "看一眼 · 周 / 月 / 年回顾与热力图", "排一下 · 周日程、负载条与项目"]:
         d.ellipse([70, y + 11, 80, y + 21], fill="#5b45c9"); d.text((94, y), t, font=F(reg, 22), fill="#3b3a4a"); y += 42
-    pill = "v1.4 · 纯 Markdown 数据 · 开源 MIT"
+    pill = "v1.5 · 纯 Markdown 数据 · 开源 MIT"
     tw = d.textlength(pill, font=F(reg, 19))
     d.rounded_rectangle([68, 540, 68 + tw + 40, 580], 20, fill="#5b45c9")
     d.text((88, 547), pill, font=F(reg, 19), fill="white")
