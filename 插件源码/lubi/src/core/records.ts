@@ -5,7 +5,7 @@
 //
 // 人能读、能手写、Dataview 原生可查；解析器只认这一种形状，其他行原样保留。
 
-import { hmToMin, minToHM } from "./time";
+import { fmtDuration, hmToMin, minToHM } from "./time";
 
 export interface Rec {
   /** 所属日记日期 */
@@ -14,6 +14,8 @@ export interface Rec {
   start: string;
   /** 分钟；财务类可为 0 */
   minutes: number;
+  /** 当次任务的预计用时快照（分钟），不参与实际时长统计；多条记录不可重复累加。 */
+  estimatedMinutes?: number;
   category: string;
   title: string;
   task?: string;
@@ -35,6 +37,7 @@ const FIELD_RE = /\[([^\[\]:]+)::\s*([^\]]*)\]/g;
 
 const KNOWN: Record<string, keyof Rec> = {
   时长: "minutes",
+  预计用时: "estimatedMinutes",
   任务: "task",
   金额: "amount",
   类别: "expenseType",
@@ -85,7 +88,11 @@ export function parseRecordLine(line: string, date: string): Rec | null {
   const rec: Rec = { date, start: minToHM(hmToMin(start)), minutes, category, title, extra };
   for (const [k, v] of Object.entries(fields)) {
     const key = KNOWN[k];
-    if (key === "task") rec.task = v || undefined;
+    if (key === "estimatedMinutes") {
+      const estimate = normalizeEstimatedMinutes(parseDuration(v));
+      if (estimate !== undefined) rec.estimatedMinutes = estimate;
+      else extra[k] = v; // 无效手写字段仍原样保留，但不用于对比。
+    } else if (key === "task") rec.task = v || undefined;
     else if (key === "amount") rec.amount = v === "" ? undefined : Number(v.replace(/[^\d.\-]/g, ""));
     else if (key === "expenseType") rec.expenseType = v || undefined;
     else if (key === "notes") rec.notes = unescapeField(v) || undefined;
@@ -109,10 +116,12 @@ export function serializeRecord(r: Rec): string {
   const time = r.minutes > 0 ? `${minToHM(startMin)}–${minToHM(startMin + r.minutes)}` : minToHM(startMin);
   parts.push(`- ${time} ${r.category} · ${escapeField(r.title || "未命名")}`);
   if (r.minutes > 0) parts.push(`[时长:: ${fmtDurationField(r.minutes)}]`);
+  const estimate = normalizeEstimatedMinutes(r.estimatedMinutes);
+  if (estimate !== undefined) parts.push(`[预计用时:: ${fmtDurationField(estimate)}]`);
   if (r.amount !== undefined && !isNaN(r.amount)) parts.push(`[金额:: ${r.amount}]`);
   if (r.expenseType) parts.push(`[类别:: ${escapeField(r.expenseType)}]`);
   if (r.task) parts.push(`[任务:: ${r.task}]`);
-  for (const [k, v] of Object.entries(r.extra || {})) if (v) parts.push(`[${k}:: ${escapeField(v)}]`);
+  for (const [k, v] of Object.entries(r.extra || {})) if (v && (k !== "预计用时" || estimate === undefined)) parts.push(`[${k}:: ${escapeField(v)}]`);
   if (r.notes) parts.push(`[备注:: ${escapeField(r.notes)}]`);
   return parts.join(" ");
 }
@@ -132,6 +141,24 @@ export function confirmed(r: Rec): Rec {
   const extra = { ...(r.extra || {}) };
   delete extra[PENDING_KEY];
   return { ...r, extra };
+}
+
+/** 只接受有效的正分钟数；任务未填预计时，不把默认记录时长当成预计。 */
+export function normalizeEstimatedMinutes(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  const minutes = Math.round(value);
+  return minutes > 0 ? minutes : undefined;
+}
+
+/** 每条记录的对比，只使用历史快照；待确认的记录不冒充已核实的实际用时。 */
+export function formatEstimateComparison(r: Rec): string {
+  const estimate = normalizeEstimatedMinutes(r.estimatedMinutes);
+  if (estimate === undefined || !Number.isFinite(r.minutes) || r.minutes < 0) return "";
+  const planned = `预计 ${fmtDuration(estimate)}`;
+  if (isPending(r)) return `${planned} · 记录 ${fmtDuration(r.minutes)}（待确认） · 核对后再比较`;
+  const delta = r.minutes - estimate;
+  const difference = delta === 0 ? "与预计一致" : `${delta > 0 ? "超出" : "少于"} ${fmtDuration(Math.abs(delta))}`;
+  return `${planned} · 实际 ${fmtDuration(r.minutes)} · ${difference}`;
 }
 
 export function endMin(r: Rec): number {

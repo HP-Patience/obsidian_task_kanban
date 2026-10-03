@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS, LubiSettings, DEFAULT_CATEGORIES, migratePalette } fr
 import { Journal } from "./core/journal";
 import { Tasks } from "./core/tasks";
 import { detectLegacyJournals, migrateJournals } from "./core/migrate";
-import { shiftDate, todayStr, minToHM, hmToMin } from "./core/time";
+import { shiftDate, todayStr, minToHM, hmToMin, stamp } from "./core/time";
 import { DashboardView, VIEW_TYPE, Tab } from "./ui/view";
 import { hideTip } from "./ui/components";
 import { RecordModal, ConfirmModal } from "./ui/modals";
@@ -16,12 +16,15 @@ export default class LubiPlugin extends Plugin {
   tasks!: Tasks;
   /** 最近记录缓存：用于标题联想与"接着记" */
   private recent: Rec[] = [];
+  private refreshTimer: number | null = null;
+  private pendingTaskReload = false;
+  private pendingRecentRefresh = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.journal = new Journal(this.app, () => this.settings);
     this.tasks = new Tasks(this.app, () => this.settings);
-    this.tasks.onChange = () => this.refreshViews();
+    this.tasks.onChange = () => this.refreshViews(false);
 
     this.registerView(VIEW_TYPE, (leaf) => new DashboardView(leaf, this));
     this.addRibbonIcon("hourglass", "Lubi 记录", () => void this.activateView());
@@ -34,6 +37,7 @@ export default class LubiPlugin extends Plugin {
     this.addCommand({ id: "open-tasks", name: "打开面板 · 任务页", callback: () => void this.activateView("tasks") });
     this.addCommand({ id: "open-journal", name: "打开今天的日记文件", callback: () => void this.openJournal(todayStr()) });
     this.addCommand({ id: "migrate", name: "迁移旧版数据", callback: () => void this.runMigration(true) });
+    this.addCommand({ id: "export-csv", name: "导出全部记录为 CSV", callback: () => void this.exportCsv() });
 
     // 日记或任务文件被外部修改 → 刷新
     this.registerEvent(this.app.vault.on("modify", (f) => this.onFileChange(f.path)));
@@ -52,6 +56,8 @@ export default class LubiPlugin extends Plugin {
 
   onunload(): void {
     hideTip();
+    if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
+    this.refreshTimer = null;
     // Obsidian 会自行分离视图
   }
 
@@ -83,8 +89,8 @@ export default class LubiPlugin extends Plugin {
     return this.app.workspace.getLeavesOfType(VIEW_TYPE).map((l) => l.view).filter((v): v is DashboardView => v instanceof DashboardView);
   }
 
-  refreshViews(): void {
-    void this.warmRecent();
+  refreshViews(refreshRecent = true): void {
+    if (refreshRecent) void this.warmRecent();
     for (const v of this.views()) v.refresh();
   }
 
@@ -113,6 +119,21 @@ export default class LubiPlugin extends Plugin {
     await this.app.workspace.getLeaf("tab").openFile(f);
   }
 
+  async exportCsv(): Promise<void> {
+    const rows = ["date,start,end,minutes,category,title,task,amount,expenseType,notes"];
+    const quote = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    for (const date of this.journal.dates()) {
+      for (const row of await this.journal.read(date)) {
+        const r = row.rec;
+        const end = r.minutes > 0 ? minToHM(hmToMin(r.start) + r.minutes) : "";
+        rows.push([r.date, r.start, end, r.minutes, r.category, r.title, r.task, r.amount, r.expenseType, r.notes].map(quote).join(","));
+      }
+    }
+    const path = normalizePath(`Lubi-导出-${stamp()}.csv`);
+    await this.app.vault.create(path, `\uFEFF${rows.join("\n")}\n`);
+    new Notice(`已导出 ${rows.length - 1} 条记录：${path}`, 8000);
+  }
+
   /** 新建：有面板时交给面板（任务页默认「待做」，其他页默认「已完成」），否则记今天的一条 */
   quickLog(): void {
     const v = this.views()[0];
@@ -127,8 +148,35 @@ export default class LubiPlugin extends Plugin {
   private onFileChange(path: string): void {
     const p = normalizePath(path);
     const inJournal = p.startsWith(normalizePath(this.settings.journalFolder) + "/");
-    if (inJournal) this.refreshViews();
-    else if (p === normalizePath(this.settings.taskFile)) void this.tasks.load(true).then(() => this.refreshViews());
+    if (inJournal) {
+      // 内部编辑需要立即让当前交互看到最新结果，但不必再次扫描最近 14 天日记。
+      if (Date.now() - this.journal.lastWriteAt < 1000) {
+        this.refreshViews(false);
+        return;
+      }
+      this.pendingRecentRefresh = true;
+      this.scheduleRefresh();
+    } else if (p === normalizePath(this.settings.taskFile)) {
+      // Tasks.persist() 已经在写入前标记时间；不要因为自己的 modify 事件再次 load(true)，
+      // 否则拖拽后的短时间内可能把内存中的最新任务状态重新读成旧快照。
+      if (Date.now() - this.tasks.lastWriteAt < 1000) return;
+      this.pendingTaskReload = true;
+      this.scheduleRefresh();
+    }
+  }
+
+  /** 合并同一批 Vault 事件，避免一次编辑触发多次全量渲染。 */
+  private scheduleRefresh(): void {
+    if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
+    this.refreshTimer = window.setTimeout(() => {
+      this.refreshTimer = null;
+      const reloadTasks = this.pendingTaskReload;
+      const refreshRecent = this.pendingRecentRefresh;
+      this.pendingTaskReload = false;
+      this.pendingRecentRefresh = false;
+      if (reloadTasks) void this.tasks.load(true).then(() => this.refreshViews(refreshRecent));
+      else this.refreshViews(refreshRecent);
+    }, 120);
   }
 
   // ---------- 联想 / 接着记 ----------

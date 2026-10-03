@@ -15,7 +15,8 @@ const ctx = await esbuild.context({
   sourcemap: prod ? false : "inline",
   treeShaking: true,
   outfile: `${outdir}/main.js`,
-  minify: false,
+  minify: prod,
+  keepNames: true,
 });
 
 if (prod) {

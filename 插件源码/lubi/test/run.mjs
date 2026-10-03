@@ -18,6 +18,26 @@ eq(C.parseRecordLine("- 09:00 学习: 冒号分隔 [时长:: 45min]", "x").minut
 const sp = C.splitAtMidnight({ date: "2026-09-24", start: "23:00", minutes: 180, category: "睡眠", title: "睡", extra: {} });
 eq([sp.today.minutes, sp.tomorrow.start, sp.tomorrow.minutes], [60, "00:00", 120], "split at midnight");
 
+// 预计用时快照：新字段独立于实际时长，旧记录与无效手写字段仍能往返。
+const estimated = C.parseRecordLine("- 09:00–10:00 学习 · 预计对比 [时长:: 1h] [预计用时:: 45min] [任务:: estimate-task]", "2026-09-24");
+eq([estimated.minutes, estimated.estimatedMinutes, estimated.task], [60, 45, "estimate-task"], "estimate: parse snapshot separately from actual duration");
+eq(C.serializeRecord(estimated), "- 09:00–10:00 学习 · 预计对比 [时长:: 1h] [预计用时:: 45min] [任务:: estimate-task]", "estimate: snapshot roundtrip");
+eq(r1.estimatedMinutes, undefined, "estimate: legacy records do not invent an estimate");
+const invalidEstimate = C.parseRecordLine("- 09:00–09:30 学习 · 手写字段 [预计用时:: 未知]", "2026-09-24");
+eq([invalidEstimate.estimatedMinutes, C.serializeRecord(invalidEstimate).includes("[预计用时:: 未知]")], [undefined, true], "estimate: preserve an invalid handwritten field without comparing it");
+const estimatedSplit = C.splitAtMidnight({ ...estimated, start: "23:30", minutes: 90 });
+eq([estimatedSplit.today.estimatedMinutes, estimatedSplit.tomorrow.estimatedMinutes], [45, 45], "estimate: midnight segments retain the same task snapshot, not additive forecasts");
+eq(C.normalizeEstimatedMinutes(0), undefined, "estimate: zero is not a forecast");
+eq([C.normalizeEstimatedMinutes(-10), C.normalizeEstimatedMinutes(NaN), C.normalizeEstimatedMinutes(Infinity)], [undefined, undefined, undefined], "estimate: invalid minutes are not forecasts");
+eq(C.formatEstimateComparison(estimated), "预计 45min · 实际 1h · 超出 15min", "estimate: overrun comparison");
+eq(C.formatEstimateComparison({ ...estimated, minutes: 30 }), "预计 45min · 实际 30min · 少于 15min", "estimate: underrun comparison is not an efficiency judgment");
+eq(C.formatEstimateComparison({ ...estimated, minutes: 45 }), "预计 45min · 实际 45min · 与预计一致", "estimate: equal duration comparison");
+eq(C.formatEstimateComparison(r1), "", "estimate: no comparison without a snapshot");
+eq(C.formatEstimateComparison({ ...estimated, extra: { [C.PENDING_KEY]: "按计划" } }), "预计 45min · 记录 1h（待确认） · 核对后再比较", "estimate: pending time is not presented as verified actual time");
+eq(C.parseRecordLine(C.serializeRecord({ ...estimated, estimatedMinutes: 61 }), estimated.date).estimatedMinutes, 61, "estimate: minute precision survives duration formatting");
+eq(C.serializeRecord({ ...estimated, extra: { 预计用时: "90min" } }).match(/预计用时::/g).length, 1, "estimate: only one authoritative snapshot field is serialized");
+eq(C.parseRecordLine("- 09:00–10:00 学习 · 长预计 [预计用时:: 1h30m]", estimated.date).estimatedMinutes, 90, "estimate: handwritten duration units are supported");
+
 // 2. 旧卡片解析：仅合成夹具
 const legacy = legacyJournal;
 const cards = C.parseLegacyCards(legacy, "2026-09-24");
@@ -63,10 +83,12 @@ eq(C.occursOn(sandwich, "2026-09-24"), true, "dated occurs");
 eq(C.occursOn(sandwich, "2026-09-25"), false, "dated not other day");
 const weekly = { ...rec, repeat: { kind: "weekly", days: [1, 3] }, created: "2026-09-01T00:00:00Z" };
 eq([C.occursOn(weekly, "2026-09-21"), C.occursOn(weekly, "2026-09-22")], [true, false], "weekly Mon yes Tue no");
+eq([C.occursOn({ ...weekly, skipDates: ["2026-09-21"] }, "2026-09-21"), C.occursOn({ ...weekly, skipDates: ["2026-09-21"] }, "2026-09-22")], [false, false], "repeat skip date");
 
 // 5. time utils
 eq(C.weekStart("2026-09-24"), "2026-09-21", "weekStart Monday");
 eq(C.monthEnd("2026-02-10"), "2026-02-28", "monthEnd");
+eq([C.isValidDate("2026-02-28"), C.isValidDate("2026-02-29"), C.isValidDate("2026-02-31"), C.isValidDate("2026-13-01")], [true, false, false, false], "strict calendar dates");
 eq(C.fmtDuration(90), "1.5h", "fmtDuration");
 eq(C.fmtDurationField(375), "6.25h", "fmtDurationField");
 

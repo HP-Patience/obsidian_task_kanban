@@ -23,6 +23,10 @@ export interface LubiSettings {
   dailyCapacityHours: number;
   /** 默认色板版本：2 = v1.4 避开强调色的色板 */
   paletteVersion: number;
+  /** AI 任务解析：OpenAI 兼容的 chat completions 地址 */
+  aiEndpoint: string;
+  aiModel: string;
+  aiApiKey: string;
 }
 
 // v1.4 色板：分类色只给数据用，避开 Obsidian 默认强调色（紫）；睡眠为「背景时间」用石板灰蓝 + 斜纹降权。
@@ -73,6 +77,9 @@ export const DEFAULT_SETTINGS: LubiSettings = {
   expenseTypes: ["餐饮", "居住", "交通", "服饰个护", "休闲娱乐", "医疗保健", "教育提升", "其他"],
   dailyCapacityHours: 8,
   paletteVersion: 2,
+  aiEndpoint: "http://127.0.0.1:11434/v1/chat/completions",
+  aiModel: "qwen2.5:7b",
+  aiApiKey: "",
 };
 
 export function categoryOf(settings: LubiSettings, name: string): CategoryDef {

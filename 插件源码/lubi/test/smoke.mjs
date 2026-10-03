@@ -5,7 +5,7 @@ import { createRequire } from "module";
 const origLoad = Module._load;
 Module._load = function (req, ...a) { return req === "obsidian" ? O : origLoad.call(this, req, ...a); };
 const require = createRequire(import.meta.url);
-const LubiPlugin = require("./plugin.cjs").default;
+const LubiPlugin = require(process.env.LUBI_TEST_PLUGIN || "./plugin.cjs").default;
 let fails = 0;
 const check = (cond, msg) => { if (!cond) { fails++; console.log("FAIL", msg); } else console.log("ok  ", msg); };
 const tick = () => new Promise((r) => setTimeout(r, 30));
@@ -186,7 +186,8 @@ view.show("today"); await tick();
   view.show("today", D); await tick();
   plugin.quickLog();
   const m = O.openModals.at(-1);
-  check(m.constructor.name === "RecordModal" && !!m.contentEl.querySelector(".lubi-kind-seg"), "new: daily page opens the unified dialog on 记录");
+  const newModes = [...m.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].map((x) => x.textContent || "");
+  check(m.constructor.name === "RecordModal" && newModes.length === 3 && newModes.some((x) => x.includes("记录时间")) && newModes.some((x) => x.includes("记录支出")) && newModes.some((x) => x.includes("规划任务")), "new: daily page opens the unified mode dialog");
   check(![...m.contentEl.querySelectorAll(".lubi-ghost-btn")].some((b) => b.textContent.includes("关联")), "new: the manual 关联待办 field is gone");
   const tt = m.contentEl.querySelector('input[type="text"]'); tt.value = "补记午饭后散步"; tt.dispatchEvent(new window.Event("input"));
   const st = m.contentEl.querySelector('input[type="time"]'); st.value = "05:00"; st.dispatchEvent(new window.Event("change"));
@@ -213,10 +214,10 @@ view.show("today"); await tick();
   plugin.quickLog();
   const m2 = O.openModals.at(-1);
   const t2 = m2.contentEl.querySelector('input[type="text"]'); t2.value = "明天买菜"; t2.dispatchEvent(new window.Event("input"));
-  [...m2.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].find((x) => x.textContent.includes("任务")).click(); await tick();
+  [...m2.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].find((x) => x.textContent.includes("规划任务")).click(); await tick();
   const tm = O.openModals.at(-1);
   check(!O.openModals.includes(m2) && tm.constructor.name === "TaskModal" && tm.t.title === "明天买菜" && tm.t.date === D, "new: switching to 任务 carries the draft into the task form");
-  [...tm.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].find((x) => x.textContent.includes("记录")).click(); await tick();
+  [...tm.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].find((x) => x.textContent.includes("记录时间")).click(); await tick();
   const back = O.openModals.at(-1);
   check(back.constructor.name === "RecordModal" && back.rec.title === "明天买菜", "new: switching back to 记录 keeps the draft");
   back.close();
@@ -354,7 +355,7 @@ check(plugin.tasks.byId(milk.id).status === "done" && plugin.tasks.byId(milk.id)
 if (!window.PointerEvent) window.PointerEvent = class extends window.MouseEvent { constructor(t, o = {}) { super(t, o); this.pointerId = o.pointerId ?? 1; } };
 const pe = (el, type, y, x = 0, extra = {}) => el.dispatchEvent(new window.PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, pointerId: 1, ...extra }));
 const drag = async (el, y0, y1, x0 = 0, x1 = 0, opts = {}) => { pe(el, "pointerdown", y0, x0); pe(window, "pointermove", y0 + 3, x0); pe(window, "pointermove", y1, x1, opts); if (opts.cancel) window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); else pe(window, "pointerup", y1, x1, opts); await tick(); await tick(); await new Promise((r) => setTimeout(r, 200)); };
-const PXM = 48 / 60;
+const PXM = 56 / 60;
 const journal = () => app.vault.files.get("日记/2026-09-24.md");
 for (const n of [...document.body.children]) if (n.querySelector?.(".lubi-notice-btn")) n.remove();
 view.show("today", "2026-09-24"); await tick(); await new Promise((r) => setTimeout(r, 200));
@@ -441,7 +442,7 @@ const wb = root.querySelector(".lubi-wblock");
 const wt = plugin.tasks.all.find((t) => t.title === wb.querySelector(".lubi-wblock-title").textContent);
 const beforeDate = plugin.tasks.forDate("2026-09-25").some((t) => t.id === wt.id) ? "2026-09-25" : null;
 const origStart = wt.start;
-await drag(wb, 100, 100 + 48, 0, 1);
+await drag(wb, 100, 100 + 56, 0, 1);
 const after = plugin.tasks.byId(wt.id);
 check(after.start === (() => { const [h, m] = origStart.split(":").map(Number); const v = Math.round((h * 60 + m + 60) / 15) * 15; return `${String(Math.floor(v / 60)).padStart(2, "0")}:${String(v % 60).padStart(2, "0")}`; })(), `week block moved +1h (snapped to 15min): ${origStart} → ${after.start}`);
 check(plugin.tasks.forDate("2026-09-25").some((t) => t.id === wt.id) !== !!beforeDate, `week block moved to next column (was ${beforeDate ? "9/25" : "other day"})`);
@@ -461,7 +462,7 @@ await drag(wb3.querySelector(".lubi-block-handle.is-top"), 300, 300 - 24);
   view.show("tasks", "2026-09-24"); await tick();
   const cols = [...root.querySelectorAll(".lubi-week-col")];
   const wkDays = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => b.getAttribute("aria-label").match(/\d{4}-\d{2}-\d{2}/)[0]);
-  const ci = 2, col = cols[ci], sh = plugin.settings.scheduleStartHour, px = 48 / 60;
+  const ci = 2, col = cols[ci], sh = plugin.settings.scheduleStartHour, px = 56 / 60;
   const yAt = (hm) => { const [h, m] = hm.split(":").map(Number); return ((h - sh) * 60 + m) * px + 1; };
   const before = O.openModals.length;
   const ghostOn = () => col.querySelector(".lubi-wghost.is-on");
@@ -565,7 +566,7 @@ check(!root.querySelector(".lubi-review-table-wrap").hidden && !!root.querySelec
 check(root.querySelector(".lubi-review-table")?.textContent.includes("2026-09-21"), "table names the abnormal date to correct");
 await plugin.journal.add({ date: "2026-10-12", start: "09:00", minutes: 60, category: "学习", title: "一期有效记录", extra: {} });
 view.review.period = "week"; view.show("review", "2026-10-12"); await tick(); await tick();
-check(root.querySelector(".lubi-insight")?.textContent.includes("至少 2 天"), "sparse comparison does not claim a trend");
+check(!root.textContent.includes("至少 2 天"), "sparse comparison does not claim a trend");
 view.show("tasks", "2026-09-24"); await tick(); await tick();
 check(root.querySelector(".lubi-agenda-card")?.textContent.includes("日程"), "narrow-panel agenda provides a date and task path");
 const visibleOrder = [...root.querySelectorAll(".lubi-tasks-left > .lubi-list-card, .lubi-tasks-left > .lubi-agenda-host")].map((node) => node.classList.contains("lubi-agenda-host") ? "agenda" : node.textContent.includes("未安排") ? "inbox" : "today");
@@ -653,6 +654,163 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   view.show("today", D); await settle();
   check(root.querySelector(".lubi-topbar-cta")?.textContent.includes("记一条"), "cta: daily page button reads 记一条");
   check(!root.querySelector(".lubi-error"), "no render errors after plan / pending flows");
+}
+
+// ---------- ▶ 保存实际记录后完成任务；取消 / 写入失败不改变状态 ----------
+{
+  const D = "2026-08-03";
+  const { blankTask, shiftDate } = await import("./core.mjs");
+  // 新日记的 create 事件会先经 120ms Vault 防抖，再经 150ms 视图防抖。
+  const settle = async () => { for (let i = 0; i < 12; i++) await tick(); };
+  const row = (title) => [...root.querySelectorAll(".lubi-task")].find((el) => el.querySelector(".lubi-task-title-text")?.textContent === title);
+  const openStart = async (task) => {
+    view.show("tasks", D); await settle();
+    row(task.title).querySelector(".lubi-task-start").click(); await tick();
+    const modal = O.openModals.at(-1);
+    check(modal?.constructor.name === "RecordModal" && modal.rec.task === task.id, "start: triangle opens a record linked to the task");
+    return modal;
+  };
+  const linked = async (id) => (await plugin.journal.read(D)).filter((entry) => entry.rec.task === id);
+  const make = async (id, repeat = { kind: "none", days: [] }) => {
+    const task = blankTask({ id, title: `绿色开始测试 ${id}`, category: "学习", date: D, start: "10:00", estimate: 45, startDate: D, repeat });
+    await plugin.tasks.upsert(task);
+    return task;
+  };
+  const clean = async (id) => {
+    let hit;
+    while ((hit = (await linked(id))[0])) await plugin.journal.remove(D, hit.line);
+    await plugin.tasks.remove(id);
+  };
+  const autoLog = plugin.settings.promptLogOnComplete;
+  for (const repeating of [false, true]) {
+    plugin.settings.promptLogOnComplete = !repeating;
+    const task = await make(`start-save-${repeating}`, { kind: repeating ? "daily" : "none", days: [] });
+    const previous = shiftDate(D, -1);
+    if (repeating) { task.doneDates = [previous]; await plugin.tasks.upsert(task); }
+    const modal = await openStart(task);
+    check(!plugin.tasks.isDoneOn(plugin.tasks.byId(task.id), D), "start: opening the record does not complete the task");
+    modal.rec.title = "实际记录标题";
+    modal.contentEl.querySelector(".lubi-modal-actions .mod-cta").click(); await settle();
+    const current = plugin.tasks.byId(task.id);
+    const records = await linked(task.id);
+    check(records.length === 1 && records[0].rec.title === "实际记录标题", "start: saving writes exactly one actual record");
+    check(plugin.tasks.isDoneOn(current, D), `start: saving completes the ${repeating ? "repeating" : "one-off"} task`);
+    check(current.doneLogs?.[D]?.title === "实际记录标题" && current.doneLogs?.[D]?.start === "10:00", "start: completion registers the saved record, not the original draft");
+    check(row(task.title)?.querySelector('input[type="checkbox"]')?.checked && !row(task.title)?.querySelector(".lubi-task-start"), "start: the task row shows completed and hides the start button");
+    check(root.querySelector(".lubi-list-card .lubi-panel-head .lubi-muted")?.textContent === "1/1", "start: task completion count refreshes");
+    const persisted = JSON.parse(app.vault.files.get("任务/任务数据.json")).tasks.find((item) => item.id === task.id);
+    check(repeating ? persisted.doneDates.includes(D) : persisted.status === "done", "start: completed state is persisted to the task file");
+    if (repeating) check(plugin.tasks.isDoneOn(current, D) && current.doneDates.includes(previous) && !plugin.tasks.isDoneOn(current, shiftDate(D, 1)), "start: a repeating task completes only this occurrence and preserves other days");
+    if (plugin.tasks.isDoneOn(current, D)) {
+      row(task.title).querySelector('input[type="checkbox"]').click(); await settle();
+      check(!plugin.tasks.isDoneOn(plugin.tasks.byId(task.id), D) && (await linked(task.id)).length === 0, "start: unchecking completion removes the registered record without duplicates");
+    }
+    await clean(task.id);
+  }
+  plugin.settings.promptLogOnComplete = autoLog;
+  const alreadyDone = await make("start-already-done");
+  const concurrentModal = await openStart(alreadyDone);
+  await plugin.tasks.toggleDone(alreadyDone.id, D);
+  concurrentModal.contentEl.querySelector(".lubi-modal-actions .mod-cta").click(); await settle();
+  check(plugin.tasks.isDoneOn(plugin.tasks.byId(alreadyDone.id), D) && !!plugin.tasks.byId(alreadyDone.id).doneLogs?.[D] && (await linked(alreadyDone.id)).length === 1, "start: an already completed task stays completed and registers just the saved record");
+  await clean(alreadyDone.id);
+  const cancel = await make("start-cancel");
+  (await openStart(cancel)).close(); await settle();
+  check(!plugin.tasks.isDoneOn(plugin.tasks.byId(cancel.id), D) && (await linked(cancel.id)).length === 0, "start: cancelling leaves the task unfinished and writes no record");
+  await clean(cancel.id);
+  const failure = await make("start-failure");
+  const failedModal = await openStart(failure);
+  const originalAdd = plugin.journal.add;
+  try {
+    plugin.journal.add = async () => { throw new Error("Synthetic record write failure"); };
+    failedModal.contentEl.querySelector(".lubi-modal-actions .mod-cta").click(); await settle();
+    check(!plugin.tasks.isDoneOn(plugin.tasks.byId(failure.id), D) && (await linked(failure.id)).length === 0, "start: a failed record write leaves the task unfinished");
+    check(O.openModals.includes(failedModal) && failedModal.contentEl.textContent.includes("无法保存"), "start: a failed write keeps the form open with an error");
+  } finally { plugin.journal.add = originalAdd; failedModal.close(); }
+  await clean(failure.id);
+  check(!root.querySelector(".lubi-error"), "start: no render errors after save / cancel / failure flows");
+}
+// ---------- 预计用时快照与预计 / 实际 / 偏差展示 ----------
+{
+  const D = "2026-08-10";
+  const { blankTask, shiftDate, PENDING_KEY } = await import("./core.mjs");
+  const settle = async () => { for (let i = 0; i < 12; i++) await tick(); };
+  const taskRow = (title) => [...root.querySelectorAll(".lubi-task")].find(el => el.querySelector(".lubi-task-title-text")?.textContent === title);
+  const linked = async (id, date = D) => (await plugin.journal.read(date)).filter(entry => entry.rec.task === id);
+  const blockFor = (title) => [...root.querySelectorAll(".lubi-block")].find(el => el.querySelector(".lubi-block-title")?.textContent === title);
+  const make = async (id, estimate, repeat = { kind: "none", days: [] }) => {
+    const task = blankTask({ id, title: id, category: "学习", date: D, start: "09:00", estimate, startDate: D, repeat });
+    await plugin.tasks.upsert(task);
+    return task;
+  };
+  const openStart = async (task, date = D) => {
+    view.show("tasks", date); await settle();
+    taskRow(task.title).querySelector(".lubi-task-start").click(); await tick();
+    return O.openModals.at(-1);
+  };
+  const save = async (modal) => { modal.contentEl.querySelector(".lubi-modal-actions .mod-cta").click(); await settle(); };
+  const task = await make("estimate-snapshot", 45);
+  let modal = await openStart(task);
+  check(modal.rec.estimatedMinutes === 45 && modal.contentEl.querySelector(".lubi-estimate-values")?.textContent.includes("与预计一致"), "estimate UI: task start captures and displays the forecast");
+  check(modal.contentEl.querySelector(".lubi-estimate-note")?.textContent.includes("核对实际用时"), "estimate UI: prefilled duration is explicitly explained as needing confirmation");
+  const duration = modal.contentEl.querySelector('.lubi-timebar-dur input[type="number"]');
+  duration.value = "60"; duration.dispatchEvent(new window.Event("input", { bubbles: true }));
+  check(modal.contentEl.querySelector(".lubi-estimate-values")?.textContent === "预计 45min · 实际 1h · 超出 15min", "estimate UI: typing actual duration updates the comparison immediately");
+  [...modal.contentEl.querySelectorAll(".lubi-quick-chip")].find(el => el.textContent === "30min").click();
+  check(modal.contentEl.querySelector(".lubi-estimate-values")?.textContent.includes("少于 15min"), "estimate UI: duration shortcuts update the comparison");
+  const end = modal.contentEl.querySelector('.lubi-timebar-cell:last-child input[type="time"]');
+  end.value = "10:00"; end.dispatchEvent(new window.Event("change", { bubbles: true }));
+  check(modal.contentEl.querySelector(".lubi-estimate-values")?.textContent.includes("实际 1h"), "estimate UI: changing the end time updates the comparison");
+  await plugin.tasks.upsert({ ...plugin.tasks.byId(task.id), estimate: 90 });
+  await save(modal);
+  let saved = (await linked(task.id))[0];
+  check(saved.rec.minutes === 60 && saved.rec.estimatedMinutes === 45 && plugin.tasks.isDoneOn(plugin.tasks.byId(task.id), D), "estimate UI: recording uses the captured forecast and still completes the task");
+  check(app.vault.files.get(`日记/${D}.md`).includes("[时长:: 1h] [预计用时:: 45min]"), "estimate UI: Markdown stores actual duration and forecast as separate fields");
+  view.show("today", D); await settle();
+  let block = blockFor(task.title);
+  check(block.querySelector(".lubi-block-sub")?.textContent.includes("预计 45min") && block.getAttribute("aria-label").includes("预计 45min · 实际 1h · 超出 15min"), "estimate UI: timeline metadata and details use the snapshot, not the changed task forecast");
+  block.querySelector('[aria-label="编辑"]').click(); await tick();
+  modal = O.openModals.at(-1);
+  check(modal.rec.estimatedMinutes === 45, "estimate UI: editing a historical record preserves its forecast");
+  const editedDuration = modal.contentEl.querySelector('.lubi-timebar-dur input[type="number"]');
+  editedDuration.value = "1.25"; editedDuration.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await save(modal);
+  saved = (await linked(task.id))[0];
+  check(saved.rec.minutes === 75 && saved.rec.estimatedMinutes === 45, "estimate UI: editing actual time does not rewrite the forecast");
+  view.show("today", D); await settle();
+  blockFor(task.title).querySelector('[aria-label="复制到明天"]').click(); await settle();
+  const copy = (await plugin.journal.read(shiftDate(D, 1))).find(entry => entry.rec.title === task.title);
+  check(copy?.rec.estimatedMinutes === undefined && copy.rec.task !== task.id, "estimate UI: copying an independent record does not inherit the old task forecast");
+
+  const noEstimate = await make("estimate-unset", 0);
+  modal = await openStart(noEstimate);
+  check(modal.rec.estimatedMinutes === undefined && !modal.contentEl.querySelector(".lubi-estimate-values"), "estimate UI: a default 30-minute recording is not an invented task forecast");
+  await plugin.tasks.upsert({ ...plugin.tasks.byId(noEstimate.id), estimate: 90 });
+  await save(modal);
+  check((await linked(noEstimate.id))[0].rec.estimatedMinutes === undefined, "estimate UI: tasks without forecasts save only actual duration");
+
+  await plugin.journal.add({ date: D, start: "13:00", minutes: 30, category: "学习", title: "estimate-legacy-record", task: task.id, extra: {} });
+  view.show("today", D); await settle();
+  blockFor("estimate-legacy-record").querySelector('[aria-label="编辑"]').click(); await tick();
+  modal = O.openModals.at(-1);
+  check(modal.rec.estimatedMinutes === undefined && !modal.contentEl.querySelector(".lubi-estimate-values") && modal.contentEl.querySelector(".lubi-estimate-note")?.textContent.includes("没有预计用时快照"), "estimate UI: old linked records are not backfilled from current task estimates");
+  await save(modal);
+  check((await linked(task.id)).find(entry => entry.rec.title === "estimate-legacy-record").rec.estimatedMinutes === undefined, "estimate UI: saving an old record still does not invent a historical forecast");
+
+  const auto = await make("estimate-auto-log", 30);
+  view.show("tasks", D); await settle();
+  taskRow(auto.title).querySelector('input[type="checkbox"]').click(); await settle();
+  const pending = (await linked(auto.id))[0].rec;
+  check(pending.estimatedMinutes === 30 && !!pending.extra[PENDING_KEY], "estimate UI: checkbox-generated records capture the forecast but remain pending");
+  view.show("today", D); await settle();
+  check(blockFor(auto.title).getAttribute("aria-label").includes("核对后再比较") && !blockFor(auto.title).getAttribute("aria-label").includes("实际 30min"), "estimate UI: timeline does not treat pending time as measured actual time");
+
+  const repeat = await make("estimate-repeat", 45, { kind: "daily", days: [] });
+  await save(await openStart(repeat));
+  await plugin.tasks.upsert({ ...plugin.tasks.byId(repeat.id), estimate: 90 });
+  await save(await openStart(plugin.tasks.byId(repeat.id), shiftDate(D, 1)));
+  check((await linked(repeat.id))[0].rec.estimatedMinutes === 45 && (await linked(repeat.id, shiftDate(D, 1)))[0].rec.estimatedMinutes === 90, "estimate UI: repeated occurrences keep independent forecasts without changing history");
+  check(!root.querySelector(".lubi-error"), "estimate UI: no render errors after snapshot / edit / copy / repeat flows");
 }
 
 console.log("data file now:", app.vault.files.get("任务/任务数据.json").slice(0, 120).replace(/\n/g, " "));

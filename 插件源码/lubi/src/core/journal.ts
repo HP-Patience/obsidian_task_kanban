@@ -8,6 +8,9 @@ import { hmToMin, isValidDate, shiftDate } from "./time";
 export const SECTION = "## 记录";
 
 export class Journal {
+  /** 最近一次由本实例写入日记文件的时间，用于区分内部与外部 Vault 事件。 */
+  lastWriteAt = 0;
+
   constructor(private app: App, private settings: () => LubiSettings) {}
 
   path(date: string): string {
@@ -49,12 +52,10 @@ export class Journal {
   /** 一次读多天，返回 date -> 记录 */
   async readRange(dates: string[]): Promise<Map<string, Rec[]>> {
     const out = new Map<string, Rec[]>();
-    await Promise.all(
-      dates.map(async (d) => {
-        const rows = await this.read(d);
-        if (rows.length) out.set(d, sortRecs(rows).map((r) => r.rec));
-      }),
-    );
+    const results = await Promise.all(dates.map(async (date) => [date, await this.read(date)] as const));
+    for (const [date, rows] of results) {
+      if (rows.length) out.set(date, sortRecs(rows).map((r) => r.rec));
+    }
     return out;
   }
 
@@ -82,6 +83,7 @@ export class Journal {
     });
     if (tomorrow) {
       tomorrow.date = shiftDate(date, 1);
+      await this.checkCap(tomorrow.date, tomorrow, null);
       await this.mutate(tomorrow.date, (recs) => [...recs, tomorrow]);
     }
   }
@@ -162,6 +164,7 @@ export class Journal {
 
   private async mutateLines(date: string, fn: (rows: ParsedLine[]) => Rec[]): Promise<void> {
     const file = await this.ensure(date);
+    this.lastWriteAt = Date.now();
     await this.app.vault.process(file, (text) => {
       const rows = parseLines(text, date);
       const next = fn(rows).map((r) => ({ ...r, date }));

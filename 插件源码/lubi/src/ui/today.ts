@@ -1,9 +1,9 @@
 // 每日页：24h 时间轴（实线 = 记录，虚线 = 当天有开始时间的计划）+ 右侧当天分布 / 空白时段 / 未定时的计划。
-// 计划只读展示：点计划块 = 按实际时间记一条并完成任务；排期仍在任务页。
+// 计划展示：点计划块 = 按实际时间记一条并完成任务；也可直接取消当天计划。
 
 import { Notice } from "obsidian";
 import type LubiPlugin from "../main";
-import { confirmed, isPending, ParsedLine, Rec } from "../core/records";
+import { formatEstimateComparison, normalizeEstimatedMinutes, confirmed, isPending, ParsedLine, Rec } from "../core/records";
 import { fmtDuration, fmtHours, hmToMin, minToHM, nowHM, shiftDate, shortDate, todayStr } from "../core/time";
 import { dayTimeStats, invalidTimedSpan } from "../core/metrics";
 import { categoryOf } from "../settings";
@@ -38,6 +38,19 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   // 标题行（引导 / 统计 / 跨日警告）单独占第一行，时间轴与右栏同在第二行，保证右栏顶部与时间轴框顶部对齐
   const top = host.createDiv({ cls: "lubi-today-top" });
   if (!plugin.settings.onboardingDone && plugin.journal.dates().length === 0) renderOnboarding(plugin, top, () => openNew());
+
+  const summary = top.createDiv({ cls: "lubi-today-summary", attr: { role: "status", "aria-label": "今日摘要" } });
+  const summaryItem = (label: string, value: string, hint?: string) => {
+    const item = summary.createDiv({ cls: "lubi-summary-item" });
+    item.createDiv({ cls: "lubi-summary-value", text: value });
+    item.createDiv({ cls: "lubi-summary-label", text: label });
+    if (hint) tip(item, hint);
+  };
+  summaryItem("记录投入", timed.length ? fmtHours(stats.recordedMinutes) : "—", "所有时间记录之和，并行记录会重复计入。");
+  summaryItem("实际覆盖", timed.length ? fmtHours(stats.coveredMinutes) : "—", "把重叠区间合并后的实际覆盖时间。");
+  if (stats.overlapMinutes) summaryItem("并行重叠", fmtDuration(stats.overlapMinutes), "并行记录造成的重复时长。");
+  const pendingCount = timed.filter((row) => isPending(row.rec)).length;
+  if (pendingCount) summaryItem("待确认", `${pendingCount} 条`, "按计划自动生成、尚未核对为实际时间的记录。");
 
   const tlHead = top.createDiv({ cls: "lubi-panel-head" });
   el(tlHead, "h3", "lubi-panel-title", "时间轴");
@@ -149,6 +162,10 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const openPlans = planned.filter((t) => !plugin.tasks.isDoneOn(t, date) && !loggedTasks.has(t.id));
   const timedPlans = openPlans.filter((t) => t.start);
   const untimedPlans = openPlans.filter((t) => !t.start);
+  if (planned.length) {
+    const donePlans = planned.length - openPlans.length;
+    summaryItem("计划完成", `${donePlans}/${planned.length}`, `当天计划中已完成或已有实际记录的数量。`);
+  }
   canvas.toggleClass("has-plans", timedPlans.length > 0);
   const logPlan = (t: Task) => openNew({
     title: t.title,
@@ -172,6 +189,21 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
       pb.toggleClass("is-compact", h < 34);
       const ph = pb.createDiv({ cls: "lubi-plan-head" });
       ph.createSpan({ cls: "lubi-plan-title", text: t.title });
+      const cancel = ph.createSpan({ cls: "lubi-plan-cancel", text: "×", attr: { role: "button", tabindex: "0", "aria-label": `取消「${t.title}」当天计划` } });
+      tip(cancel, `取消「${t.title}」当天计划${t.repeat.kind === "none" ? "（清除排期）" : "（只跳过当天，不改变重复规则）"}`);
+      const cancelPlan = async (e: Event) => {
+        stopAll(e);
+        try {
+          const result = await plugin.tasks.cancelPlanOn(t.id, date);
+          if (result === "cleared") new Notice(`已取消「${t.title}」当天计划，任务仍保留在未安排列表。`, 5000);
+          else if (result === "skipped") new Notice(`已跳过「${t.title}」本次，重复规则未改变。`, 5000);
+          rerender();
+        } catch (err) {
+          new Notice(`取消计划失败：${(err as Error).message}`, 6000);
+        }
+      };
+      cancel.addEventListener("click", cancelPlan);
+      cancel.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") void cancelPlan(e); });
       pb.createDiv({ cls: "lubi-plan-time", text: `${t.start}–${minToHM(s0 + mins)}` });
       const late = date === todayStr() && s0 + mins < hmToMin(nowHM());
       pb.toggleClass("is-late", late);
@@ -219,9 +251,11 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
     const durEl = head.createSpan({ cls: "lubi-block-dur", text: fmtDuration(r.minutes) });
     const meta = block.createDiv({ cls: "lubi-block-meta" });
     const timeEl = meta.createSpan({ cls: "lubi-block-time", text: invalid ? `${r.start} · 需校对` : `${r.start}–${minToHM(startMin + r.minutes)}` });
-    const subParts = [r.task && plugin.tasks.byId(r.task) ? "关联任务" : "", r.notes || ""].filter(Boolean);
+    const estimate = normalizeEstimatedMinutes(r.estimatedMinutes);
+    const comparison = formatEstimateComparison(r);
+    const subParts = [estimate !== undefined ? `预计 ${fmtDuration(estimate)}` : "", r.task && plugin.tasks.byId(r.task) ? "关联任务" : "", r.notes || ""].filter(Boolean);
     if (subParts.length) meta.createSpan({ cls: "lubi-block-sub", text: subParts.join(" · ") });
-    tip(block, `${invalid ? `${r.start} · 时长跨出当天，需校对` : `${r.start}–${minToHM(startMin + r.minutes)}`} ${r.category} · ${r.title}，${fmtDuration(r.minutes)}${r.notes ? `（${r.notes}）` : ""}。${pending ? "按计划自动记下，待确认：拖到实际时间或点 ✓。" : ""}${invalid ? "点击或回车校对" : "拖动移动 · 拉边缘改时长 · 回车编辑"}`);
+    tip(block, `${invalid ? `${r.start} · 时长跨出当天，需校对` : `${r.start}–${minToHM(startMin + r.minutes)}`} ${r.category} · ${r.title}，${fmtDuration(r.minutes)}${r.notes ? `（${r.notes}）` : ""}。${comparison ? `${comparison}。` : ""}${pending ? "按计划自动记下，待确认：拖到实际时间或点 ✓。" : ""}${invalid ? "点击或回车校对" : "拖动移动 · 拉边缘改时长 · 回车编辑"}`);
     const acts = block.createDiv({ cls: "lubi-block-actions" });
     if (pending) iconButton(acts, "check", "确认：时间与计划一致", async () => {
       try {
@@ -233,7 +267,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
     });
     iconButton(acts, "pencil", "编辑", () => openEdit(row));
     iconButton(acts, "copy", "复制到明天", async () => {
-      const copy: Rec = { ...r, date: plugin.shiftDate(date, 1), task: undefined, extra: { ...r.extra } };
+      const copy: Rec = { ...r, date: plugin.shiftDate(date, 1), task: undefined, estimatedMinutes: undefined, extra: { ...r.extra } };
       try {
         await addRecordAsDone(plugin, copy);
         new Notice(`已复制到 ${copy.date}`);

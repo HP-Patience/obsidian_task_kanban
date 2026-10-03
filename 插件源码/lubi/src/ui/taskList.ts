@@ -4,7 +4,7 @@
 
 import { Notice } from "obsidian";
 import type LubiPlugin from "../main";
-import { ParsedLine, PENDING_KEY, Rec } from "../core/records";
+import { normalizeEstimatedMinutes, ParsedLine, PENDING_KEY, Rec } from "../core/records";
 import { Task, DoneLog, blankTask } from "../core/tasks";
 import { fmtDuration, hmToMin, minToHM, nowHM, todayStr } from "../core/time";
 import { categoryOf } from "../settings";
@@ -76,7 +76,7 @@ export async function logDone(plugin: LubiPlugin, t: Task, date: string, rerende
     else start = plugin.lastEndOf(date) || "09:00";
   }
   const category = t.category && categoryOf(plugin.settings, t.category).kind === "time" ? t.category : firstTimeCategory(plugin);
-  const rec: Rec = { date, start, minutes, category, title: t.title, task: t.id, extra: { [PENDING_KEY]: "按计划" } };
+  const rec: Rec = { date, start, minutes, estimatedMinutes: normalizeEstimatedMinutes(t.estimate), category, title: t.title, task: t.id, extra: { [PENDING_KEY]: "按计划" } };
   try {
     await plugin.journal.add(rec);
   } catch (e) {
@@ -84,7 +84,10 @@ export async function logDone(plugin: LubiPlugin, t: Task, date: string, rerende
     return null;
   }
   const latest = plugin.tasks.byId(t.id);
-  if (latest && plugin.tasks.isDoneOn(latest, date)) await plugin.tasks.setDoneLog(t.id, date, logOf(rec));
+  if (latest) {
+    if (!plugin.tasks.isDoneOn(latest, date)) await plugin.tasks.toggleDone(t.id, date);
+    await plugin.tasks.setDoneLog(t.id, date, logOf(rec));
+  }
   undoNotice(`已按计划记下「${t.title}」${start}–${minToHM(hmToMin(start) + minutes)}（待确认）：在时间轴拖到实际时间，或点 ✓ 确认`, async () => {
     const line = await plugin.journal.findLine(date, rec);
     if (line !== null) await plugin.journal.remove(date, line);
@@ -109,7 +112,7 @@ export async function afterDone(plugin: LubiPlugin, t: Task, date: string, _open
 }
 
 /**
- * 用一条已保存的记录完成任务（点时间轴上的计划块 → 填实际时间 → 保存）：
+ * 用一条已保存的记录完成任务（任务行 ▶ / 时间轴计划块 → 填实际时间 → 保存）：
  * 勾上任务并登记这条记录，之后取消勾选仍能精确撤掉它。已完成的任务只补登记。
  */
 export async function completeFromRecord(plugin: LubiPlugin, taskId: string, date: string, rec: Rec): Promise<void> {
@@ -149,6 +152,8 @@ export async function afterUndone(plugin: LubiPlugin, id: string, date: string, 
  */
 export async function addRecordAsDone(plugin: LubiPlugin, rec: Rec): Promise<Rec> {
   const r: Rec = { ...rec, extra: { ...rec.extra } };
+  // 表单已取过快照（也包括当时未填预计）；其他新增入口才在这里补取。
+  if (r.task && !Object.prototype.hasOwnProperty.call(r, "estimatedMinutes")) r.estimatedMinutes = normalizeEstimatedMinutes(plugin.tasks.byId(r.task)?.estimate);
   const isTime = categoryOf(plugin.settings, r.category).kind !== "money" && r.minutes > 0;
   if (!isTime || r.task) {
     await plugin.journal.add(r);
@@ -276,6 +281,10 @@ export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: stri
   if (t.category) catDot(line, categoryOf(plugin.settings, t.category));
   line.createSpan({ cls: "lubi-task-title-text", text: t.title });
   if (t.blocked) tip(icon(line, "octagon-alert", "lubi-icon lubi-blocked-icon"), "受阻");
+  if (t.origin === "record") {
+    const source = tip(line.createSpan({ cls: "lubi-task-source", text: "由记录生成" }), "这条任务由每日页的一条时间记录自动生成");
+    source.setAttribute("aria-label", "由记录生成");
+  }
   const parents = plugin.tasks.pathOf(t).slice(0, -1);
   const meta: string[] = [];
   if (parents.length) meta.push(parents.map((p) => p.title).join(" / "));
@@ -301,16 +310,25 @@ export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: stri
       });
     });
   }
-  // ▶ 开始：以此刻为开始打开「新建 · 已完成」，并关联该任务
+  // ▶ 开始：预填关联记录，保存成功后完成任务并登记实际记录；取消时不改变状态
   if (!done) {
     const acts = li.createDiv({ cls: "lubi-task-actions" });
-    iconButton(acts, "play", `开始「${t.title}」：预填一条记录`, () => openNew({
+    iconButton(acts, "play", `开始「${t.title}」：预填一条记录，保存后完成任务`, () => openNew({
       title: t.title,
       category: t.category || undefined,
       task: t.id,
       start: date === todayStr() ? nowHM() : t.start || undefined,
       minutes: t.estimate || 30,
-    }), "lubi-task-start");
+    }, (rec) => completeFromRecord(plugin, t.id, rec.date, rec)), "lubi-task-start");
+    if (t.repeat.kind !== "none") {
+      iconButton(acts, "circle-off", `跳过「${t.title}」${date}（仅本次）`, async () => {
+        try {
+          await plugin.tasks.toggleSkip(t.id, date);
+          new Notice(`已跳过「${t.title}」${date}，重复规则未改变。`, 4000);
+          rerender();
+        } catch (e) { new Notice(`跳过任务失败：${(e as Error).message}`, 6000); }
+      }, "lubi-task-skip");
+    }
   }
   if (onClick) li.addEventListener("click", (e) => {
     if ((e.target as HTMLElement).closest("button, input")) return;

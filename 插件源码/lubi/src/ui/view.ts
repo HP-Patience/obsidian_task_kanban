@@ -94,7 +94,7 @@ export class DashboardView extends ItemView {
     const tabs = segmented<Tab>(bar, [
       { id: "today", label: "每日", icon: "hourglass" },
       { id: "review", label: "回顾", icon: "bar-chart-3" },
-      { id: "tasks", label: "任务", icon: "list-todo" },
+      { id: "tasks", label: "计划", icon: "list-todo" },
     ], this.tab, (t) => this.setTab(t));
     tabs.addClass("lubi-topbar-tabs");
     tabs.setAttribute("role", "tablist");
@@ -106,7 +106,7 @@ export class DashboardView extends ItemView {
     const right = bar.createDiv({ cls: "lubi-topbar-right" });
     const cta = button(right, this.ctaText(), () => this.openNew(), { primary: true, icon: "plus", cls: "lubi-topbar-cta" });
     this.ctaLabel = cta.querySelector<HTMLElement>("span:not(.lubi-icon)") || undefined;
-    tip(cta, "新建（N）：每日 / 回顾页记一条，任务页加任务；窗口顶部可在「记录 | 任务」之间切换");
+    tip(cta, "新建（N）：每日 / 回顾页记一条，计划页加任务；窗口顶部可在「记录 | 计划」之间切换");
     cta.createSpan({ cls: "lubi-kbd lubi-kbd-cta", text: "N" });
     iconButton(right, "more-horizontal", "更多", () => undefined, "lubi-more-btn").addEventListener("click", (e) => this.openMore(e));
 
@@ -126,6 +126,7 @@ export class DashboardView extends ItemView {
   private openMore(e: MouseEvent): void {
     const menu = new Menu();
     menu.addItem((i) => i.setTitle("打开日记文件").setIcon("file-text").onClick(() => void this.plugin.openJournal(this.activeDate())));
+    menu.addItem((i) => i.setTitle("导出全部记录 CSV").setIcon("download").onClick(() => void this.plugin.exportCsv()));
     menu.addItem((i) => i.setTitle("快捷键").setIcon("keyboard").onClick(() => new ShortcutsModal(this.app).open()));
     menu.addItem((i) => i.setTitle("设置").setIcon("settings").onClick(() => this.plugin.openSettings()));
     menu.showAtMouseEvent(e);
@@ -161,7 +162,7 @@ export class DashboardView extends ItemView {
       return `回顾 · ${a.slice(0, 4)} 年`;
     }
     const a = this.tasksState.weekAnchor;
-    return `任务 · ${shortDate(shiftDate(a, -3))} – ${shortDate(shiftDate(a, 3))}`;
+    return `计划 · ${shortDate(shiftDate(a, -3))} – ${shortDate(shiftDate(a, 3))}`;
   }
 
   activeDate(): string {

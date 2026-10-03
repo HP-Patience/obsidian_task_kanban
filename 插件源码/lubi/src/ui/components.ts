@@ -4,7 +4,7 @@ import { Notice, setIcon } from "obsidian";
 import { CategoryDef } from "../settings";
 
 /** 每日页时间轴与任务页周日程共用的纵向刻度：同一时刻在两页的高度一致 */
-export const HOUR_PX = 48;
+export const HOUR_PX = 56;
 
 export function el<K extends keyof HTMLElementTagNameMap>(
   parent: HTMLElement,

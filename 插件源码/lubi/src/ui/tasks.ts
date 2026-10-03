@@ -7,6 +7,7 @@ import { daysBetween, eachDate, fmtDuration, hmToMin, minToHM, nowHM, shiftDate,
 import { categoryOf } from "../settings";
 import { button, catDot, el, emptyState, HOUR_PX, icon, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
 import { TaskModal, RecordModal } from "./modals";
+import { AiTaskModal } from "./aiTask";
 import { dayTasks, groupedRows, OpenRecord, renderDayTaskList, taskRow } from "./taskList";
 import { startDrag } from "./drag";
 import { Rec } from "../core/records";
@@ -84,6 +85,7 @@ function renderLists(plugin: LubiPlugin, host: HTMLElement, date: string, rerend
   const done = today.filter((t) => plugin.tasks.isDoneOn(t, date)).length;
   head.createSpan({ cls: "lubi-muted", text: today.length ? `${done}/${today.length}` : "" });
   iconButton(head, "plus", "新建任务", () => create({ date }), "lubi-push-right");
+  button(head, "✦ AI 创建", () => new AiTaskModal(plugin.app, plugin, date, rerender).open(), { cls: "lubi-btn-ghost lubi-btn-sm" });
 
   const list = card.createDiv({ cls: "lubi-task-list" });
   if (!today.length) list.createDiv({ cls: "lubi-muted lubi-pad", text: "这天没有安排。可从下方「未安排」选择日期，或添加待办。" });

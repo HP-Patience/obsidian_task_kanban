@@ -1,10 +1,9 @@
 {
   "id": "lubi",
   "name": "Lubi 柳比歇夫记录",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "minAppVersion": "1.4.0",
-  "description": "柳比歇夫时间统计法：记一条、看一眼、排一下。记录 / 回顾 / 任务 三页搞定。",
+  "description": "柳比歇夫时间记录：每日记录、预计与实际对比、任务排期及周月年回顾。",
   "author": "wjx",
   "isDesktopOnly": false
 }
-

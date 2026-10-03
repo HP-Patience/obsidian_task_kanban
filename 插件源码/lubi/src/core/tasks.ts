@@ -1,7 +1,7 @@
 // 任务模型 v14：一张扁平表，parent 表示层级。没有"规划/管理"双来源，没有"放行"。
 // 安排到某天 = 填 date；重复任务用 repeat 规则投影到每天，完成情况记在 doneDates。
 
-import { App, TFile, normalizePath } from "obsidian";
+import { App, Notice, TFile, normalizePath } from "obsidian";
 import { LubiSettings } from "../settings";
 import { parseDate, shiftDate, stamp, uid, weekStart } from "./time";
 
@@ -24,6 +24,8 @@ export interface Task {
   repeat: { kind: RepeatKind; days: number[] };
   /** 重复任务：已完成的日期 */
   doneDates: string[];
+  /** 重复任务：主动跳过的日期（只影响当天，不改变重复规则） */
+  skipDates: string[];
   /** 项目跨度（可选，用于甘特） */
   startDate: string;
   endDate: string;
@@ -65,6 +67,7 @@ export function blankTask(partial: Partial<Task> = {}): Task {
     estimate: 0,
     repeat: { kind: "none", days: [] },
     doneDates: [],
+    skipDates: [],
     startDate: "",
     endDate: "",
     notes: "",
@@ -79,9 +82,13 @@ export function blankTask(partial: Partial<Task> = {}): Task {
 export class Tasks {
   private store: TaskStore = { version: 14, tasks: [] };
   private loaded = false;
+  private loadBlocked = false;
   private writing: Promise<void> = Promise.resolve();
   /** 迁移发生时记录备份路径，供 UI 提示 */
   lastMigrationBackup: string | null = null;
+  lastLoadError: string | null = null;
+  /** 最近一次由本实例写入任务文件的时间，用于忽略自己的 Vault 事件。 */
+  lastWriteAt = 0;
   onChange: (() => void) | null = null;
 
   constructor(private app: App, private settings: () => LubiSettings) {}
@@ -107,8 +114,18 @@ export class Tasks {
     try {
       data = JSON.parse(raw);
     } catch {
-      data = null;
+      const backup = normalizePath(`${this.settings().backupFolder}/损坏-任务数据-${stamp()}.json`);
+      await ensureFolder(this.app, backup.slice(0, backup.lastIndexOf("/")));
+      await this.app.vault.adapter.write(backup, raw);
+      this.lastLoadError = `任务数据 JSON 无法解析，原文件已备份到 ${backup}`;
+      this.loadBlocked = true;
+      this.store = { version: 14, tasks: [] };
+      this.loaded = true;
+      new Notice(`${this.lastLoadError}。已进入只读保护，请修复后再继续操作。`, 10000);
+      return;
     }
+    this.loadBlocked = false;
+    this.lastLoadError = null;
     const obj = (data || {}) as { version?: number; tasks?: unknown[] };
     if (obj.version === 14 && Array.isArray(obj.tasks)) {
       this.store = { version: 14, tasks: obj.tasks.map((t) => normalize(t as Partial<Task>)) };
@@ -127,15 +144,18 @@ export class Tasks {
   }
 
   private async persist(): Promise<void> {
+    if (this.loadBlocked) throw new Error(this.lastLoadError || "任务数据无法写入：数据加载失败。");
     const text = JSON.stringify(this.store, null, 2);
-    this.writing = this.writing.then(async () => {
+    const next = this.writing.catch(() => undefined).then(async () => {
       const p = this.filePath();
       await ensureFolder(this.app, p.slice(0, p.lastIndexOf("/")));
       const f = this.app.vault.getAbstractFileByPath(p);
+      this.lastWriteAt = Date.now();
       if (f instanceof TFile) await this.app.vault.modify(f, text);
       else await this.app.vault.create(p, text);
     });
-    await this.writing;
+    this.writing = next;
+    await next;
   }
 
   private async commit(): Promise<void> {
@@ -266,6 +286,17 @@ export class Tasks {
     await this.commit();
   }
 
+  /** 重复任务的单日例外：跳过 / 恢复当天，不改变重复规则。 */
+  async toggleSkip(id: string, date: string): Promise<boolean> {
+    const t = this.byId(id);
+    if (!t || t.repeat.kind === "none") return false;
+    const skipped = t.skipDates.includes(date);
+    t.skipDates = skipped ? t.skipDates.filter((d) => d !== date) : [...t.skipDates, date];
+    t.updated = new Date().toISOString();
+    await this.commit();
+    return !skipped;
+  }
+
   private autoCompleteParent(pid: string): void {
     const p = this.byId(pid);
     if (!p) return;
@@ -284,6 +315,22 @@ export class Tasks {
     t.start = start;
     t.updated = new Date().toISOString();
     await this.commit();
+  }
+
+  /** 取消某天的计划：一次性任务清除排期，重复任务只跳过当天。 */
+  async cancelPlanOn(id: string, date: string): Promise<"cleared" | "skipped" | null> {
+    const t = this.byId(id);
+    if (!t) return null;
+    if (t.repeat.kind !== "none") {
+      await this.toggleSkip(id, date);
+      return "skipped";
+    }
+    if (t.date !== date) return null;
+    t.date = "";
+    t.start = "";
+    t.updated = new Date().toISOString();
+    await this.commit();
+    return "cleared";
   }
 
   async reorder(ids: string[]): Promise<void> {
@@ -308,6 +355,7 @@ function byTime(a: Task, b: Task): number {
 }
 
 export function occursOn(t: Task, date: string): boolean {
+  if (t.skipDates?.includes(date)) return false;
   if (t.repeat.kind === "none") return t.date === date;
   if (t.startDate && date < t.startDate) return false;
   if (t.endDate && date > t.endDate) return false;
@@ -341,6 +389,7 @@ function normalize(t: Partial<Task>): Task {
     ...t,
     repeat: { kind: t.repeat?.kind || "none", days: Array.isArray(t.repeat?.days) ? t.repeat!.days : [] },
     doneDates: Array.isArray(t.doneDates) ? t.doneDates : [],
+    skipDates: Array.isArray(t.skipDates) ? t.skipDates : [],
     order: typeof t.order === "number" ? t.order : b.order,
     estimate: typeof t.estimate === "number" ? t.estimate : 0,
     doneLogs: cleanDoneLogs(t.doneLogs),

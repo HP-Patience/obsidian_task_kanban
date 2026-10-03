@@ -1,0 +1,15 @@
+# Personal Vault data, assistant history, and runtime settings.
+/日记/
+/未命名*.md
+/备份/
+/.claudian/
+/.snapshots/
+/.obsidian/workspace*.json
+/.obsidian/plugins/*/data.json
+/.obsidian/plugins/realclaudian/
+/Lubi-导出-*.csv
+.env
+.env.*
+!.env.example
+*.local.json
+# Source build outputs are also ignored in 插件源码/lubi/.gitignore.

@@ -1,6 +1,6 @@
 import { App, Modal, Notice } from "obsidian";
 import type LubiPlugin from "../main";
-import { PENDING_KEY, Rec } from "../core/records";
+import { confirmed, formatEstimateComparison, normalizeEstimatedMinutes, PENDING_KEY, Rec } from "../core/records";
 import { Task, blankTask, RepeatKind } from "../core/tasks";
 import { hmToMin, minToHM, nowHM, todayStr, fmtDuration, shortDate, weekdayZh } from "../core/time";
 import { categoryOf } from "../settings";
@@ -154,22 +154,22 @@ export class ShortcutsModal extends Modal {
 
 // ---------------- 新建：记录 / 任务 共用一个入口 ----------------
 
-/** done = 记录（已经做了，写进日记）；todo = 任务（还没做，写进任务清单）；money 仅作切换时的初始模式 */
+/** done = 记录时间；money = 记录支出；todo = 规划任务 */
 export type NewKind = "done" | "money" | "todo";
 
 /**
- * 新建窗口顶部的一级切换：「记录 | 任务」只区分「做过 / 要做」。
- * 支出是记录的一种，放在记录表单里的「时间 | 支出」二级切换，不和状态混在一排。
+ * 新建窗口顶部的单一模式切换：记录时间 / 记录支出 / 规划任务。
  */
-function kindSwitch(host: HTMLElement, current: "done" | "todo", onPick: (kind: "done" | "todo") => void): void {
-  const items: { id: "done" | "todo"; label: string; icon: string }[] = [
-    { id: "done", label: "记录", icon: "check" },
-    { id: "todo", label: "任务", icon: "list-todo" },
+function kindSwitch(host: HTMLElement, current: NewKind, onPick: (kind: NewKind) => void): void {
+  const items: { id: NewKind; label: string; icon: string }[] = [
+    { id: "done", label: "记录时间", icon: "clock" },
+    { id: "money", label: "记录支出", icon: "wallet" },
+    { id: "todo", label: "规划任务", icon: "list-todo" },
   ];
-  const seg = segmented<"done" | "todo">(host, items, current, (kind) => { if (kind !== current) onPick(kind); });
+  const seg = segmented<NewKind>(host, items, current, (kind) => { if (kind !== current) onPick(kind); });
   seg.addClass("lubi-mode-seg", "lubi-kind-seg");
   seg.setAttribute("aria-label", "新建类型");
-  seg.querySelectorAll<HTMLElement>(".lubi-seg-item").forEach((b, i) => tip(b, i === 0 ? "记录：已经做了的事 / 支出，写进当天日记" : "任务：还没做的事，写进任务清单"));
+  seg.querySelectorAll<HTMLElement>(".lubi-seg-item").forEach((b, i) => tip(b, ["记录时间：已经做了的事，写进当天日记", "记录支出：记一笔花费，写进当天日记", "规划任务：还没做的事，写进任务清单"][i]));
 }
 
 // ---------------- 记录（已完成 / 支出） ----------------
@@ -204,6 +204,7 @@ export class RecordModal extends Modal {
           date: opts.date,
           start: opts.defaults?.start || (opts.date === todayStr() ? nowHM() : "09:00"),
           minutes: opts.defaults?.minutes ?? 30,
+          estimatedMinutes: normalizeEstimatedMinutes(opts.defaults?.estimatedMinutes ?? (opts.defaults?.task ? plugin.tasks.byId(opts.defaults.task)?.estimate : undefined)),
           category: opts.defaults?.category || firstCat,
           title: opts.defaults?.title || "",
           task: opts.defaults?.task,
@@ -235,29 +236,24 @@ export class RecordModal extends Modal {
     if (this.editing && this.opts.rec) ctx.push(this.opts.rec.minutes > 0 ? `${this.opts.rec.start}–${minToHM(hmToMin(this.opts.rec.start) + this.opts.rec.minutes)}` : this.opts.rec.start);
     titleEl.createSpan({ cls: "lubi-modal-ctx", text: ctx.join(" · ") });
 
-    // 模式：时间 | 支出（财务不再混在时间分类里）
+    // 单一模式：记录时间 / 记录支出 / 规划任务
     const timeCats = s.categories.filter((c) => c.kind === "time");
     const moneyCats = s.categories.filter((c) => c.kind === "money");
-    // 一级「记录 | 任务」与二级「时间 | 支出」同一行：左右分开，不多占一行
+    // 三种新建模式只保留一个互斥选择
     const modeRow = contentEl.createDiv({ cls: "lubi-mode-row" });
-    if (!this.editing) kindSwitch(modeRow, "done", (kind) => { if (kind === "todo") this.switchToTask(); });
-    if (timeCats.length && moneyCats.length) {
-      segmented<"time" | "money">(modeRow, [
-        { id: "time", label: "时间", icon: "clock" },
-        { id: "money", label: "支出", icon: "wallet" },
-      ], isMoney ? "money" : "time", (mode) => {
-        if (mode === "money") {
-          this.lastTimeCat = this.rec.category;
-          this.rec.category = moneyCats[0].name;
-          if (this.rec.minutes === 30 && !this.editing) this.rec.minutes = 0;
-        } else {
-          this.rec.category = this.lastTimeCat && timeCats.some((c) => c.name === this.lastTimeCat) ? this.lastTimeCat : timeCats[0].name;
-          if (this.rec.minutes <= 0) this.rec.minutes = 30;
-        }
-        this.render(false);
-        this.contentEl.querySelector<HTMLElement>('.lubi-money-seg .lubi-seg-item[aria-pressed="true"]')?.focus();
-      }).addClass("lubi-mode-seg", "lubi-money-seg");
-    }
+    if (!this.editing) kindSwitch(modeRow, isMoney ? "money" : "done", (kind) => {
+      if (kind === "todo") { this.switchToTask(); return; }
+      if (kind === "money") {
+        this.lastTimeCat = this.rec.category;
+        this.rec.category = moneyCats[0]?.name || this.rec.category;
+        if (this.rec.minutes === 30) this.rec.minutes = 0;
+      } else {
+        this.rec.category = this.lastTimeCat && timeCats.some((c) => c.name === this.lastTimeCat) ? this.lastTimeCat : (timeCats[0]?.name || this.rec.category);
+        if (this.rec.minutes <= 0) this.rec.minutes = 30;
+      }
+      this.render(false);
+      this.contentEl.querySelector<HTMLElement>('.lubi-kind-seg .lubi-seg-item[aria-pressed="true"]')?.focus();
+    });
 
     // 分类：单行胶囊，Alt + 数字切换
     const pool = isMoney ? moneyCats : timeCats;
@@ -341,6 +337,14 @@ export class RecordModal extends Modal {
       associate(endLabel, endInput);
       let unit: "min" | "h" = this.rec.minutes >= 60 && this.rec.minutes % 30 === 0 ? "h" : "min";
 
+      const estimate = normalizeEstimatedMinutes(this.rec.estimatedMinutes);
+      const summary = estimate !== undefined || this.rec.task ? contentEl.createDiv({ cls: "lubi-estimate-summary" }) : null;
+      const values = estimate !== undefined ? summary!.createDiv({ cls: "lubi-estimate-values", attr: { "aria-live": "polite" } }) : null;
+      if (values) tip(values, "预计是任务当次的计划快照，实际与偏差针对本条记录；多次记录时不要重复累加任务预计。");
+      if (summary) summary.createDiv({ cls: "lubi-estimate-note", text: estimate === undefined
+        ? (this.editing ? "这条历史记录没有预计用时快照，不用当前任务的预计值补算。" : "创建这条记录时，关联任务未填写预计用时，只记录实际时长。")
+        : (this.editing ? "预计用时是当时的快照，不随任务调整改变；实际为本条记录的用时，保存前请核对。" : "预计用时会随记录保存为快照。初始时长来自计划，请核对实际用时。") });
+      const syncEstimate = () => values?.setText(formatEstimateComparison(confirmed(this.rec)));
       const quick = contentEl.createDiv({ cls: "lubi-quick" });
       const chips: { m: number; el: HTMLButtonElement }[] = [];
       syncTime = () => {
@@ -349,6 +353,7 @@ export class RecordModal extends Modal {
         durInput.value = unit === "h" ? String(Math.round((this.rec.minutes / 60) * 100) / 100) : String(this.rec.minutes);
         durInput.step = unit === "h" ? "0.25" : "5";
         unitBtn.setText(unit);
+        syncEstimate();
         for (const c of chips) c.el.setAttribute("aria-pressed", String(c.m === this.rec.minutes));
       };
       startInput.addEventListener("change", () => {
@@ -359,6 +364,7 @@ export class RecordModal extends Modal {
         clearFieldError(durInput);
         const v = Number(durInput.value) || 0;
         this.rec.minutes = Math.max(0, Math.round(unit === "h" ? v * 60 : v));
+        syncEstimate();
         endInput.value = minToHM(hmToMin(this.rec.start) + this.rec.minutes);
         for (const c of chips) c.el.setAttribute("aria-pressed", String(c.m === this.rec.minutes));
       });
@@ -596,7 +602,7 @@ export class TaskModal extends Modal {
     if (parent) titleEl.createSpan({ cls: "lubi-modal-ctx", text: this.plugin.tasks.pathOf(parent).map((p) => p.title).join(" / ") });
     titleEl.createSpan({ cls: "lubi-dirty", text: "● 未保存", attr: { "aria-live": "polite" } });
     this.syncDirty();
-    if (!this.editing && !parent) kindSwitch(contentEl, "todo", (kind) => { if (kind === "done") this.switchToRecord("done"); });
+    if (!this.editing && !parent) kindSwitch(contentEl, "todo", (kind) => { if (kind === "done" || kind === "money") this.switchToRecord(kind); });
 
     // 分类
     const cats = contentEl.createDiv({ cls: "lubi-cat-picker" });

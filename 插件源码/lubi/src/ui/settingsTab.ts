@@ -1,8 +1,9 @@
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, DropdownComponent, Notice, PluginSettingTab, requestUrl, Setting, TextComponent } from "obsidian";
 import type LubiPlugin from "../main";
 import { CategoryDef, DEFAULT_CATEGORIES } from "../settings";
 import { accentConflicts, parseColor, resolveDefault, RGB } from "../core/color";
 import { ConfirmModal } from "./modals";
+import { curlJson } from "../core/curl";
 
 const COLORS = [
   ["蓝", "var(--color-blue)"],
@@ -49,6 +50,18 @@ export class LubiSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("勾掉任务时自动记一条").setDesc("完成任务后直接在时间轴生成记录（按计划开始时间；没有则从此刻往前推预计时长），可撤销，可拖动调整").addToggle((t) => t.setValue(s.promptLogOnComplete).onChange((v) => { s.promptLogOnComplete = v; save(); }));
     new Setting(containerEl).setName("每日可用小时").setDesc("任务页周日程表头的负载条：计划时长 ÷ 可用小时，≥90% 变橙、超过变红").addText((t) => t.setPlaceholder("8").setValue(String(s.dailyCapacityHours ?? 8)).onChange((v) => { s.dailyCapacityHours = clamp(Number(v), 1, 24, 8); save(); }));
 
+    new Setting(containerEl).setName("AI 任务创建").setHeading();
+    containerEl.createEl("p", { cls: "lubi-muted", text: "AI 只解析当前输入，确认后才会创建任务。支持 Ollama 及其他 OpenAI 兼容接口。" });
+    new Setting(containerEl).setName("AI 接口地址").setDesc("例如 Ollama：http://127.0.0.1:11434/v1/chat/completions").addText((t) => t.setValue(s.aiEndpoint).onChange((v) => { s.aiEndpoint = v.trim(); save(); }));
+    let modelDropdown: DropdownComponent | undefined;
+    let modelText: TextComponent | undefined;
+    const modelSetting = new Setting(containerEl).setName("AI 模型").setDesc("可手动填写，也可以从接口获取模型列表");
+    modelSetting.addText((t) => { modelText = t; return t.setValue(s.aiModel).setPlaceholder("qwen2.5:7b").onChange((v) => { s.aiModel = v.trim(); if (s.aiModel && modelDropdown?.selectEl.querySelector(`option[value="${CSS.escape(s.aiModel)}"]`)) modelDropdown.setValue(s.aiModel); save(); }); });
+    modelSetting.addDropdown((d) => { modelDropdown = d; d.addOption(s.aiModel || "", s.aiModel || "手动输入的模型").setValue(s.aiModel || "").onChange((v) => { s.aiModel = v; modelText?.setValue(v); save(); }); return d; });
+    modelSetting.addButton((b) => b.setButtonText("获取模型列表").onClick(() => void loadAiModels(s, modelDropdown, modelText, save)));
+    modelSetting.addButton((b) => b.setButtonText("测试连接").onClick(() => void testAiConnection(s)));
+    new Setting(containerEl).setName("AI API Key").setDesc("本地 Ollama 可留空；云端接口按服务商要求填写").addText((t) => { t.inputEl.type = "password"; return t.setValue(s.aiApiKey).onChange((v) => { s.aiApiKey = v.trim(); save(); }); });
+
     // 分类
     new Setting(containerEl).setName("分类").setHeading();
     containerEl.createEl("p", { cls: "lubi-muted", text: "「时间」类记时长，「金钱」类记金额。图标名来自 lucide.dev。勾选「背景」的分类（如睡眠）在时间轴与图表中以斜纹降权显示。" });
@@ -94,6 +107,64 @@ export class LubiSettingTab extends PluginSettingTab {
         new ConfirmModal(this.app, "迁移旧数据？", "会先备份，再改写日记文件与任务数据。", () => void this.plugin.runMigration(true), "开始迁移", false).open();
       }));
     new Setting(containerEl).setName("重新显示上手引导").addButton((b) => b.setButtonText("显示").onClick(() => { s.onboardingDone = false; save(); new Notice("下次打开每日页会显示引导"); }));
+  }
+}
+
+function modelsEndpoint(endpoint: string): string {
+  const value = endpoint.trim().replace(/\/+$/, "");
+  if (/\/chat\/completions$/i.test(value)) return value.replace(/\/chat\/completions$/i, "/models");
+  if (/\/generate$|\/api\/chat$/i.test(value)) return value.replace(/\/(?:generate|api\/chat)$/i, "/api/tags");
+  return `${value}/models`;
+}
+
+async function fetchAiModels(settings: { aiEndpoint: string; aiApiKey: string }): Promise<string[]> {
+  let response: { status: number; json: unknown };
+  try {
+    response = await curlJson(modelsEndpoint(settings.aiEndpoint), { maxTime: 15, headers: { Accept: "application/json", ...(settings.aiApiKey ? { Authorization: `Bearer ${settings.aiApiKey}` } : {}) } });
+  } catch {
+    const native = await requestUrl({ url: modelsEndpoint(settings.aiEndpoint), headers: { Accept: "application/json", ...(settings.aiApiKey ? { Authorization: `Bearer ${settings.aiApiKey}` } : {}) }, throw: false });
+    response = { status: native.status, json: native.json };
+  }
+  if (response.status < 200 || response.status >= 300) throw new Error(`请求失败（${response.status}）`);
+  const data = response.json as { data?: { id?: string }[]; models?: { name?: string; model?: string }[] };
+  const ids = data.data?.map((x) => x.id).filter((x): x is string => !!x) || data.models?.map((x) => x.name || x.model).filter((x): x is string => !!x) || [];
+  return [...new Set(ids)];
+}
+
+async function loadAiModels(settings: { aiEndpoint: string; aiApiKey: string; aiModel: string }, dropdown: DropdownComponent | undefined, text: TextComponent | undefined, save: () => void): Promise<void> {
+  try {
+    const models = await fetchAiModels(settings);
+    if (!models.length) throw new Error("接口没有返回模型");
+    dropdown?.selectEl.empty();
+    for (const model of models) dropdown?.addOption(model, model);
+    dropdown?.setValue(settings.aiModel && models.includes(settings.aiModel) ? settings.aiModel : models[0]);
+    settings.aiModel = dropdown?.getValue() || models[0];
+    text?.setValue(settings.aiModel);
+    save();
+    new Notice(`已获取 ${models.length} 个模型，请确认当前模型：${settings.aiModel}`);
+  } catch (e) { new Notice(`获取模型列表失败：${(e as Error).message}`, 6000); }
+}
+
+async function testAiConnection(settings: { aiEndpoint: string; aiApiKey: string; aiModel: string }): Promise<void> {
+  try {
+    const models = await fetchAiModels(settings);
+    new Notice(`AI 连接成功${models.length ? `，可用模型 ${models.length} 个` : ""}`);
+  } catch (e) {
+    // 一些 OpenAI 兼容网关禁用了 GET /models，但聊天接口本身可用；用当前模型做一次极短请求兜底测试。
+    try {
+      const endpoint = settings.aiEndpoint.trim().replace(/\/+$/, "").replace(/\/chat\/completions$/i, "") + "/chat/completions";
+      let response: { status: number };
+      try {
+        response = await curlJson(endpoint, { maxTime: 15, method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", ...(settings.aiApiKey ? { Authorization: `Bearer ${settings.aiApiKey}` } : {}) }, body: JSON.stringify({ model: settings.aiModel, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }) });
+      } catch {
+        const native = await requestUrl({ url: endpoint, method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", ...(settings.aiApiKey ? { Authorization: `Bearer ${settings.aiApiKey}` } : {}) }, body: JSON.stringify({ model: settings.aiModel, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }), throw: false });
+        response = { status: native.status };
+      }
+      if (response.status < 200 || response.status >= 300) throw new Error(`聊天接口请求失败（${response.status}）`);
+      new Notice("AI 连接成功；该接口不提供模型列表，请手动填写模型名称", 6000);
+    } catch (fallbackError) {
+      new Notice(`AI 连接失败：模型接口 ${(e as Error).message}；聊天接口 ${(fallbackError as Error).message}`, 8000);
+    }
   }
 }
 
