@@ -630,6 +630,67 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
 }
 
 
+// ---------- 每日页计划：拖动、双边调整、撤销 ----------
+{
+  const D = "2026-08-17", ID = "daily-plan-drag";
+  const { blankTask } = await import("./core.mjs");
+  const settle = async () => { for (let i = 0; i < 8; i++) await tick(); };
+  const planBlock = () => [...root.querySelectorAll(".lubi-plan")].find(el => el.querySelector(".lubi-plan-title")?.textContent === "计划拖动回归");
+  const journalBefore = app.vault.files.get(`日记/${D}.md`);
+  await plugin.tasks.upsert(blankTask({ id: ID, title: "计划拖动回归", category: "学习", date: D, start: "09:00", estimate: 60 }));
+  view.show("today", D); await settle();
+  let block = planBlock();
+  check(!!block?.querySelector(".lubi-block-handle.is-top") && !!block?.querySelector(".lubi-block-handle.is-bottom"), "plan drag: both resize handles are available");
+  const modalCount = O.openModals.length;
+  await drag(block, 100, 100 + 60 * PXM);
+  block.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 })); await tick();
+  check(plugin.tasks.byId(ID).start === "10:00" && plugin.tasks.byId(ID).estimate === 60, "plan drag: moving changes start time but not duration");
+  check(JSON.parse(app.vault.files.get("任务/任务数据.json")).tasks.find(t => t.id === ID).start === "10:00", "plan drag: schedule change is persisted");
+  check(O.openModals.length === modalCount, "plan drag: releasing a moved plan does not open an actual-record form");
+  for (const m of O.openModals.slice(modalCount)) m.close();
+  block = planBlock();
+  const bottom = block?.querySelector(".lubi-block-handle.is-bottom");
+  if (bottom) {
+    await drag(bottom, 100, 100 + 30 * PXM);
+    check(plugin.tasks.byId(ID).start === "10:00" && plugin.tasks.byId(ID).estimate === 90, "plan drag: bottom edge changes estimated duration");
+    await drag(planBlock().querySelector(".lubi-block-handle.is-top"), 100, 100 + 15 * PXM);
+    check(plugin.tasks.byId(ID).start === "10:15" && plugin.tasks.byId(ID).estimate === 75, "plan drag: top edge changes start and keeps the end fixed");
+    await plugin.tasks.upsert({ ...plugin.tasks.byId(ID), notes: "之后补充的备注" });
+    [...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); await settle();
+    check(plugin.tasks.byId(ID).start === "10:00" && plugin.tasks.byId(ID).estimate === 90 && plugin.tasks.byId(ID).notes === "之后补充的备注", "plan drag: undo restores only the changed schedule fields");
+    const snapshot = JSON.stringify(plugin.tasks.byId(ID));
+    await drag(planBlock(), 100, 100 + 60 * PXM, 0, 0, { cancel: true });
+    check(JSON.stringify(plugin.tasks.byId(ID)) === snapshot, "plan drag: Escape cancels without saving");
+    await drag(planBlock(), 100, 100 - 20 * 60 * PXM);
+    check(plugin.tasks.byId(ID).start === "00:00", "plan drag: moving is clamped at midnight");
+    await drag(planBlock(), 100, 100 + 25 * 60 * PXM);
+    check(plugin.tasks.byId(ID).start === "22:30" && plugin.tasks.byId(ID).estimate === 90, "plan drag: moving cannot extend past 24:00");
+    await drag(planBlock().querySelector(".lubi-block-handle.is-bottom"), 100, 100 + 60 * PXM);
+    check(plugin.tasks.byId(ID).estimate === 90, "plan drag: resizing cannot extend past 24:00");
+    await drag(planBlock().querySelector(".lubi-block-handle.is-bottom"), 100, 100 - 5 * 60 * PXM);
+    check(plugin.tasks.byId(ID).estimate === 5, "plan drag: resizing preserves the minimum five-minute duration");
+    await plugin.tasks.upsert({ ...plugin.tasks.byId(ID), date: D, start: "09:00", estimate: 60, startDate: D, repeat: { kind: "daily", days: [] }, doneDates: [], skipDates: [] });
+    view.show("today", D); await settle();
+    await drag(planBlock(), 100, 100 + 7 * PXM, 0, 0, { shiftKey: true });
+    check(plugin.tasks.byId(ID).start === "09:07" && plugin.tasks.byId(ID).repeat.kind === "daily" && plugin.tasks.byId(ID).date === D && !plugin.tasks.byId(ID).doneDates.length, "plan drag: Shift gives minute precision and preserves repeat rules / completion state");
+    await plugin.tasks.upsert({ ...plugin.tasks.byId(ID), repeat: { kind: "none", days: [] } });
+    view.show("today", D); await settle();
+    const beforeHandleClick = O.openModals.length;
+    planBlock().querySelector(".lubi-block-handle.is-top").click();
+    check(O.openModals.length === beforeHandleClick, "plan drag: clicking a resize handle does not create an actual record");
+  }
+  check(plugin.tasks.byId(ID).status === "todo" && app.vault.files.get(`日记/${D}.md`) === journalBefore, "plan drag: editing a plan neither completes it nor writes actual records");
+  const normalClick = planBlock();
+  pe(normalClick, "pointerdown", 100); pe(window, "pointerup", 100);
+  normalClick.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 })); await tick();
+  check(O.openModals.at(-1)?.constructor.name === "RecordModal" && O.openModals.at(-1).rec.start === plugin.tasks.byId(ID).start, "plan drag: a normal click still pre-fills the latest plan");
+  O.openModals.at(-1)?.close();
+  const cancelButton = planBlock()?.querySelector(".lubi-plan-cancel");
+  pe(cancelButton, "pointerdown", 100); pe(window, "pointerup", 100); cancelButton.click(); await settle();
+  check(plugin.tasks.byId(ID).date === "" && plugin.tasks.byId(ID).status === "todo" && app.vault.files.get(`日记/${D}.md`) === journalBefore, "plan drag: cancel-plan control remains independent of dragging");
+  await plugin.tasks.remove(ID);
+  for (const n of [...document.body.children]) if (n.querySelector?.(".lubi-notice-btn")) n.remove();
+}
 // ---------- v1.5：计划层 + 待确认记录 ----------
 {
   const D = "2026-09-26", ID = "plan-1";

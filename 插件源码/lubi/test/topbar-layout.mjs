@@ -116,6 +116,18 @@ if (!browser) {
         out.paddingTop = parseFloat(getComputedStyle(sc).paddingTop) || 0;
         const planTitle = timeline.querySelector(".lubi-plan-lane-title");
         const qaPlan = [...timeline.querySelectorAll(".lubi-plan")].find(plan => plan.querySelector(".lubi-plan-title")?.textContent === "午夜计划（布局回归）");
+        out.planHandleErrors = [];
+        for (const plan of timeline.querySelectorAll('.lubi-plan')) {
+          const top = plan.querySelector('.lubi-block-handle.is-top'), bottom = plan.querySelector('.lubi-block-handle.is-bottom');
+          if (!top || !bottom) { out.planHandleErrors.push('missing handle'); continue; }
+          const center = el => {
+            const box = r(el), cs = getComputedStyle(el, '::after');
+            return box.left + parseFloat(cs.left) + parseFloat(cs.marginLeft) + parseFloat(cs.width)/2;
+          };
+          if (Math.abs(center(top) - center(bottom)) > 0.5 || Math.abs(center(top) - (r(plan).left+r(plan).right)/2) > 0.5) out.planHandleErrors.push('top/bottom handles must share card center');
+          const cancel = plan.querySelector('.lubi-plan-cancel');
+          if (cancel && r(top).right > r(cancel).left + 0.5) out.planHandleErrors.push('top resize hit area covers cancel control');
+        }
         out.dayPlanTitleOffset = planTitle ? r(planTitle).top - grid.top : null;
         out.dayPlanBlockOffset = qaPlan ? r(qaPlan).top - grid.top : null;
         out.dayPlanTitleGap = planTitle && qaPlan ? r(qaPlan).top - r(planTitle).bottom : null;
@@ -176,6 +188,7 @@ if (!browser) {
           assert.deepEqual(g.lowContrast, [], `${theme} ${page} ${width}px: text contrast below 4.5:1: ${g.lowContrast.join("; ")}`);
           assert.deepEqual(g.weekEndClipped, [], `${theme} ${page} ${width}px: clipped weekly 24:00 boundary ${g.weekEndClipped.join(", ")}`);
           if (page === "today") {
+            assert.deepEqual(g.planHandleErrors, [], `${theme} ${width}px: plan resize handles are misaligned: ${g.planHandleErrors.join("; ")}`);
             assert(Math.abs(g.dayTopInset) <= 0.5 && g.paddingTop === 0, `${theme} ${width}px: move the 00:00 origin inside the grid, not the whole scroller ${JSON.stringify(g)}`);
             assert(g.dayStartGutterPx === 32 && Math.abs(g.midnightLineOffset - 32) <= 0.5 && Math.abs(g.midnightLabelOffset - 32) <= 0.5, `${theme} ${width}px: reserve the 24px plan-title row above 00:00 ${JSON.stringify(g)}`);
             assert(g.dayPlanTitleGap >= 0, `${theme} ${width}px: midnight plan card overlaps the sticky plan title ${JSON.stringify(g)}`);

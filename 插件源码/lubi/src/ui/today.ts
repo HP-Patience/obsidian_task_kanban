@@ -12,6 +12,7 @@ import { minuteAt, startDrag } from "./drag";
 import { RecordModal } from "./modals";
 import { addRecordAsDone, afterDone, completeFromRecord, dayTasks, deleteRecord, OpenRecord, syncLinkedTask } from "./taskList";
 import type { Task } from "../core/tasks";
+import { updateScheduleWithUndo } from "./tasks";
 
 const PX_PER_MIN = HOUR_PX / 60;
 // A dedicated header row keeps the plan-lane title above midnight tasks.
@@ -219,14 +220,66 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
       };
       cancel.addEventListener("click", cancelPlan);
       cancel.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") void cancelPlan(e); });
-      pb.createDiv({ cls: "lubi-plan-time", text: `${t.start}–${minToHM(s0 + mins)}` });
+      const planTime = pb.createDiv({ cls: "lubi-plan-time", text: `${t.start}–${minToHM(s0 + mins)}` });
+      const handleTop = pb.createDiv({ cls: "lubi-block-handle is-top" });
+      const handleBottom = pb.createDiv({ cls: "lubi-block-handle is-bottom" });
+      tip(handleTop, "拖动调整计划开始时间（保持结束时间）");
+      tip(handleBottom, "拖动调整计划结束时间");
       const late = date === todayStr() && s0 + mins < hmToMin(nowHM());
       pb.toggleClass("is-late", late);
-      tip(pb, `计划 ${t.start}–${minToHM(s0 + mins)} · ${t.title}${late ? "（已过计划时间）" : ""}。点击按实际时间记一条，保存后任务自动完成`);
-      pb.addEventListener("pointerdown", (e) => e.stopPropagation());
+      tip(pb, `计划 ${t.start}–${minToHM(s0 + mins)} · ${t.title}${late ? "（已过计划时间）" : ""}。拖动改时间，拉上下边缘改预计时长（5 分钟吸附，Shift 精确到分钟，Esc 取消）；点击记实际时间，保存后完成任务${t.repeat.kind !== "none" ? "。重复任务的计划时间调整会应用于后续重复项" : ""}`);
+      let suppressPointerClick = false;
+      const placePlan = (start: number, minutes: number) => {
+        const height = Math.max(Math.min(minutes, 1440 - start) * PX_PER_MIN, 20);
+        pb.style.top = `${DAY_START_GUTTER_PX + start * PX_PER_MIN}px`;
+        pb.style.height = `${height - 2}px`;
+        pb.toggleClass("is-compact", height < 34);
+        planTime.setText(`${minToHM(start)}–${minToHM(start + minutes)}`);
+      };
+      const bindPlanDrag = (target: HTMLElement, mode: "move" | "resize-start" | "resize-end") => {
+        target.addEventListener("pointerdown", (e) => {
+          e.stopPropagation();
+          if ((e.target as HTMLElement).closest(".lubi-plan-cancel")) return;
+          if (mode === "move" && (e.target as HTMLElement).closest(".lubi-block-handle")) return;
+          if (mode !== "move") e.preventDefault();
+          suppressPointerClick = false;
+          pb.focus({ preventScroll: true });
+          startDrag(e, {
+            mode, start: s0, minutes: mins, pxPerMin: PX_PER_MIN, min: 0, max: 1440, minMinutes: 5, snap: 5,
+            onStart: () => {
+              dragging = true;
+              suppressPointerClick = true;
+              pb.addClass("is-dragging", mode === "move" ? "is-moving" : "is-resizing");
+            },
+            onMove: (state) => {
+              placePlan(state.start, state.minutes);
+              hover.style.top = `${(mode === "resize-end" ? state.start + state.minutes : state.start) * PX_PER_MIN}px`;
+              hoverLabel.setText(`计划 ${minToHM(state.start)}–${minToHM(state.start + state.minutes)}`);
+              hover.addClass("is-on");
+            },
+            onEnd: (state) => {
+              dragging = false;
+              hover.removeClass("is-on");
+              pb.removeClass("is-dragging", "is-moving", "is-resizing");
+              if (!state) { placePlan(s0, mins); return; }
+              if (!state.moved) return;
+              const patch = mode === "move" ? { start: minToHM(state.start) } : mode === "resize-start" ? { start: minToHM(state.start), estimate: state.minutes } : { estimate: state.minutes };
+              void updateScheduleWithUndo(plugin, t.id, patch, `${t.title} 计划 → ${minToHM(state.start)}–${minToHM(state.start + state.minutes)}`, rerender);
+            },
+          });
+        });
+      };
+      bindPlanDrag(pb, "move");
+      bindPlanDrag(handleTop, "resize-start");
+      bindPlanDrag(handleBottom, "resize-end");
+      handleTop.addEventListener("click", stopAll);
+      handleBottom.addEventListener("click", stopAll);
+      pb.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") suppressPointerClick = false; });
       pb.addEventListener("click", (e) => {
         stopAll(e);
-        logPlan(t);
+        if ((e.target as HTMLElement).closest(".lubi-block-handle, .lubi-plan-cancel")) return;
+        if (suppressPointerClick && e.detail > 0) { suppressPointerClick = false; return; }
+        logPlan(plugin.tasks.byId(t.id) || t);
       });
     }
   }

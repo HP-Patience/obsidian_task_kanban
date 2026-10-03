@@ -1223,7 +1223,7 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-root button.lubi-plan:not(.clickable-icon) {
   position: absolute; left: 6px; right: 4px; width: auto; height: auto; min-height: 0; z-index: 2; pointer-events: auto;
   display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 0;
-  padding: 3px 8px; box-sizing: border-box; overflow: hidden; text-align: left; cursor: pointer;
+  padding: 3px 8px; box-sizing: border-box; overflow: hidden; text-align: left; cursor: grab; touch-action: none; user-select: none;
   border: 1.5px dashed color-mix(in srgb, var(--chip) 65%, transparent); border-radius: 6px; box-shadow: none;
   background: color-mix(in srgb, var(--chip) 6%, transparent); color: var(--text-normal);
   transition: background var(--lubi-dur) var(--lubi-ease), border-color var(--lubi-dur) var(--lubi-ease);
@@ -1232,6 +1232,13 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
   background: color-mix(in srgb, var(--chip) 16%, var(--background-primary)); border-style: solid; z-index: 4;
 }
 .lubi-root button.lubi-plan.is-late:not(.clickable-icon) { border-color: color-mix(in srgb, var(--lubi-warn) 70%, transparent); }
+.lubi-root button.lubi-plan.is-dragging:not(.clickable-icon) { z-index: 5; transition: none; border-style: solid; }
+.lubi-plan .lubi-block-handle { left: 4px; right: 4px; height: 6px; pointer-events: auto; }
+.lubi-plan .lubi-block-handle.is-top { right: 28px; }
+/* 上端避开取消按钮，但短线仍与下端共用卡片中线。 */
+.lubi-plan .lubi-block-handle.is-top::after { left: calc(50% + 12px); }
+.lubi-plan:hover .lubi-block-handle::after, .lubi-plan:focus-visible .lubi-block-handle::after { opacity: 0.6; }
+body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resizing * { cursor: ns-resize !important; }
 .lubi-plan-head { display: flex; align-items: center; gap: 4px; min-width: 0; line-height: 16px; }
 .lubi-plan-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--lubi-fs-sm); font-weight: 600; }
 .lubi-plan-cancel { flex: 0 0 auto; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--lubi-muted); font-size: 16px; line-height: 1; }
