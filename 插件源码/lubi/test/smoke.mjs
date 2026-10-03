@@ -168,7 +168,7 @@ view.show("today"); await tick();
   await toggle();
   view.show("today", D); await tick();
   const b2 = [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试");
-  b2.querySelector('.lubi-block-actions [aria-label="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
+  b2.querySelector('.lubi-block-actions [data-lubi-tip="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
   check(linked().length === 0 && !plugin.tasks.byId(ID), "sync: deleting the only record of a one-off task on the daily page deletes the task too");
   check(O.notices.at(-1)?.includes("也已删除") || document.body.textContent.includes("也已删除"), "sync: task deletion is announced");
   [...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); for (let i = 0; i < 4; i++) await tick();
@@ -176,14 +176,14 @@ view.show("today"); await tick();
   // 还有别的记录关联：任务保留，只取消当天完成
   await plugin.journal.add({ date: "2026-09-23", start: "07:00", minutes: 20, category: "学习", title: "同步测试", task: ID, extra: {} });
   view.show("today", D); await tick();
-  [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试").querySelector('.lubi-block-actions [aria-label="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
+  [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试").querySelector('.lubi-block-actions [data-lubi-tip="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
   check(linked().length === 0 && plugin.tasks.byId(ID) && !plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D), "sync: a task with other linked records is kept and unchecked");
   await plugin.journal.remove("2026-09-23", await plugin.journal.findLine("2026-09-23", { start: "07:00", minutes: 20, category: "学习", title: "同步测试" }));
   // 重复任务：保留任务，只取消当天完成
   await plugin.tasks.upsert({ ...plugin.tasks.byId(ID), repeat: { kind: "daily", days: [] }, status: "todo", doneDates: [D], doneLogs: undefined });
   await plugin.journal.add({ date: D, start: "06:40", minutes: 20, category: "学习", title: "同步测试", task: ID, extra: {} });
   view.show("today", D); await tick();
-  [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试").querySelector('.lubi-block-actions [aria-label="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
+  [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试").querySelector('.lubi-block-actions [data-lubi-tip="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
   check(linked().length === 0 && plugin.tasks.byId(ID) && !plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D), "sync: deleting a repeating task's record keeps the task, unchecks the day");
   if (plugin.tasks.byId(ID)) await plugin.tasks.remove(ID);
   // 清掉本段产生的撤销提示，避免后面的用例点到它们
@@ -216,7 +216,7 @@ view.show("today"); await tick();
   // 在每日页删除这条记录 → 任务一起删除，可撤销
   view.show("today", D); await tick();
   const b = [...root.querySelectorAll(".lubi-block")].find((x) => x.querySelector(".lubi-block-title")?.textContent === "补记午饭后散步");
-  b.querySelector('.lubi-block-actions [aria-label="删除"]').click(); await settle();
+  b.querySelector('.lubi-block-actions [data-lubi-tip="删除"]').click(); await settle();
   check(!plugin.tasks.byId(t.id) && !app.vault.files.get(`日记/${D}.md`).includes("补记午饭后散步"), "new: deleting the record also deletes its generated task");
   [...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); await settle();
   check(!!plugin.tasks.byId(t.id) && app.vault.files.get(`日记/${D}.md`).includes(`[任务:: ${t.id}]`), "new: undo restores both record and task");
@@ -426,9 +426,11 @@ check(root.querySelectorAll(".lubi-chart-legend-item").length >= 1, "chart legen
 // 9b. tooltip 不残留：悬停出现 → 重绘后消失 → 离开后消失
 { const barsEl = root.querySelector(".lubi-bars"); const col = root.querySelector(".lubi-bar-col");
   col.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, clientX: 10, clientY: 10 }));
+  await new Promise(resolve => setTimeout(resolve, 280));
   check(document.body.querySelectorAll(".lubi-tip").length === 1, "tooltip appears on hover");
   const col2 = root.querySelectorAll(".lubi-bar-col")[3];
   col2.dispatchEvent(new window.PointerEvent("pointermove", { bubbles: true, clientX: 20, clientY: 10 }));
+  await new Promise(resolve => setTimeout(resolve, 280));
   check(document.body.querySelectorAll(".lubi-tip").length === 1, "still exactly one tooltip after moving to another bar");
   view.show("review"); await tick(); await tick();
   check(document.body.querySelectorAll(".lubi-tip").length === 0, "tooltip removed on re-render");
@@ -447,7 +449,7 @@ check(root.querySelectorAll(".lubi-chart-legend-item").length >= 1, "chart legen
   check(view.tab === "review" && root.querySelector(".lubi-bars") !== null, "clicking 回顾 returns to review page"); }
 // 10. 周日程 pointer 拖动：跨列 + 改时间
 plugin.settings.scheduleStartHour = 0; view.tasksState.weekAnchor = "2026-09-24"; view.show("tasks", "2026-09-24"); await tick(); // 窗口固定为 9/21–9/27
-{ const cols = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => b.getAttribute("aria-label")); check(cols.length === 7 && cols[3].includes("2026-09-24"), `week window centred on anchor: ${cols[3]}`); }
+{ const cols = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => b.getAttribute("data-lubi-tip")); check(cols.length === 7 && cols[3].includes("2026-09-24"), `week window centred on anchor: ${cols[3]}`); }
 const wb = root.querySelector(".lubi-wblock");
 const wt = plugin.tasks.all.find((t) => t.title === wb.querySelector(".lubi-wblock-title").textContent);
 const beforeDate = plugin.tasks.forDate("2026-09-25").some((t) => t.id === wt.id) ? "2026-09-25" : null;
@@ -471,7 +473,7 @@ await drag(wb3.querySelector(".lubi-block-handle.is-top"), 300, 300 - 24);
 {
   view.show("tasks", "2026-09-24"); await tick();
   const cols = [...root.querySelectorAll(".lubi-week-col")];
-  const wkDays = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => b.getAttribute("aria-label").match(/\d{4}-\d{2}-\d{2}/)[0]);
+  const wkDays = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => b.getAttribute("data-lubi-tip").match(/\d{4}-\d{2}-\d{2}/)[0]);
   const ci = 2, col = cols[ci], sh = plugin.settings.scheduleStartHour, px = 56 / 60;
   const yAt = (hm) => { const [h, m] = hm.split(":").map(Number); return ((h - sh) * 60 + m) * px + 1; };
   const before = O.openModals.length;
@@ -508,18 +510,18 @@ await drag(wb3.querySelector(".lubi-block-handle.is-top"), 300, 300 - 24);
 // 12. 甘特：项目条整体右移 7 天 + 右端拉长 3 天
 view.tasksState.projectsOpen = true; view.show("tasks"); await tick();
 const proj = plugin.tasks.projects().find((p) => plugin.tasks.span(p));
-const bar = [...root.querySelectorAll(".lubi-gantt-bar")].find((x) => x.getAttribute("aria-label")?.startsWith(proj.title));
+const bar = [...root.querySelectorAll(".lubi-gantt-bar")].find((x) => x.getAttribute("data-lubi-tip")?.startsWith(proj.title));
 check(!!bar && bar.querySelector(".lubi-gantt-handle.is-left") && bar.querySelector(".lubi-gantt-handle.is-right"), "gantt bar has both handles");
 const span0 = plugin.tasks.span(proj);
 await drag(bar, 10, 10, 0, 7);
 const span1 = plugin.tasks.span(plugin.tasks.byId(proj.id));
 const dayDiff = (x, y) => Math.round((new Date(y) - new Date(x)) / 864e5);
 check(dayDiff(span0.from, span1.from) === 7 && dayDiff(span0.to, span1.to) === 7, `gantt move +7d: ${span0.from}→${span1.from}, ${span0.to}→${span1.to}`);
-const bar2 = [...root.querySelectorAll(".lubi-gantt-bar")].find((x) => x.getAttribute("aria-label")?.startsWith(proj.title));
+const bar2 = [...root.querySelectorAll(".lubi-gantt-bar")].find((x) => x.getAttribute("data-lubi-tip")?.startsWith(proj.title));
 await drag(bar2.querySelector(".lubi-gantt-handle.is-right"), 10, 10, 0, 5);
 const span2 = plugin.tasks.span(plugin.tasks.byId(proj.id));
 check(span2.from === span1.from && dayDiff(span1.to, span2.to) === 5, `gantt resize right +5d: ${span1.to}→${span2.to}`);
-const bar3 = [...root.querySelectorAll(".lubi-gantt-bar")].find((x) => x.getAttribute("aria-label")?.startsWith(proj.title));
+const bar3 = [...root.querySelectorAll(".lubi-gantt-bar")].find((x) => x.getAttribute("data-lubi-tip")?.startsWith(proj.title));
 await drag(bar3.querySelector(".lubi-gantt-handle.is-left"), 10, 10, 0, 4);
 const span3 = plugin.tasks.span(plugin.tasks.byId(proj.id));
 check(dayDiff(span2.from, span3.from) === 4 && span3.to === span2.to, `gantt resize left +4d: ${span2.from}→${span3.from}`);
@@ -593,7 +595,7 @@ const dispatchTaskDrop = (target, type, transfer, relatedTarget = null) => {
   target.dispatchEvent(event);
   return event;
 };
-const inboxSource = root.querySelector('button[aria-label^="安排 待安排事项 1 到"]').closest(".lubi-task");
+const inboxSource = root.querySelector('button[data-lubi-tip^="安排 待安排事项 1 到"]').closest(".lubi-task");
 const inboxTransfer = taskTransfer();
 dispatchTaskDrop(inboxSource, "dragstart", inboxTransfer);
 check(inboxTransfer.getData("text/lubi-task") === "inbox-0" && inboxTransfer.effectAllowed === "move", "inbox drag carries task id and move semantics");
@@ -625,6 +627,37 @@ dispatchTaskDrop(emptyDayCard.querySelector(".lubi-muted.lubi-pad"), "drop", inb
 check(plugin.tasks.byId("inbox-0").date === "2030-01-02", "empty day card accepts drop using selected date");
 [...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); await tick(); await tick();
 view.show("tasks", "2026-09-24"); await tick(); await tick();
+
+// 全天任务摘要：避免 Obsidian aria-label 原生黑色提示，鼠标/键盘共用卡片。
+{
+  const { blankTask } = await import("./core.mjs");
+  const D = "2030-02-01", ID = "tooltip-all-day";
+  await plugin.tasks.upsert(blankTask({ id: ID, title: "全天摘要夹具", date: D, estimate: 45, notes: "第一行备注\n第二行备注\n<img src=x onerror=alert(1)>" }));
+  view.show("tasks", D); await new Promise(resolve => setTimeout(resolve, 220)); await tick();
+  const chip = () => [...root.querySelectorAll(".lubi-allday-chip")].find(el => el.textContent.includes("全天摘要夹具"));
+  const taskChip = chip();
+  check(!taskChip.hasAttribute("aria-label") && !taskChip.hasAttribute("title") && !!document.getElementById(taskChip.getAttribute("aria-labelledby")), "task tooltip: accessible summary avoids native tooltip attributes");
+  taskChip.getBoundingClientRect = () => ({ left: 200, right: 300, top: 100, bottom: 120, height: 20, width: 100 });
+  taskChip.dispatchEvent(new window.MouseEvent("pointermove", { bubbles: true, clientX: 250, clientY: 110 }));
+  await new Promise(resolve => setTimeout(resolve, 280));
+  let summaryTip = document.body.querySelector(".lubi-tip");
+  check(summaryTip?.querySelector(".lubi-task-tip-title")?.textContent === "全天摘要夹具" && summaryTip.textContent.includes("全天（未设置开始时间）") && summaryTip.textContent.includes("预计用时：45min") && summaryTip.textContent.includes("待完成"), "task tooltip: title, all-day explanation, task estimate, and status are separate rows");
+  check(summaryTip?.style.left === "310px" && summaryTip.style.top === "100px", "task tooltip: prefers beside the task instead of following the mouse over neighbors");
+  check(summaryTip?.querySelector(".lubi-task-tip-notes")?.textContent.includes("<img") && !summaryTip.querySelector("img") && summaryTip.querySelector(".lubi-task-tip-help")?.textContent.includes("点击编辑"), "task tooltip: notes are plain text and help has a dedicated footer");
+  taskChip.dispatchEvent(new window.Event("pointerleave"));
+  check(!document.body.querySelector(".lubi-tip"), "task tooltip: leave removes the card");
+  taskChip.focus();
+  check(!!document.body.querySelector(".lubi-tip .lubi-task-tip-title"), "task tooltip: keyboard focus shows the same summary");
+  taskChip.blur();
+  await plugin.tasks.upsert({ ...plugin.tasks.byId(ID), status: "done", estimate: 0, notes: "" });
+  view.show("tasks", D); await new Promise(resolve => setTimeout(resolve, 220)); await tick();
+  chip().dispatchEvent(new window.MouseEvent("pointermove", { bubbles: true, clientX: 0, clientY: 0 }));
+  await new Promise(resolve => setTimeout(resolve, 280));
+  summaryTip = document.body.querySelector(".lubi-tip");
+  check(summaryTip?.textContent.includes("已完成") && summaryTip.textContent.includes("预计用时：未设置") && !summaryTip.querySelector(".lubi-task-tip-notes"), "task tooltip: done state and missing estimate are explicit; empty notes take no space");
+  view.show("tasks", "2026-09-24"); await tick(); await tick();
+  check(!document.body.querySelector(".lubi-tip"), "task tooltip: render clears stale summary");
+}
 
 // 清单拖拽排序：含计划时间的任务也可手动排序，不重排时间轴。
 {
@@ -677,7 +710,7 @@ view.show("tasks", "2026-09-24"); await tick(); await tick();
   view.show("tasks", "2026-09-24"); await tick(); await tick();
 }
 
-const assign = root.querySelector('button[aria-label^="安排 待安排事项 1 到"]');
+const assign = root.querySelector('button[data-lubi-tip^="安排 待安排事项 1 到"]');
 check(!!assign, "unscheduled task has non-drag scheduling action");
 assign.click(); await tick();
 check(plugin.tasks.byId("inbox-0").date === "2026-09-24", "schedule action writes selected date");
@@ -687,7 +720,7 @@ check(!!taskUndo, "task reschedule shows undo action");
 taskUndo.click(); await tick();
 check(plugin.tasks.byId("inbox-0").date === "" && plugin.tasks.byId("inbox-0").notes === "安排后新增的备注", "task undo restores only schedule fields, preserving later notes");
 view.show("tasks", "2026-09-24"); await tick();
-const chooseDate = root.querySelector('button[aria-label^="为 待安排事项 1 选择日期"]');
+const chooseDate = root.querySelector('button[data-lubi-tip^="为 待安排事项 1 选择日期"]');
 chooseDate.click(); await tick();
 check(document.activeElement?.getAttribute("type") === "date", "choose-date action focuses accessible date input");
 O.openModals.at(-1).close();
@@ -712,19 +745,18 @@ view.setDate("2026-09-23"); view.show("tasks"); await tick();
 check(view.tasksState.selectedDate === "2026-09-23" && root.querySelector(".lubi-date-label")?.textContent.includes("2026-09-23"), "task page follows the date picked on the daily page");
 check(!root.querySelector(".lubi-error"), "no render errors after keyboard and schedule flows");
 
-// 悬浮提示不重复：Obsidian 会给带 aria-label 的元素显示提示，再有 title 就会出现两个一样的
+// 悬浮提示不重复：自有操作不保留原生提示属性，可访问名称仍然存在。
 {
   const dupes = [];
-  const scan = (where, host) => dupes.push(...[...host.querySelectorAll("[title]")].map((e) => `${where}:${e.tagName.toLowerCase()}.${e.className}`));
+  const scan = (where, host) => dupes.push(...[...host.querySelectorAll("[title], button[aria-label], [data-lubi-tip][aria-label], input[type=checkbox][aria-label]")].map((e) => `${where}:${e.tagName.toLowerCase()}.${e.className}`));
   for (const tab of ["today", "review", "tasks"]) { view.show(tab, "2026-09-24"); await tick(); await tick(); scan(tab, view.containerEl); }
   view.tasksState.projectsOpen = true; view.show("tasks", "2026-09-24"); await tick(); scan("tasks+projects", view.containerEl);
   plugin.quickLog(); await tick(); scan("record-modal", O.openModals.at(-1).modalEl); O.openModals.at(-1).close();
   const anyTask = [...root.querySelectorAll(".lubi-task-title-button")][0];
   if (anyTask) { anyTask.click(); await tick(); scan("task-modal", O.openModals.at(-1).modalEl); O.openModals.at(-1).close(); }
   check(dupes.length === 0, `tooltip: no element uses a native title tooltip (${dupes.length}${dupes.length ? ": " + dupes.slice(0, 6).join(", ") : ""})`);
-  check(root.querySelectorAll(".lubi-icon-btn[aria-label]").length > 0, "tooltip: icon buttons keep their Obsidian tooltip (aria-label)");
+  check(root.querySelectorAll(".lubi-icon-btn[data-lubi-tip][aria-labelledby]").length > 0 && !root.querySelector(".lubi-icon-btn[aria-label]"), "tooltip: icon buttons use local hints and accessible names, not native black boxes");
 }
-
 
 // ---------- 每日页计划：拖动、双边调整、撤销 ----------
 {
@@ -814,7 +846,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   check(!!root.querySelector(".lubi-kpi-pending"), "pending: review KPI calls out estimated time");
   view.show("today", D); await settle();
   const pb2 = [...root.querySelectorAll(".lubi-block.is-pending")].find((x) => x.textContent.includes("待确认测试"));
-  pb2?.querySelector('.lubi-block-actions [aria-label="确认：时间与计划一致"]')?.click(); await settle();
+  pb2?.querySelector('.lubi-block-actions [data-lubi-tip="确认：时间与计划一致"]')?.click(); await settle();
   check(!(app.vault.files.get(`日记/${D}.md`) || "").includes("[待确认::"), "pending: ✓ confirms the record");
   // 主按钮文字随页面变化
   view.show("tasks", D); await settle();
@@ -936,8 +968,8 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   check(app.vault.files.get(`日记/${D}.md`).includes("[时长:: 1h] [预计用时:: 45min]"), "estimate UI: Markdown stores actual duration and forecast as separate fields");
   view.show("today", D); await settle();
   let block = blockFor(task.title);
-  check(block.querySelector(".lubi-block-sub")?.textContent.includes("预计 45min") && block.getAttribute("aria-label").includes("预计 45min · 实际 1h · 超出 15min"), "estimate UI: timeline metadata and details use the snapshot, not the changed task forecast");
-  block.querySelector('[aria-label="编辑"]').click(); await tick();
+  check(block.querySelector(".lubi-block-sub")?.textContent.includes("预计 45min") && block.getAttribute("data-lubi-tip").includes("预计 45min · 实际 1h · 超出 15min"), "estimate UI: timeline metadata and details use the snapshot, not the changed task forecast");
+  block.querySelector('[data-lubi-tip="编辑"]').click(); await tick();
   modal = O.openModals.at(-1);
   check(modal.rec.estimatedMinutes === 45, "estimate UI: editing a historical record preserves its forecast");
   const editedDuration = modal.contentEl.querySelector('.lubi-timebar-dur input[type="number"]');
@@ -946,7 +978,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   saved = (await linked(task.id))[0];
   check(saved.rec.minutes === 75 && saved.rec.estimatedMinutes === 45, "estimate UI: editing actual time does not rewrite the forecast");
   view.show("today", D); await settle();
-  blockFor(task.title).querySelector('[aria-label="复制到明天"]').click(); await settle();
+  blockFor(task.title).querySelector('[data-lubi-tip="复制到明天"]').click(); await settle();
   const copy = (await plugin.journal.read(shiftDate(D, 1))).find(entry => entry.rec.title === task.title);
   check(copy?.rec.estimatedMinutes === undefined && copy.rec.task !== task.id, "estimate UI: copying an independent record does not inherit the old task forecast");
 
@@ -959,7 +991,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
 
   await plugin.journal.add({ date: D, start: "13:00", minutes: 30, category: "学习", title: "estimate-legacy-record", task: task.id, extra: {} });
   view.show("today", D); await settle();
-  blockFor("estimate-legacy-record").querySelector('[aria-label="编辑"]').click(); await tick();
+  blockFor("estimate-legacy-record").querySelector('[data-lubi-tip="编辑"]').click(); await tick();
   modal = O.openModals.at(-1);
   check(modal.rec.estimatedMinutes === undefined && !modal.contentEl.querySelector(".lubi-estimate-values") && modal.contentEl.querySelector(".lubi-estimate-note")?.textContent.includes("没有预计用时快照"), "estimate UI: old linked records are not backfilled from current task estimates");
   await save(modal);
@@ -971,7 +1003,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   const pending = (await linked(auto.id))[0].rec;
   check(pending.estimatedMinutes === 30 && !!pending.extra[PENDING_KEY], "estimate UI: checkbox-generated records capture the forecast but remain pending");
   view.show("today", D); await settle();
-  check(blockFor(auto.title).getAttribute("aria-label").includes("核对后再比较") && !blockFor(auto.title).getAttribute("aria-label").includes("实际 30min"), "estimate UI: timeline does not treat pending time as measured actual time");
+  check(blockFor(auto.title).getAttribute("data-lubi-tip").includes("核对后再比较") && !blockFor(auto.title).getAttribute("data-lubi-tip").includes("实际 30min"), "estimate UI: timeline does not treat pending time as measured actual time");
 
   const repeat = await make("estimate-repeat", 45, { kind: "daily", days: [] });
   await save(await openStart(repeat));
@@ -1008,6 +1040,47 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
     }
   } finally { globalThis.Date = NativeDate; view.show("today", D); await settle(); }
 }
+// 统一悬停系统：三个自有界面、延迟、取消、原生遗漏、生命周期与隐私边界。
+{
+  const roots = ["lubi-root", "lubi-modal", "lubi-settings"].map(cls => {
+    const host = document.createElement("div"); host.className = cls;
+    host.innerHTML = '<button aria-label="独立操作提示">按钮</button><input aria-label="输入名称" value="草稿"><span title="旧原生提示">旧提示</span>';
+    document.body.appendChild(host); return host;
+  });
+  const other = document.createElement("button"); other.setAttribute("aria-label", "其他插件提示"); other.setAttribute("title", "其他原生提示"); document.body.appendChild(other);
+  await tick();
+  check(roots.every(host => host.querySelector("button[data-lubi-tip][aria-labelledby]") && !host.querySelector("button[aria-label], [title]")), "unified tooltip: view, modal, and settings action labels are converted without native tooltip attributes");
+  check(roots.every(host => document.getElementById(host.querySelector("input").getAttribute("aria-labelledby"))?.textContent === "输入名称" && !host.querySelector("input").hasAttribute("data-lubi-tip") && host.querySelector("input").value === "草稿"), "unified tooltip: input accessible names and draft values are preserved without adding hover hints");
+  check(other.getAttribute("aria-label") === "其他插件提示" && other.getAttribute("title") === "其他原生提示", "unified tooltip: other plugins are outside scope");
+  const action = roots[0].querySelector("button");
+  action.getBoundingClientRect = () => ({ left: 1010, right: 1020, top: 750, bottom: 770, width: 10, height: 20 });
+  action.dispatchEvent(new window.MouseEvent("pointermove", { bubbles: true, clientX: 1015, clientY: 750 }));
+  check(!document.body.querySelector(".lubi-tip"), "unified tooltip: pointer hover is delayed");
+  await new Promise(resolve => setTimeout(resolve, 280));
+  let card = document.body.querySelector(".lubi-tip");
+  check(card?.textContent === "独立操作提示" && card.getAttribute("role") === "tooltip" && document.body.querySelectorAll(".lubi-tip").length === 1, "unified tooltip: generic action uses a single local card");
+  check(parseFloat(card.style.left) >= 8 && parseFloat(card.style.top) <= window.innerHeight - 8, "unified tooltip: near-edge placement stays in viewport");
+  document.dispatchEvent(new window.Event("scroll"));
+  check(!document.body.querySelector(".lubi-tip"), "unified tooltip: scrolling dismisses card");
+  action.dispatchEvent(new window.MouseEvent("pointermove", { bubbles: true }));
+  action.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await new Promise(resolve => setTimeout(resolve, 280));
+  check(!document.body.querySelector(".lubi-tip"), "unified tooltip: Escape cancels a pending delayed tooltip");
+  action.focus();
+  check(document.body.querySelector(".lubi-tip")?.textContent === "独立操作提示", "unified tooltip: keyboard focus shows action hint without delay");
+  action.dispatchEvent(new window.Event("dragstart", { bubbles: true }));
+  check(!document.body.querySelector(".lubi-tip"), "unified tooltip: drag start dismisses card");
+  action.blur();
+  const svg = root.querySelector("svg circle[role=img]");
+  if (svg) check(!svg.querySelector("title") && svg.hasAttribute("data-lubi-tip") && !!svg.querySelector("desc"), "unified tooltip: donut sectors have local hints and accessible SVG descriptions, no native title");
+  action.dispatchEvent(new window.MouseEvent("pointermove", { bubbles: true }));
+  plugin.onunload();
+  await new Promise(resolve => setTimeout(resolve, 280));
+  action.focus();
+  check(!document.body.querySelector(".lubi-tip"), "unified tooltip: unload removes handlers and pending timer");
+  roots.forEach(host => host.remove()); other.remove();
+}
+
 console.log("data file now:", app.vault.files.get("任务/任务数据.json").slice(0, 120).replace(/\n/g, " "));
 console.log(fails ? `\n${fails} FAILED` : "\nSMOKE ALL PASSED");
 process.exit(fails ? 1 : 0);

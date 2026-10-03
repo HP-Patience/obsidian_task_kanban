@@ -7,7 +7,7 @@ import { formatEstimateComparison, normalizeEstimatedMinutes, confirmed, isPendi
 import { fmtDuration, fmtHours, hmToMin, minToHM, nowHM, shiftDate, shortDate, todayStr } from "../core/time";
 import { dayTimeStats, invalidTimedSpan } from "../core/metrics";
 import { categoryOf } from "../settings";
-import { button, catChip, catDot, donut, el, emptyState, HOUR_PX, icon, iconButton, stopAll, tip, undoNotice } from "./components";
+import { button, catChip, catDot, donut, el, emptyState, HOUR_PX, infoTip, icon, iconButton, stopAll, tip, undoNotice } from "./components";
 import { minuteAt, startDrag } from "./drag";
 import { RecordModal } from "./modals";
 import { addRecordAsDone, afterDone, completeFromRecord, dayTasks, deleteRecord, OpenRecord, syncLinkedTask } from "./taskList";
@@ -227,7 +227,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
       tip(handleBottom, "拖动调整计划结束时间");
       const late = date === todayStr() && s0 + mins < hmToMin(nowHM());
       pb.toggleClass("is-late", late);
-      tip(pb, `计划 ${t.start}–${minToHM(s0 + mins)} · ${t.title}${late ? "（已过计划时间）" : ""}。拖动改时间，拉上下边缘改预计时长（5 分钟吸附，Shift 精确到分钟，Esc 取消）；点击记实际时间，保存后完成任务${t.repeat.kind !== "none" ? "。重复任务的计划时间调整会应用于后续重复项" : ""}`);
+      infoTip(pb, t.title, [`${shortDate(date)} · ${t.start}–${minToHM(s0 + mins)}`, `预计用时：${t.estimate ? fmtDuration(t.estimate) : "未设置"}`, late ? "已过计划时间 · 待完成" : "待完成", ...(t.repeat.kind !== "none" ? ["重复任务：调整时间会应用于后续重复项"] : [])], "拖动改时间 · 拉边缘改预计时长\nShift 精确到分钟 · Esc 取消\n点击记实际时间，保存后完成任务", t.notes);
       let suppressPointerClick = false;
       const placePlan = (start: number, minutes: number) => {
         const height = Math.max(Math.min(minutes, 1440 - start) * PX_PER_MIN, 20);
@@ -323,7 +323,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
     const comparison = formatEstimateComparison(r);
     const subParts = [estimate !== undefined ? `预计 ${fmtDuration(estimate)}` : "", r.task && plugin.tasks.byId(r.task) ? "关联任务" : "", r.notes || ""].filter(Boolean);
     if (subParts.length) meta.createSpan({ cls: "lubi-block-sub", text: subParts.join(" · ") });
-    tip(block, `${invalid ? `${r.start} · 时长跨出当天，需校对` : `${r.start}–${minToHM(startMin + r.minutes)}`} ${r.category} · ${r.title}，${fmtDuration(r.minutes)}${r.notes ? `（${r.notes}）` : ""}。${comparison ? `${comparison}。` : ""}${pending ? "按计划自动记下，待确认：拖到实际时间或点 ✓。" : ""}${invalid ? "点击或回车校对" : "拖动移动 · 拉边缘改时长 · 回车编辑"}`);
+    infoTip(block, r.title, [`${shortDate(date)} · ${invalid ? `${r.start}（时长跨出当天，需校对）` : `${r.start}–${minToHM(startMin + r.minutes)}`}`, `分类：${r.category}`, `${pending ? "按计划生成的时长（待确认）" : "实际用时"}：${fmtDuration(r.minutes)}`, ...(comparison ? [comparison] : []), ...(pending ? ["按计划自动记下，尚未核对实际时间"] : [])], invalid ? "点击或回车校对" : "拖动移动 · 拉边缘改时长 · 回车编辑", r.notes);
     const acts = block.createDiv({ cls: "lubi-block-actions" });
     if (pending) iconButton(acts, "check", "确认：时间与计划一致", async () => {
       try {
@@ -491,6 +491,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
       const r = row.rec;
       const cat = categoryOf(plugin.settings, r.category);
       const pin = rail.createEl("button", { cls: "lubi-pin", attr: { type: "button", "aria-label": `${r.start} ${r.category} ${r.title}${r.amount !== undefined ? `，¥${r.amount}` : ""}。点击编辑。` } });
+      infoTip(pin, r.title, [`${shortDate(date)} · ${r.start}`, `分类：${r.category}`, ...(r.amount !== undefined ? [`支出：¥${r.amount}`] : [])], "点击编辑支出记录", r.notes);
       pin.style.top = `${hmToMin(r.start) * PX_PER_MIN}px`;
       pin.style.setProperty("--chip", cat.color);
       icon(pin, cat.icon, "lubi-icon");

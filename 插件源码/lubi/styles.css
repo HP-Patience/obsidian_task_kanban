@@ -1297,3 +1297,20 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 /* 拖放位置提示不占空间，不改变排期。 */
 .lubi-root .lubi-task.is-sort-before { box-shadow: inset 0 2px 0 var(--lubi-info); }
 .lubi-root .lubi-task.is-sort-after { box-shadow: inset 0 -2px 0 var(--lubi-info); }
+
+/* 全天任务摘要：标题 / 元信息 / 可选备注 / 操作提示。 */
+.lubi-tip:has(.lubi-task-tip-title) { width: 260px; max-width: calc(100vw - 16px); padding: 10px 12px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.lubi-task-tip-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.lubi-task-tip-notes { margin-top: 6px; white-space: pre-wrap; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.lubi-task-tip-help { border-top: 1px solid var(--lubi-border); margin-top: 8px; padding-top: 6px; font-size: 11px; color: var(--text-muted); }
+
+/* 全插件统一悬停；颜色只作用于 Lubi，不覆盖 Obsidian 的 .tooltip。 */
+.lubi-tip { box-sizing: border-box; max-width: min(300px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow: hidden; padding: 8px 12px; border-radius: 8px; background: var(--background-primary); color: var(--text-normal); border: 1px solid var(--background-modifier-border); box-shadow: 0 4px 16px rgba(0,0,0,.12); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.lubi-tip > div:only-child { font-weight: normal; margin: 0; }
+.lubi-task-tip-help { white-space: pre-line; }
+
+/* 实际浏览器对比度检查：统计变化值使用可读的语义色，而非纯亮色。 */
+.lubi-kpi-delta.is-up, .lubi-insight-delta.is-ok { color: color-mix(in srgb, var(--lubi-ok) 55%, var(--text-normal)); }
+.lubi-kpi-delta.is-down, .lubi-insight-delta.is-warn { color: color-mix(in srgb, var(--lubi-warn) 55%, var(--text-normal)); }
+
+.lubi-load.is-high .lubi-load-text { color: color-mix(in srgb, var(--lubi-warn) 55%, var(--text-normal)); }

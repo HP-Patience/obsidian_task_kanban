@@ -5,7 +5,7 @@ import type LubiPlugin from "../main";
 import { Task, blankTask } from "../core/tasks";
 import { daysBetween, eachDate, fmtDuration, hmToMin, minToHM, nowHM, shiftDate, shortDate, todayStr, weekdayZh, weekStart } from "../core/time";
 import { categoryOf } from "../settings";
-import { button, catDot, el, emptyState, HOUR_PX, icon, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
+import { button, catDot, el, emptyState, HOUR_PX, hoverTip, infoTip, icon, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
 import { TaskModal, RecordModal } from "./modals";
 import { AiTaskModal } from "./aiTask";
 import { dayTasks, groupedRows, OpenRecord, renderDayTaskList, taskRow } from "./taskList";
@@ -319,7 +319,22 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
     const strip = allDay.length ? h.createDiv({ cls: "lubi-allday" }) : null;
     if (strip) for (const t of allDay) {
       const doneChip = plugin.tasks.isDoneOn(t, d);
-      const chip = tip(strip.createEl("button", { cls: `lubi-allday-chip ${doneChip ? "is-done" : ""}`, attr: { type: "button" } }), `${d} 全天任务 ${t.title}${doneChip ? "（已完成）" : ""}：点击编辑，拖到下方时段可定时`);
+      const chip = strip.createEl("button", { cls: `lubi-allday-chip ${doneChip ? "is-done" : ""}`, attr: { type: "button" } });
+      const summary = [
+        `${shortDate(d)} · 全天（未设置开始时间）`,
+        `预计用时：${t.estimate > 0 ? fmtDuration(t.estimate) : "未设置"}`,
+        doneChip ? "已完成" : "待完成",
+      ];
+      // aria-labelledby 为读屏提供摘要，不使用会触发 Obsidian 黑色提示的 aria-label。
+      const description = chip.createSpan({ cls: "lubi-sr-only", text: `${t.title}。${summary.join("。")}`, attr: { id: `lubi-allday-${d}-${t.id}` } });
+      chip.setAttribute("aria-labelledby", description.id);
+      hoverTip(chip, ".lubi-allday-chip", () => {
+        const title = createDiv({ cls: "lubi-task-tip-title", text: t.title });
+        const rows: (string | HTMLElement)[] = [title, ...summary];
+        if (t.notes.trim()) rows.push(createDiv({ cls: "lubi-task-tip-notes", text: t.notes }));
+        rows.push(createDiv({ cls: "lubi-task-tip-help", text: "点击编辑 · 拖到时段设置开始时间" }));
+        return rows;
+      }, "side");
       chip.style.setProperty("--chip", categoryOf(s, t.category).color);
       if (doneChip) chip.createSpan({ cls: "lubi-allday-check", text: "✓ ", attr: { "aria-hidden": "true" } });
       chip.createSpan({ text: t.title });
@@ -428,7 +443,7 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
       const handle = block.createDiv({ cls: "lubi-block-handle is-bottom" });
       block.setAttribute("tabindex", "0");
       block.setAttribute("role", "button");
-      tip(block, `${d} ${t.title}，${t.start}，预计 ${fmtDuration(dur)}。拖动改时间 / 换天；点击或回车编辑`);
+      infoTip(block, t.title, [`${shortDate(d)} · ${t.start}–${minToHM(startMin + dur)}`, `预计用时：${t.estimate ? fmtDuration(t.estimate) : "未设置（显示按 30 分钟）"}`, plugin.tasks.isDoneOn(t, d) ? "已完成" : "待完成"], "拖动改时间或换天 · 拉边缘改时长\n点击或回车编辑", t.notes);
       block.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); edit(t); }
       });
@@ -565,7 +580,7 @@ function renderLoad(plugin: LubiPlugin, host: HTMLElement, d: string): void {
   const load = host.createDiv({ cls: `lubi-load ${level}`, attr: {
     role: "meter", "aria-valuemin": "0", "aria-valuemax": String(capacity), "aria-valuenow": String(Math.min(planned, capacity * 2)),
   } });
-  tip(load, `${d} 计划 ${fmtDuration(planned)} / 可用 ${fmtDuration(capacity)}${ratio > 1 ? " · 排太满了" : ""}`);
+  infoTip(load, `${shortDate(d)} · 当天负载`, [`已安排：${fmtDuration(planned)}`, `可用时间：${fmtDuration(capacity)}`, `${ratio > 1 ? "超出" : "剩余"}：${fmtDuration(Math.abs(capacity - planned))}`], ratio > 1 ? "计划超过当天可用时间，可调整排期" : "仅统计计划用时，不代表实际投入");
   const track = load.createDiv({ cls: "lubi-load-track" });
   track.createDiv({ cls: "lubi-load-fill" }).style.width = `${Math.min(100, ratio * 100)}%`;
   load.createSpan({ cls: "lubi-load-text", text: `${fmtHoursShort(planned)}/${fmtHoursShort(capacity)}` });
@@ -629,6 +644,7 @@ function renderProjects(plugin: LubiPlugin, host: HTMLElement, state: TasksState
     for (const p of projects.slice(0, 4)) {
       const { done, total } = plugin.tasks.progress(p);
       const chip = tip(peek.createEl("button", { cls: "lubi-project-chip", attr: { type: "button" } }), `${p.title} · ${done}/${total}，点击编辑`);
+      infoTip(chip, p.title, [`完成进度：${done}/${total}`], "点击编辑项目", p.notes);
       chip.style.setProperty("--chip", categoryOf(plugin.settings, p.category).color);
       chip.createSpan({ cls: "lubi-project-chip-name", text: p.title });
       const bar = chip.createSpan({ cls: "lubi-project-chip-bar" });
@@ -712,7 +728,7 @@ function renderProjects(plugin: LubiPlugin, host: HTMLElement, state: TasksState
         bar.createDiv({ cls: "lubi-gantt-handle is-right" });
         bar.setAttribute("tabindex", "0");
         bar.setAttribute("role", "button");
-        tip(bar, `${t.title}，${span.from} → ${span.to}${kids.length ? `，完成 ${done}/${total}` : ""}。点按或回车编辑；拖动整条移动，拉两端改跨度`);
+        infoTip(bar, t.title, [`${span.from} → ${span.to}`, ...(kids.length ? [`完成进度：${done}/${total}`] : [])], "点击或回车编辑 · 拖动移动\n拉两端调整日期跨度", t.notes);
         bar.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") { e.preventDefault(); edit(t); }
         });

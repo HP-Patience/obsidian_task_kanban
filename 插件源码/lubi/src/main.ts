@@ -6,6 +6,7 @@ import { detectLegacyJournals, migrateJournals } from "./core/migrate";
 import { shiftDate, todayStr, minToHM, hmToMin, stamp } from "./core/time";
 import { DashboardView, VIEW_TYPE, Tab } from "./ui/view";
 import { hideTip } from "./ui/components";
+import { installTooltips } from "./ui/tooltips";
 import { RecordModal, ConfirmModal } from "./ui/modals";
 import { LubiSettingTab } from "./ui/settingsTab";
 import { Rec } from "./core/records";
@@ -16,18 +17,20 @@ export default class LubiPlugin extends Plugin {
   tasks!: Tasks;
   /** 最近记录缓存：用于标题联想与"接着记" */
   private recent: Rec[] = [];
+  private disposeTooltips?: () => void;
   private refreshTimer: number | null = null;
   private pendingTaskReload = false;
   private pendingRecentRefresh = false;
 
   async onload(): Promise<void> {
+    this.disposeTooltips = installTooltips();
     await this.loadSettings();
     this.journal = new Journal(this.app, () => this.settings);
     this.tasks = new Tasks(this.app, () => this.settings);
     this.tasks.onChange = () => this.refreshViews(false);
 
     this.registerView(VIEW_TYPE, (leaf) => new DashboardView(leaf, this));
-    this.addRibbonIcon("hourglass", "Lubi 记录", () => void this.activateView());
+    this.addRibbonIcon("hourglass", "Lubi 记录", () => void this.activateView()).addClass("lubi-tooltip-scope");
     this.addSettingTab(new LubiSettingTab(this.app, this));
 
     this.addCommand({ id: "open", name: "打开面板", callback: () => void this.activateView() });
@@ -55,6 +58,8 @@ export default class LubiPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.disposeTooltips?.();
+    this.disposeTooltips = undefined;
     hideTip();
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.refreshTimer = null;

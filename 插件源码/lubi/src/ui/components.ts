@@ -2,6 +2,8 @@
 
 import { Notice, setIcon } from "obsidian";
 import { CategoryDef } from "../settings";
+import { setTipLabel } from "./tooltips";
+export { hideTip, hoverTip, infoTip } from "./tooltips";
 
 /** 每日页时间轴与任务页周日程共用的纵向刻度：同一时刻在两页的高度一致 */
 export const HOUR_PX = 56;
@@ -23,12 +25,10 @@ export function icon(parent: HTMLElement, name: string, cls = "lubi-icon"): HTML
 }
 
 /**
- * 悬浮提示统一走 Obsidian：只设 aria-label（Obsidian 会据此显示自带提示）。
- * 不要再设 title —— 浏览器会再弹一个原生提示，出现两个一模一样的提示。
+ * 统一使用 Lubi 浅色提示；读屏名称独立保留，避免原生双提示。
  */
 export function tip<T extends HTMLElement>(el: T, text: string): T {
-  el.setAttribute("aria-label", text);
-  el.removeAttribute("title");
+  setTipLabel(el, text);
   return el;
 }
 
@@ -125,7 +125,8 @@ export function donut(parent: HTMLElement, slices: { value: number; color: strin
           transform: `rotate(-90 ${size / 2} ${size / 2})`,
         },
       });
-      circle.createSvg("title").textContent = `${s.label} ${Math.round((s.value / total) * 100)}%`;
+      circle.setAttribute("aria-label", `${s.label} ${Math.round((s.value / total) * 100)}%`);
+      circle.setAttribute("role", "img");
       offset += len;
     }
   }
@@ -163,84 +164,6 @@ export function undoNotice(text: string, onUndo: () => void | Promise<void>, ms 
     stopAll(e);
     n.hide();
     void onUndo();
-  });
-}
-
-/** 轻量 tooltip：全局单例，跟随鼠标；任何重绘 / 滚动 / 离开都会关掉，不会残留 */
-let tipEl: HTMLElement | null = null;
-let tipBound = false;
-export function hideTip(): void {
-  if (tipEl) {
-    tipEl.remove();
-    tipEl = null;
-  }
-}
-function showTip(rows: (string | HTMLElement)[]): HTMLElement {
-  hideTip();
-  tipEl = document.body.createDiv({ cls: "lubi-tip" });
-  for (const r of rows) {
-    if (typeof r === "string") tipEl.createDiv({ text: r });
-    else tipEl.appendChild(r);
-  }
-  if (!tipBound) {
-    tipBound = true;
-    window.addEventListener("scroll", hideTip, true);
-    window.addEventListener("blur", hideTip);
-    document.addEventListener("pointerdown", hideTip, true);
-    document.addEventListener("keydown", hideTip, true);
-  }
-  return tipEl;
-}
-function placeTip(x: number, y: number): void {
-  if (!tipEl) return;
-  const w = tipEl.offsetWidth;
-  const h = tipEl.offsetHeight;
-  let left = x + 14;
-  let top = y + 14;
-  if (left + w > window.innerWidth - 8) left = x - w - 10;
-  if (top + h > window.innerHeight - 8) top = y - h - 10;
-  tipEl.style.left = `${left}px`;
-  tipEl.style.top = `${top}px`;
-}
-export function hoverTip(host: HTMLElement, selector: string, content: (target: HTMLElement) => (string | HTMLElement)[] | null): void {
-  let current: HTMLElement | null = null;
-  host.addEventListener("pointermove", (e) => {
-    const t = (e.target as HTMLElement).closest(selector) as HTMLElement | null;
-    if (!t || !host.contains(t)) {
-      current = null;
-      hideTip();
-      return;
-    }
-    if (t !== current || !tipEl || !tipEl.isConnected) {
-      current = t;
-      const rows = content(t);
-      if (!rows) {
-        hideTip();
-        return;
-      }
-      showTip(rows);
-    }
-    placeTip(e.clientX, e.clientY);
-  });
-  host.addEventListener("pointerleave", () => {
-    current = null;
-    hideTip();
-  });
-  // 图表柱等可聚焦控件：键盘聚焦时给出与鼠标悬停相同的说明。
-  host.addEventListener("focusin", (e) => {
-    const target = (e.target as HTMLElement).closest(selector) as HTMLElement | null;
-    if (!target || !host.contains(target)) return;
-    current = target;
-    const rows = content(target);
-    if (!rows) return;
-    showTip(rows);
-    const rect = target.getBoundingClientRect();
-    placeTip(rect.right, rect.top);
-  });
-  host.addEventListener("focusout", (e) => {
-    if (host.contains(e.relatedTarget as Node | null)) return;
-    current = null;
-    hideTip();
   });
 }
 

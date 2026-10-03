@@ -36,7 +36,7 @@ if (!browser) {
   const gen = spawnSync(process.execPath, [join(project, "test", "preview.mjs")], { cwd: project, encoding: "utf8", timeout: 60000, env: { ...process.env, LUBI_TEST_DAY_START_PLAN: "1" } });
   assert.equal(gen.status, 0, `preview generation failed: ${gen.stderr?.slice(-800)}`);
 
-  const probe = `<pre id="lubi-result"></pre><script>
+  const probe = String.raw`<pre id="lubi-result"></pre><script>
   (() => {
     const out = {};
     const r = (el) => el ? el.getBoundingClientRect() : null;
@@ -154,6 +154,20 @@ if (!browser) {
       const key = el.className + cs.color;
       if (cr < 4.5 && !seen.has(key)) { seen.add(key); out.lowContrast.push(cr.toFixed(2) + ' ' + (el.className || el.tagName) + ' "' + t.nodeValue.trim().slice(0, 12) + '"'); }
     }
+    // 合成摘要卡片验证共享样式：明暗主题、窄宽度、两行备注与文字对比。
+    const hint = document.createElement('div'); hint.className = 'lubi-tip';
+    hint.style.cssText = 'left:8px;top:8px;max-width:240px';
+    hint.innerHTML = '<div class="lubi-task-tip-title">任务摘要布局夹具</div><div>12:45–13:15 · 预计用时：30分钟</div><div class="lubi-task-tip-notes">长备注 ' + '测试备注内容 '.repeat(50) + '</div><div class="lubi-task-tip-help">拖动改时间 · 点击编辑</div>';
+    document.body.appendChild(hint);
+    const hintBox = r(hint), notes = hint.querySelector('.lubi-task-tip-notes'), notesStyle = getComputedStyle(notes);
+    out.tipFits = hintBox.width <= 240.5 && hintBox.right <= innerWidth - 7;
+    out.tipNotesClamped = r(notes).height <= parseFloat(notesStyle.lineHeight) * 2 + 1;
+    out.tipContrast = Array.from(hint.children).every(el => {
+      const fg = parse(getComputedStyle(el).color), bg = bgOf(hint), l1 = lum(fg), l2 = lum(bg);
+      return (Math.max(l1,l2)+0.05)/(Math.min(l1,l2)+0.05) >= 4.5;
+    });
+    out.tipBackground = parse(getComputedStyle(hint).backgroundColor).slice(0,3);
+    hint.remove();
     document.getElementById('lubi-result').textContent = 'LUBI_TOPBAR:' + encodeURIComponent(JSON.stringify(out));
   })();
   </script>`;
@@ -184,6 +198,8 @@ if (!browser) {
           xs[page] = g.tabsX;
           assert(g.barOverflow <= 1, `${theme} ${page} ${width}px: top bar overflows by ${g.barOverflow}px`);
           assert(!g.zoneOverlap, `${theme} ${page} ${width}px: top bar zones overlap ${JSON.stringify(g)}`);
+          assert(g.tipFits && g.tipNotesClamped && g.tipContrast, `${theme} ${page} ${width}px: tooltip geometry, two-line notes, or contrast failed ${JSON.stringify(g)}`);
+          assert.deepEqual(g.tipBackground, theme === "light" ? [255,255,255] : [30,30,34], `${theme}: tooltip should use the theme panel surface`);
           assert(g.minFont >= 11, `${theme} ${page} ${width}px: text below 11px (${g.minFont}px at ${g.minAt})`);
           assert.deepEqual(g.lowContrast, [], `${theme} ${page} ${width}px: text contrast below 4.5:1: ${g.lowContrast.join("; ")}`);
           assert.deepEqual(g.weekEndClipped, [], `${theme} ${page} ${width}px: clipped weekly 24:00 boundary ${g.weekEndClipped.join(", ")}`);
