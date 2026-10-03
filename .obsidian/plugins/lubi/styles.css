@@ -1290,3 +1290,10 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 /* 周日程表头：没有负载条/全天任务时收紧高度，日期按钮贴顶 */
 .lubi-root .lubi-week-day { min-height: 0; padding: 4px 4px; display: flex; flex-direction: column; }
 .lubi-root .lubi-week-day .lubi-load { margin-top: 2px; }
+
+/* 当天清单也是任务拖放目标，使用内描边避免布局跳动。 */
+.lubi-root .lubi-list-card.is-drop { background: color-mix(in srgb, var(--lubi-info) 10%, var(--background-primary)); box-shadow: inset 0 0 0 2px var(--lubi-info); }
+
+/* 拖放位置提示不占空间，不改变排期。 */
+.lubi-root .lubi-task.is-sort-before { box-shadow: inset 0 2px 0 var(--lubi-info); }
+.lubi-root .lubi-task.is-sort-after { box-shadow: inset 0 -2px 0 var(--lubi-info); }

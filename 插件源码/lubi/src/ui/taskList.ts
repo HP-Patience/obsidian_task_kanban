@@ -15,7 +15,8 @@ export type OpenRecord = (defaults?: Partial<Rec>, onRec?: (rec: Rec) => void | 
 
 /** 某天应显示的任务：有子任务的父任务不单列（它们以分组标题出现） */
 export function dayTasks(plugin: LubiPlugin, date: string): Task[] {
-  return plugin.tasks.forDate(date).filter((t) => !plugin.tasks.children(t.id).length);
+  return plugin.tasks.forDate(date).filter((t) => !plugin.tasks.children(t.id).length)
+    .sort((a, b) => a.order - b.order || a.created.localeCompare(b.created));
 }
 
 /** 按父任务分组渲染；只有一组且无父任务时不显示组标题 */

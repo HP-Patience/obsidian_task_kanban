@@ -334,11 +334,19 @@ export class Tasks {
   }
 
   async reorder(ids: string[]): Promise<void> {
+    const original = new Map(ids.map(id => [id, this.byId(id)?.order]));
     ids.forEach((id, i) => {
       const t = this.byId(id);
       if (t) t.order = i + 1;
     });
-    await this.commit();
+    try { await this.commit(); }
+    catch (e) {
+      ids.forEach((id, i) => {
+        const t = this.byId(id), order = original.get(id);
+        if (t && order !== undefined && t.order === i + 1) t.order = order;
+      });
+      throw e;
+    }
   }
 }
 

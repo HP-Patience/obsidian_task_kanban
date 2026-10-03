@@ -80,6 +80,8 @@ export function renderTasks(plugin: LubiPlugin, host: HTMLElement, date: string,
 function renderLists(plugin: LubiPlugin, host: HTMLElement, date: string, rerender: () => void, openNew: OpenRecord, edit: (t: Task) => void, create: (d?: Partial<Task>) => void): void {
   const today = dayTasks(plugin, date);
   const card = host.createDiv({ cls: "lubi-card lubi-list-card" });
+  // 整张当天清单都可接收任务，包括空列表、标题和快速输入区域。
+  bindDrop(plugin, card, date, null, rerender);
   const head = card.createDiv({ cls: "lubi-panel-head" });
   el(head, "h3", "lubi-panel-title", date === todayStr() ? "今天" : `${shortDate(date)} 周${weekdayZh(date)}`);
   const done = today.filter((t) => plugin.tasks.isDoneOn(t, date)).length;
@@ -88,8 +90,11 @@ function renderLists(plugin: LubiPlugin, host: HTMLElement, date: string, rerend
   button(head, "✦ AI 创建", () => new AiTaskModal(plugin.app, plugin, date, rerender).open(), { cls: "lubi-btn-ghost lubi-btn-sm" });
 
   const list = card.createDiv({ cls: "lubi-task-list" });
-  if (!today.length) list.createDiv({ cls: "lubi-muted lubi-pad", text: "这天没有安排。可从下方「未安排」选择日期，或添加待办。" });
-  renderDayTaskList(plugin, list, date, rerender, openNew, edit, (li, t) => makeDraggable(li, t));
+  if (!today.length) list.createDiv({ cls: "lubi-muted lubi-pad", text: "这天没有安排。可把下方「未安排」任务拖到这里，或添加待办。" });
+  renderDayTaskList(plugin, list, date, rerender, openNew, edit, (li, t) => {
+    makeDraggable(li, t);
+    bindTaskSort(plugin, li, t, list, rerender);
+  });
   // 快速输入：键盘按回车，触屏有明确的添加按钮。
   const quick = card.createDiv({ cls: "lubi-quick-add" });
   icon(quick, "plus", "lubi-icon");
@@ -126,6 +131,7 @@ function renderLists(plugin: LubiPlugin, host: HTMLElement, date: string, rerend
   groupedRows(plugin, il, inbox, edit, (group, t) => {
     const li = taskRow(plugin, group, t, date, rerender, openNew, () => edit(t));
     makeDraggable(li, t);
+    bindTaskSort(plugin, li, t, il, rerender);
     const act = li.querySelector<HTMLElement>(".lubi-task-actions") ?? li.createDiv({ cls: "lubi-task-actions" });
     iconButton(act, "calendar-plus", `安排 ${t.title} 到 ${date}（可撤销）`, () => void updateScheduleWithUndo(plugin, t.id, { date, start: "" }, `${t.title} → ${date}`, rerender));
     iconButton(act, "calendar-days", `为 ${t.title} 选择日期和时间`, () => new TaskModal(plugin.app, plugin, { task: t, focusDate: true, onSaved: rerender }).open());
@@ -134,6 +140,7 @@ function renderLists(plugin: LubiPlugin, host: HTMLElement, date: string, rerend
 
 /** 对同一项目的叶子任务保留可见父级路径；父级名称可直接打开编辑。 */
 function makeDraggable(elm: HTMLElement, t: Task): void {
+  elm.dataset.taskId = t.id;
   elm.draggable = true;
   elm.addClass("is-draggable");
   elm.addEventListener("dragstart", (e) => {
@@ -143,6 +150,73 @@ function makeDraggable(elm: HTMLElement, t: Task): void {
     elm.addClass("is-dragging");
   });
   elm.addEventListener("dragend", () => elm.removeClass("is-dragging"));
+}
+
+/** 清单内排序独立于排期；不同项目不混排，保留可见父级分组。 */
+function bindTaskSort(plugin: LubiPlugin, row: HTMLElement, task: Task, list: HTMLElement, rerender: () => void): void {
+  const rows = () => Array.from(row.parentElement!.querySelectorAll<HTMLElement>(".lubi-task[data-task-id]"));
+  const clear = () => list.querySelectorAll(".is-sort-before, .is-sort-after").forEach(el => el.removeClass("is-sort-before", "is-sort-after"));
+  const source = (e: DragEvent) => {
+    const id = e.dataTransfer?.getData("text/lubi-task") || list.querySelector<HTMLElement>(".is-dragging")?.dataset.taskId;
+    return rows().find(el => el.dataset.taskId === id);
+  };
+  const move = async (id: string, after: boolean) => {
+    const ids = rows().map(el => el.dataset.taskId!);
+    if (!ids.includes(id) || id === task.id) return;
+    const next = ids.filter(value => value !== id);
+    next.splice(next.indexOf(task.id) + (after ? 1 : 0), 0, id);
+    if (next.every((value, i) => value === ids[i])) return;
+    try { await plugin.tasks.reorder(next); rerender(); }
+    catch (e) { new Notice(`排序失败：${(e as Error).message}`, 6000); rerender(); }
+  };
+  row.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer?.types.includes("text/lubi-task") || !source(e)) return;
+    e.preventDefault(); e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    clear();
+    if (source(e) === row) return;
+    const rect = row.getBoundingClientRect();
+    row.addClass(e.clientY < rect.top + rect.height / 2 ? "is-sort-before" : "is-sort-after");
+  });
+  row.addEventListener("dragleave", (e) => {
+    if (e.relatedTarget instanceof Node && row.contains(e.relatedTarget)) return;
+    clear();
+  });
+  row.addEventListener("dragend", clear);
+  row.addEventListener("drop", (e) => {
+    const from = source(e);
+    clear();
+    if (!from) {
+      const id = e.dataTransfer?.getData("text/lubi-task");
+      if (Array.from(list.querySelectorAll<HTMLElement>("[data-task-id]")).some(el => el.dataset.taskId === id)) {
+        e.preventDefault(); e.stopPropagation();
+        new Notice("请在同一项目分组内排序；排序不会改变任务所属项目");
+      }
+      return; // 从未安排拖入当天仍由卡片的排期处理器负责。
+    }
+    e.preventDefault(); e.stopPropagation();
+    list.closest(".lubi-list-card")?.removeClass("is-drop");
+    const rect = row.getBoundingClientRect();
+    void move(from.dataset.taskId!, e.clientY >= rect.top + rect.height / 2);
+  });
+  row.tabIndex = 0;
+  row.setAttribute("aria-keyshortcuts", "Alt+ArrowUp Alt+ArrowDown");
+  row.addEventListener("keydown", (e) => {
+    if (e.target !== row || !e.altKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+    const all = rows(), index = all.indexOf(row), neighbor = all[index + (e.key === "ArrowUp" ? -1 : 1)];
+    if (!neighbor) return;
+    e.preventDefault(); e.stopPropagation();
+    const ids = all.map(el => el.dataset.taskId!);
+    [ids[index], ids[all.indexOf(neighbor)]] = [ids[all.indexOf(neighbor)], ids[index]];
+    const root = list.closest(".lubi-root");
+    void plugin.tasks.reorder(ids).then(() => {
+      rerender();
+      // 刷新有 150ms 防抖；仅在旧行仍存在时恢复相同任务的焦点。
+      window.setTimeout(() => {
+        if (!row.isConnected) Array.from(root?.querySelectorAll<HTMLElement>("[data-task-id]") || []).find(el => el.dataset.taskId === task.id)?.focus();
+      }, 180);
+    }).catch(e => { new Notice(`排序失败：${(e as Error).message}`, 6000); rerender(); });
+  });
 }
 
 // ---------- 窄面板：可切换的单日 / 三日议程，日期、完成与编辑都不依赖拖动 ----------
@@ -510,14 +584,20 @@ function bindDrop(plugin: LubiPlugin, target: HTMLElement, date: string, startH:
   target.addEventListener("dragover", (e) => {
     if (!e.dataTransfer?.types.includes("text/lubi-task")) return;
     e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
     target.addClass("is-drop");
   });
-  target.addEventListener("dragleave", () => target.removeClass("is-drop"));
+  target.addEventListener("dragleave", (e) => {
+    if (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) return;
+    target.removeClass("is-drop");
+  });
   target.addEventListener("drop", async (e) => {
     target.removeClass("is-drop");
     const id = e.dataTransfer?.getData("text/lubi-task");
     if (!id) return;
     e.preventDefault();
+    // 同一清单空白处落下不应把已有时间清掉。
+    if (target.classList.contains("lubi-list-card") && Array.from(target.querySelectorAll<HTMLElement>("[data-task-id]")).some(el => el.dataset.taskId === id)) return;
     let start = "";
     if (startH !== null) {
       const rect = target.getBoundingClientRect();

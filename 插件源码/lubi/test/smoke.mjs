@@ -581,6 +581,102 @@ view.show("tasks", "2026-09-24"); await tick(); await tick();
 check(root.querySelector(".lubi-agenda-card")?.textContent.includes("日程"), "narrow-panel agenda provides a date and task path");
 const visibleOrder = [...root.querySelectorAll(".lubi-tasks-left > .lubi-list-card, .lubi-tasks-left > .lubi-agenda-host")].map((node) => node.classList.contains("lubi-agenda-host") ? "agenda" : node.textContent.includes("未安排") ? "inbox" : "today");
 check(JSON.stringify(visibleOrder) === JSON.stringify(["today", "agenda", "inbox"]), "agenda precedes inbox in DOM and keyboard order");
+// 原生拖放：未安排 → 上方选中日清单（整个卡片都是落点）。
+const taskTransfer = () => ({
+  values: new Map(), types: [], effectAllowed: "", dropEffect: "",
+  setData(type, value) { this.values.set(type, value); if (!this.types.includes(type)) this.types.push(type); },
+  getData(type) { return this.values.get(type) || ""; },
+});
+const dispatchTaskDrop = (target, type, transfer, relatedTarget = null) => {
+  const event = new window.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, { dataTransfer: { value: transfer }, relatedTarget: { value: relatedTarget } });
+  target.dispatchEvent(event);
+  return event;
+};
+const inboxSource = root.querySelector('button[aria-label^="安排 待安排事项 1 到"]').closest(".lubi-task");
+const inboxTransfer = taskTransfer();
+dispatchTaskDrop(inboxSource, "dragstart", inboxTransfer);
+check(inboxTransfer.getData("text/lubi-task") === "inbox-0" && inboxTransfer.effectAllowed === "move", "inbox drag carries task id and move semantics");
+const selectedCard = root.querySelector(".lubi-tasks-left .lubi-list-card");
+const unrelatedTransfer = taskTransfer(); unrelatedTransfer.setData("text/plain", "普通文字");
+check(!dispatchTaskDrop(selectedCard, "dragover", unrelatedTransfer).defaultPrevented && !selectedCard.classList.contains("is-drop"), "day list ignores external text drags");
+check(dispatchTaskDrop(selectedCard.querySelector(".lubi-panel-title"), "dragover", inboxTransfer).defaultPrevented && selectedCard.classList.contains("is-drop") && inboxTransfer.dropEffect === "move", "whole day card accepts inbox drag and highlights");
+dispatchTaskDrop(selectedCard, "dragleave", inboxTransfer, selectedCard.querySelector("input"));
+check(selectedCard.classList.contains("is-drop"), "moving between child elements keeps day drop highlight");
+dispatchTaskDrop(selectedCard, "dragleave", inboxTransfer);
+check(!selectedCard.classList.contains("is-drop"), "leaving day card clears drop highlight");
+const journalsBeforeInboxDrop = [...app.vault.files].filter(([path]) => path.startsWith("日记/"));
+const modalsBeforeInboxDrop = O.openModals.length;
+dispatchTaskDrop(selectedCard.querySelector(".lubi-task-list"), "drop", inboxTransfer);
+// DashboardView.refresh 合并刷新：等 150ms 防抖结束再断言可见列表。
+await new Promise(resolve => setTimeout(resolve, 220)); await tick();
+const droppedInboxTask = plugin.tasks.byId("inbox-0");
+check(droppedInboxTask.date === "2026-09-24" && droppedInboxTask.start === "" && droppedInboxTask.status === "todo", "drop schedules selected date as all-day without completing task");
+check(JSON.parse(app.vault.files.get("任务/任务数据.json")).tasks.find(t => t.id === "inbox-0").date === "2026-09-24", "inbox drop persists to task file");
+check(!plugin.tasks.inbox().some(t => t.id === "inbox-0") && root.querySelector(".lubi-tasks-left .lubi-list-card").textContent.includes("待安排事项 1"), "dropped task moves from inbox into day list");
+check(O.openModals.length === modalsBeforeInboxDrop && JSON.stringify([...app.vault.files].filter(([path]) => path.startsWith("日记/"))) === JSON.stringify(journalsBeforeInboxDrop), "drop opens no modal and creates no records");
+[...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); await tick(); await tick();
+check(plugin.tasks.byId("inbox-0").date === "" && plugin.tasks.inbox().some(t => t.id === "inbox-0"), "undo drop returns task to inbox");
+// 空日期列表也接受拖放，目标是所选日期而非系统当天。
+view.show("tasks", "2030-01-02"); await tick(); await tick();
+const emptyDayCard = root.querySelector(".lubi-tasks-left .lubi-list-card");
+check(!emptyDayCard.querySelector(".lubi-task"), "drop fixture has an empty selected-day list");
+dispatchTaskDrop(emptyDayCard.querySelector(".lubi-muted.lubi-pad"), "drop", inboxTransfer); await tick(); await tick();
+check(plugin.tasks.byId("inbox-0").date === "2030-01-02", "empty day card accepts drop using selected date");
+[...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); await tick(); await tick();
+view.show("tasks", "2026-09-24"); await tick(); await tick();
+
+// 清单拖拽排序：含计划时间的任务也可手动排序，不重排时间轴。
+{
+  const { blankTask } = await import("./core.mjs");
+  const D = "2030-02-03";
+  for (const [i, start] of ["08:00", "10:00", "12:00"].entries()) {
+    await plugin.tasks.upsert(blankTask({ id: `sort-${i}`, title: `排序任务${i}`, date: D, start, estimate: 15, order: i + 10 }));
+  }
+  view.show("tasks", D); await tick(); await tick();
+  const sortRows = () => [...root.querySelectorAll(".lubi-tasks-left .lubi-list-card:first-child .lubi-task[data-task-id]")];
+  const sortIds = () => sortRows().map(el => el.dataset.taskId);
+  const fireSort = (target, type, data, y) => {
+    const event = new window.MouseEvent(type, { bubbles: true, cancelable: true, clientY: y });
+    Object.defineProperty(event, "dataTransfer", { value: data }); target.dispatchEvent(event); return event;
+  };
+  const data = taskTransfer();
+  dispatchTaskDrop(sortRows()[2], "dragstart", data);
+  const target = sortRows()[0]; target.getBoundingClientRect = () => ({ top: 100, height: 40 });
+  const protectedData = { ...data, getData: () => "" };
+  check(fireSort(target, "dragover", protectedData, 105).defaultPrevented && target.classList.contains("is-sort-before"), "sort: protected dragover uses local dragging row and shows upper insertion mark");
+  const beforeSort = plugin.tasks.all.map(t => ({ ...t }));
+  const recordsBeforeSort = JSON.stringify([...app.vault.files].filter(([path]) => path.startsWith("日记/")));
+  const modalsBeforeSort = O.openModals.length;
+  fireSort(target, "drop", data, 105);
+  await new Promise(resolve => setTimeout(resolve, 220)); await tick();
+  check(JSON.stringify(sortIds()) === JSON.stringify(["sort-2", "sort-0", "sort-1"]), "sort: drag last task before first persists visible manual order even with start times");
+  check(plugin.tasks.all.every(t => JSON.stringify({ ...t, order: 0 }) === JSON.stringify({ ...beforeSort.find(old => old.id === t.id), order: 0 })), "sort: only order changes, schedule/status/notes/project remain unchanged");
+  check(recordsBeforeSort === JSON.stringify([...app.vault.files].filter(([path]) => path.startsWith("日记/"))) && O.openModals.length === modalsBeforeSort, "sort: no completion, journal writes, or modals");
+  await plugin.tasks.load(true); view.show("tasks", D); await tick(); await tick();
+  check(sortIds()[0] === "sort-2", "sort: saved order survives task store reload");
+  const data2 = taskTransfer(); dispatchTaskDrop(sortRows()[0], "dragstart", data2);
+  const bottom = sortRows()[2]; bottom.getBoundingClientRect = () => ({ top: 100, height: 40 });
+  fireSort(bottom, "dragover", data2, 135);
+  check(bottom.classList.contains("is-sort-after"), "sort: lower half shows after insertion mark");
+  fireSort(bottom, "drop", data2, 135); await new Promise(resolve => setTimeout(resolve, 220)); await tick();
+  check(JSON.stringify(sortIds()) === JSON.stringify(["sort-0", "sort-1", "sort-2"]), "sort: drag first task after last moves downward");
+  const self = taskTransfer(); dispatchTaskDrop(sortRows()[0], "dragstart", self);
+  fireSort(sortRows()[0], "drop", self, 0); await tick();
+  dispatchTaskDrop(root.querySelector(".lubi-tasks-left .lubi-list-card .lubi-panel-head"), "drop", self); await tick();
+  check(plugin.tasks.byId("sort-0").start === "08:00" && sortIds()[0] === "sort-0", "sort: self-drop and card blank/header drop never clear scheduled start");
+  sortRows()[1].dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowUp", altKey: true, bubbles: true, cancelable: true }));
+  await new Promise(resolve => setTimeout(resolve, 220)); await tick();
+  check(sortIds()[0] === "sort-1", "sort: Alt+ArrowUp supports keyboard reorder");
+  const ordersBeforeFailure = plugin.tasks.all.map(t => [t.id, t.order]);
+  const modifyBeforeFailure = app.vault.modify;
+  app.vault.modify = async () => { throw new Error("排序写入失败夹具"); };
+  try { await plugin.tasks.reorder(["sort-2", "sort-1", "sort-0"]); check(false, "sort: failed persistence should reject"); }
+  catch { check(JSON.stringify(plugin.tasks.all.map(t => [t.id, t.order])) === JSON.stringify(ordersBeforeFailure), "sort: failed persistence restores in-memory order"); }
+  finally { app.vault.modify = modifyBeforeFailure; }
+  view.show("tasks", "2026-09-24"); await tick(); await tick();
+}
+
 const assign = root.querySelector('button[aria-label^="安排 待安排事项 1 到"]');
 check(!!assign, "unscheduled task has non-drag scheduling action");
 assign.click(); await tick();
