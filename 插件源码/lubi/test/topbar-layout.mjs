@@ -33,7 +33,7 @@ if (!browser) {
     const esb = spawnSync(process.execPath, [join(project, "node_modules", "esbuild", "bin", "esbuild"), "src/main.ts", "--bundle", "--platform=node", "--format=cjs", "--external:obsidian", "--outfile=test/plugin.cjs", "--log-level=warning"], { cwd: project, encoding: "utf8" });
     assert.equal(esb.status, 0, `esbuild failed: ${esb.stderr}`);
   }
-  const gen = spawnSync(process.execPath, [join(project, "test", "preview.mjs")], { cwd: project, encoding: "utf8", timeout: 60000 });
+  const gen = spawnSync(process.execPath, [join(project, "test", "preview.mjs")], { cwd: project, encoding: "utf8", timeout: 60000, env: { ...process.env, LUBI_TEST_DAY_START_PLAN: "1" } });
   assert.equal(gen.status, 0, `preview generation failed: ${gen.stderr?.slice(-800)}`);
 
   const probe = `<pre id="lubi-result"></pre><script>
@@ -69,6 +69,59 @@ if (!browser) {
       const first = sc.querySelector(lab); if (!first || !first.textContent.trim()) continue;
       const a = r(sc), b = r(first);
       if (b.top < a.top - 0.5) out.clipped.push(sel + ' ' + first.textContent.trim() + ' top ' + Math.round(b.top - a.top) + 'px');
+    }
+    // Daily boundary labels must remain visible at both scroll limits.
+    out.dayBoundaryClipped = [];
+    {
+      const sc = document.querySelector(".lubi-timeline-scroll");
+      if (sc) {
+        for (const edge of [{ text: "00:00", position: 0, selector: ".lubi-hour-label.is-day-start" }, { text: "24:00", position: Math.max(0, sc.scrollHeight - sc.clientHeight), selector: ".lubi-hour-label.is-day-end" }]) {
+          sc.scrollTop = edge.position;
+          const label = sc.querySelector(edge.selector), box = r(label), frame = r(sc);
+          const visibleTop = frame.top + sc.clientTop, visibleBottom = visibleTop + sc.clientHeight;
+          if (!label || label.textContent.trim() !== edge.text || !box || getComputedStyle(label).visibility === "hidden" || box.top < visibleTop - 0.5 || box.bottom > visibleBottom + 0.5) out.dayBoundaryClipped.push(edge.text);
+          if (edge.text === "24:00" && label && box) {
+            const endLine = sc.querySelector(".lubi-tl-line.is-day-end"), endBox = r(endLine);
+            if (!endBox || Math.abs((box.top + box.bottom) / 2 - endBox.top) > 0.75 || box.right >= endBox.left) out.dayBoundaryClipped.push("24:00 must be centered immediately left of its rule");
+          }
+        }
+        sc.scrollTop = 0;
+      }
+    }
+    // Keep the weekly grid end marker visible after scrolling to the configured last hour.
+    out.weekEndClipped = [];
+    {
+      const sc = document.querySelector(".lubi-week-body");
+      if (sc && getComputedStyle(sc).display !== "none") {
+        sc.scrollTop = Math.max(0, sc.scrollHeight - sc.clientHeight);
+        const end = sc.querySelector(".lubi-week-hour.is-day-end"), box = r(end), frame = r(sc);
+        const visibleTop = frame.top + sc.clientTop, visibleBottom = visibleTop + sc.clientHeight;
+        const columns = [...sc.querySelectorAll(".lubi-week-col")];
+        const endLines = [...sc.querySelectorAll(".lubi-week-line.is-day-end")];
+        if (!end || end.textContent.trim() !== "24:00" || !box || getComputedStyle(end).visibility === "hidden" || box.top < visibleTop - 0.5 || box.bottom > visibleBottom + 0.5 || endLines.length !== columns.length || endLines.some((line, i) => line.style.top !== columns[i]?.style.height)) out.weekEndClipped.push("24:00");
+        sc.scrollTop = 0;
+      }
+    }
+    // The midnight line and plan lane start below a visible top gutter.
+    out.dayTopInset = null;
+    {
+      const sc = document.querySelector(".lubi-timeline-scroll");
+      const timeline = sc?.querySelector(".lubi-timeline"), line = timeline?.querySelector(".lubi-tl-line.is-first"), label = timeline?.querySelector(".lubi-hour-label.is-day-start");
+      if (sc && timeline && line && label) {
+        sc.scrollTop = 0;
+        const frame = r(sc), grid = r(timeline);
+        out.dayTopInset = grid.top - frame.top - sc.clientTop;
+        out.midnightLineOffset = r(line).top - grid.top;
+        out.midnightLabelOffset = r(label).top - grid.top;
+        out.paddingTop = parseFloat(getComputedStyle(sc).paddingTop) || 0;
+        const planTitle = timeline.querySelector(".lubi-plan-lane-title");
+        const qaPlan = [...timeline.querySelectorAll(".lubi-plan")].find(plan => plan.querySelector(".lubi-plan-title")?.textContent === "午夜计划（布局回归）");
+        out.dayPlanTitleOffset = planTitle ? r(planTitle).top - grid.top : null;
+        out.dayPlanBlockOffset = qaPlan ? r(qaPlan).top - grid.top : null;
+        out.dayPlanTitleGap = planTitle && qaPlan ? r(qaPlan).top - r(planTitle).bottom : null;
+        out.dayStartGutterPx = parseFloat(timeline.style.getPropertyValue("--lubi-day-start-gutter")) || 0;
+        out.hourPx = r(timeline.querySelector(".lubi-tl-canvas")).height / 24;
+      }
     }
     // WCAG contrast of every visible text node against its nearest opaque background
     const parse = (c) => { const m = (c.match(/[\d.]+/g) || []).map(Number); if (c.startsWith('color(')) { const v = m.slice(0, 3).map((x) => x * 255); if (m.length > 3) v.push(m[3]); return v; } return m; };
@@ -121,6 +174,15 @@ if (!browser) {
           assert(!g.zoneOverlap, `${theme} ${page} ${width}px: top bar zones overlap ${JSON.stringify(g)}`);
           assert(g.minFont >= 11, `${theme} ${page} ${width}px: text below 11px (${g.minFont}px at ${g.minAt})`);
           assert.deepEqual(g.lowContrast, [], `${theme} ${page} ${width}px: text contrast below 4.5:1: ${g.lowContrast.join("; ")}`);
+          assert.deepEqual(g.weekEndClipped, [], `${theme} ${page} ${width}px: clipped weekly 24:00 boundary ${g.weekEndClipped.join(", ")}`);
+          if (page === "today") {
+            assert(Math.abs(g.dayTopInset) <= 0.5 && g.paddingTop === 0, `${theme} ${width}px: move the 00:00 origin inside the grid, not the whole scroller ${JSON.stringify(g)}`);
+            assert(g.dayStartGutterPx === 32 && Math.abs(g.midnightLineOffset - 32) <= 0.5 && Math.abs(g.midnightLabelOffset - 32) <= 0.5, `${theme} ${width}px: reserve the 24px plan-title row above 00:00 ${JSON.stringify(g)}`);
+            assert(g.dayPlanTitleGap >= 0, `${theme} ${width}px: midnight plan card overlaps the sticky plan title ${JSON.stringify(g)}`);
+            assert(Math.abs(g.dayPlanTitleOffset) <= 0.5, `${theme} ${width}px: plan title should live in the header row ${JSON.stringify(g)}`);
+            assert(Math.abs(g.dayPlanBlockOffset - (g.dayStartGutterPx + 5 * g.hourPx / 60)) <= 0.5, `${theme} ${width}px: a 00:05 plan should stay on its real time line ${JSON.stringify(g)}`);
+          }
+          assert.deepEqual(g.dayBoundaryClipped, [], `${theme} ${page} ${width}px: clipped daily boundary labels ${g.dayBoundaryClipped.join(", ")}`);
           assert.deepEqual(g.clipped, [], `${theme} ${page} ${width}px: first hour label clipped: ${g.clipped.join("; ")}`);
         }
         const values = Object.values(xs);

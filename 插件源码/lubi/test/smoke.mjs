@@ -35,6 +35,11 @@ console.log("notices:", O.notices.slice(-3));
 const view = await plugin.activateView("today", "2026-09-24");
 await tick();
 const root = view.contentEl;
+const initialHourLabels = [...root.querySelectorAll(".lubi-hour-label")];
+check(initialHourLabels.length === 25 && initialHourLabels[0]?.textContent === "00:00" && initialHourLabels[24]?.textContent === "24:00", "ruler: labels every hour from 00:00 through 24:00");
+check(initialHourLabels[0]?.classList.contains("is-day-start") && initialHourLabels[24]?.classList.contains("is-day-end"), "ruler: day boundary labels use dedicated alignment");
+check(root.querySelector(".lubi-timeline")?.style.getPropertyValue("--lubi-day-start-gutter") === "32px" && root.querySelector(".lubi-tl-gutter")?.style.top === "" && initialHourLabels[0]?.style.top === "32px", "ruler: reserve a 32px plan header above 00:00");
+check(root.querySelector(".lubi-tl-canvas")?.style.bottom === "16px" && root.querySelector(".lubi-tl-line.is-day-end")?.style.top === initialHourLabels[24]?.style.top, "ruler: 24:00 has its own rule and lower clearance without adding schedulable time");
 const blocks = () => [...root.querySelectorAll(".lubi-block:not(.lubi-block-ghost)")];
 check(blocks().length === 1, "today timeline shows 1 block");
 check(root.querySelector(".lubi-donut") !== null, "donut rendered");
@@ -46,6 +51,11 @@ view.review.period = "month"; view.show("review"); await tick(); await tick();
 check(root.querySelectorAll(".lubi-bar-col").length === 30, "review month has 30 bars");
 view.show("tasks", "2026-09-24"); await tick();
 check(root.querySelectorAll(".lubi-week-col").length === 7, "week schedule 7 columns");
+const weekTicks = [...root.querySelectorAll(".lubi-week-hour")];
+const weekColumns = [...root.querySelectorAll(".lubi-week-col")];
+const bottomLines = [...root.querySelectorAll(".lubi-week-line.is-day-end")];
+check(weekTicks[0]?.textContent === "06:00" && weekTicks.at(-1)?.textContent === "24:00", "week ruler: final configured hour appears at the bottom");
+check(bottomLines.length === 7 && bottomLines.every(line => line.style.top === weekColumns[0]?.style.height), "week ruler: 24:00 boundary aligns across all seven columns");
 check(root.querySelectorAll(".lubi-wblock").length >= 1, `week blocks: ${root.querySelectorAll(".lubi-wblock").length}`);
 check(root.querySelector(".lubi-project-toggle")?.getAttribute("aria-expanded") === "false", "project section starts collapsed");
 root.querySelector(".lubi-project-toggle")?.click(); await new Promise((resolve) => setTimeout(resolve, 200)); await tick();
@@ -619,6 +629,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   check(root.querySelectorAll(".lubi-icon-btn[aria-label]").length > 0, "tooltip: icon buttons keep their Obsidian tooltip (aria-label)");
 }
 
+
 // ---------- v1.5：计划层 + 待确认记录 ----------
 {
   const D = "2026-09-26", ID = "plan-1";
@@ -813,6 +824,33 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   check(!root.querySelector(".lubi-error"), "estimate UI: no render errors after snapshot / edit / copy / repeat flows");
 }
 
+// ---------- 时间轴边界刻度及当前时间标签 ----------
+{
+  const NativeDate = globalThis.Date;
+  let clock = new NativeDate(2026, 8, 24, 0, 5).getTime();
+  class FrozenDate extends NativeDate {
+    constructor(...args) { if (args.length) super(...args); else super(clock); }
+    static now() { return clock; }
+  }
+  const D = "2026-09-24";
+  const settle = async () => { for (let i = 0; i < 3; i++) await tick(); };
+  try {
+    globalThis.Date = FrozenDate;
+    for (const item of [
+      { hour: 0, minute: 5, badge: "is-near-day-start" },
+      { hour: 12, minute: 0, badge: "" },
+      { hour: 23, minute: 55, badge: "is-near-day-end" },
+    ]) {
+      clock = new NativeDate(2026, 8, 24, item.hour, item.minute).getTime();
+      view.show("today", D); await settle();
+      const labels = [...root.querySelectorAll(".lubi-hour-label")];
+      const nowLabel = root.querySelector(".lubi-now-label");
+      const time = String(item.hour).padStart(2, "0") + ":" + String(item.minute).padStart(2, "0");
+      check(labels[0]?.textContent === "00:00" && !labels[0].classList.contains("is-hidden") && labels[24]?.textContent === "24:00" && !labels[24].classList.contains("is-hidden"), "ruler: both boundary labels remain visible at " + time);
+      check(item.badge ? nowLabel?.classList.contains(item.badge) && parseFloat(nowLabel.style.top) >= (item.badge === "is-near-day-start" ? parseFloat(root.querySelector(".lubi-timeline").style.getPropertyValue("--lubi-day-start-gutter")) + 24 : 0) : !!nowLabel && !nowLabel.classList.contains("is-near-day-start") && !nowLabel.classList.contains("is-near-day-end"), "ruler: current-time badge is clear at " + time);
+    }
+  } finally { globalThis.Date = NativeDate; view.show("today", D); await settle(); }
+}
 console.log("data file now:", app.vault.files.get("任务/任务数据.json").slice(0, 120).replace(/\n/g, " "));
 console.log(fails ? `\n${fails} FAILED` : "\nSMOKE ALL PASSED");
 process.exit(fails ? 1 : 0);

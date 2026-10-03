@@ -270,6 +270,9 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
     l.style.top = `${(h - startH) * HOUR_PX}px`;
     l.setText(`${String(h).padStart(2, "0")}:00`);
   }
+  const endLabel = hours.createDiv({ cls: "lubi-week-hour is-day-end" });
+  endLabel.style.top = `${(endH - startH) * HOUR_PX}px`;
+  endLabel.setText(`${String(endH).padStart(2, "0")}:00`);
   // 悬停十字指示：横向虚线贯穿整周（当前列加深）+ 当前列与表头高亮 + 左侧刻度栏时间标签；拖动时跟随
   const hoverLabel = hours.createDiv({ cls: "lubi-week-hover-label", attr: { "aria-hidden": "true" } });
   const hovers: HTMLElement[] = [];
@@ -328,6 +331,8 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
       const half = col.createDiv({ cls: "lubi-week-line is-half" });
       half.style.top = `${(h - startH + 0.5) * HOUR_PX}px`;
     }
+    const endLine = col.createDiv({ cls: "lubi-week-line is-day-end" });
+    endLine.style.top = `${(endH - startH) * HOUR_PX}px`;
     if (d === todayStr()) {
       const now = col.createDiv({ cls: "lubi-now" });
       now.style.top = `${((hmToMin(nowHM()) - startH * 60) / 60) * HOUR_PX}px`;

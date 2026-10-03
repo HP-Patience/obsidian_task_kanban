@@ -14,6 +14,9 @@ import { addRecordAsDone, afterDone, completeFromRecord, dayTasks, deleteRecord,
 import type { Task } from "../core/tasks";
 
 const PX_PER_MIN = HOUR_PX / 60;
+// A dedicated header row keeps the plan-lane title above midnight tasks.
+const DAY_START_GUTTER_PX = 32;
+const DAY_END_GUTTER_PX = 16;
 const snap5 = (m: number) => Math.max(0, Math.min(1440, Math.round(m / 5) * 5));
 
 interface Lane {
@@ -78,23 +81,26 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const tlWrap = left.createDiv({ cls: "lubi-timeline-wrap" });
   const scroller = tlWrap.createDiv({ cls: "lubi-timeline-scroll" });
   const tl = scroller.createDiv({ cls: `lubi-timeline ${money.length ? "has-rail" : ""}`.trim(), attr: { tabindex: "0" } });
-  tl.style.height = `${24 * HOUR_PX}px`;
+  tl.style.height = `${24 * HOUR_PX + DAY_START_GUTTER_PX + DAY_END_GUTTER_PX}px`;
+  tl.style.setProperty("--lubi-day-start-gutter", `${DAY_START_GUTTER_PX}px`);
   const gutter = tl.createDiv({ cls: "lubi-tl-gutter" });
+
   const hourLabels: HTMLElement[] = [];
   for (let h = 0; h <= 24; h++) {
+    const line = tl.createDiv({ cls: `lubi-tl-line ${h === 0 ? "is-first" : h === 24 ? "is-day-end" : ""}`.trim() });
+    line.style.top = `${DAY_START_GUTTER_PX + h * HOUR_PX}px`;
     if (h < 24) {
-      const line = tl.createDiv({ cls: `lubi-tl-line ${h === 0 ? "is-first" : ""}`.trim() });
-      line.style.top = `${h * HOUR_PX}px`;
       const half = tl.createDiv({ cls: "lubi-tl-line lubi-tl-line-half" });
-      half.style.top = `${(h + 0.5) * HOUR_PX}px`;
+      half.style.top = `${DAY_START_GUTTER_PX + (h + 0.5) * HOUR_PX}px`;
     }
-    if (h > 0 && h < 24) {
-      const lab = gutter.createSpan({ cls: "lubi-hour-label", text: `${String(h).padStart(2, "0")}:00` });
-      lab.style.top = `${h * HOUR_PX}px`;
-      hourLabels[h] = lab;
-    }
+    const edgeClass = h === 0 ? " is-day-start" : h === 24 ? " is-day-end" : "";
+    const lab = gutter.createSpan({ cls: `lubi-hour-label${edgeClass}`, text: `${String(h).padStart(2, "0")}:00` });
+    lab.style.top = `${DAY_START_GUTTER_PX + h * HOUR_PX}px`;
+    hourLabels[h] = lab;
   }
   const canvas = tl.createDiv({ cls: "lubi-tl-canvas" });
+  canvas.style.top = `${DAY_START_GUTTER_PX}px`;
+  canvas.style.bottom = `${DAY_END_GUTTER_PX}px`;
   // 悬停指示线
   const hover = canvas.createDiv({ cls: "lubi-tl-hover" });
   const hoverLabel = hover.createSpan({ cls: "lubi-tl-hover-label" });
@@ -114,11 +120,19 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   if (date === todayStr()) {
     const nowMin = hmToMin(nowHM());
     const now = tl.createDiv({ cls: "lubi-now" });
-    now.style.top = `${nowMin * PX_PER_MIN}px`;
+    now.style.top = `${DAY_START_GUTTER_PX + nowMin * PX_PER_MIN}px`;
     const nl = gutter.createSpan({ cls: "lubi-now-label", text: nowHM() });
-    nl.style.top = `${nowMin * PX_PER_MIN}px`;
+    nl.style.top = `${DAY_START_GUTTER_PX + nowMin * PX_PER_MIN}px`;
     const nearHour = Math.round(nowMin / 60);
-    if (Math.abs(nowMin - nearHour * 60) <= 12 && hourLabels[nearHour]) hourLabels[nearHour].addClass("is-hidden");
+    if (nearHour > 0 && nearHour < 24 && Math.abs(nowMin - nearHour * 60) <= 12 && hourLabels[nearHour]) hourLabels[nearHour].addClass("is-hidden");
+    // Keep the live-time badge between the endpoint label and its neighboring hour label.
+    if (nowMin < 30) {
+      nl.addClass("is-near-day-start");
+      nl.style.top = `${Math.max(DAY_START_GUTTER_PX + 24, DAY_START_GUTTER_PX + nowMin * PX_PER_MIN)}px`;
+    } else if (nowMin > 1440 - 30) {
+      nl.addClass("is-near-day-end");
+      nl.style.top = `${Math.min(DAY_START_GUTTER_PX + 24 * HOUR_PX - 24, DAY_START_GUTTER_PX + nowMin * PX_PER_MIN)}px`;
+    }
   }
 
   // 所有记录边缘（Alt 吸附用）
@@ -176,14 +190,15 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   }, (rec) => completeFromRecord(plugin, t.id, date, rec));
   if (timedPlans.length) {
     const lane = canvas.createDiv({ cls: "lubi-plan-lane", attr: { "aria-label": "当天计划" } });
+    lane.style.top = `${-DAY_START_GUTTER_PX}px`;
     lane.createDiv({ cls: "lubi-plan-lane-title", text: "计划" });
     for (const t of timedPlans) {
       const cat = categoryOf(plugin.settings, t.category);
       const s0 = hmToMin(t.start);
-      const mins = Math.max(15, t.estimate || 30);
+      const mins = Math.max(5, t.estimate || 30);
       const h = Math.max(Math.min(mins, 1440 - s0) * PX_PER_MIN, 20);
       const pb = lane.createEl("button", { cls: "lubi-plan", attr: { type: "button" } });
-      pb.style.top = `${s0 * PX_PER_MIN}px`;
+      pb.style.top = `${DAY_START_GUTTER_PX + s0 * PX_PER_MIN}px`;
       pb.style.height = `${h - 2}px`;
       pb.style.setProperty("--chip", cat.color);
       pb.toggleClass("is-compact", h < 34);

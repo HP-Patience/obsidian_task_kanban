@@ -21,6 +21,17 @@ const plugin = new LubiPlugin(app, { id: "lubi", version: "1.1.0" });
 await plugin.onload();
 for (const fn of app.workspace._ready) await fn();
 await tick();
+if (process.env.LUBI_TEST_DAY_START_PLAN === "1") {
+  const now = new Date().toISOString();
+  await plugin.tasks.upsert({
+    id: "layout-midnight-plan", title: "午夜计划（布局回归）",
+    category: plugin.settings.categories.find((c) => c.kind === "time")?.name || "学习",
+    parent: null, status: "todo", blocked: false, date: T, start: "00:05", estimate: 15,
+    repeat: { kind: "none", days: [] }, doneDates: [], doneLogs: undefined, skipDates: [],
+    startDate: T, endDate: "", notes: "", order: Number.MAX_SAFE_INTEGER, doneAt: "",
+    created: now, updated: now,
+  });
+}
 plugin.settings.onboardingDone = true;
 const view = await plugin.activateView("today", T);
 await tick(200);

@@ -154,7 +154,7 @@
   height: calc(100vh - 180px); min-height: 420px; overflow-y: auto;
   border: 1px solid var(--lubi-border); border-radius: 12px; background: var(--lubi-card-bg);
 }
-.lubi-timeline { position: relative; --rail-w: 0px; outline: none; }
+.lubi-timeline { position: relative; --lubi-day-start-gutter: 32px; --rail-w: 0px; outline: none; }
 .lubi-timeline.has-rail { --rail-w: var(--lubi-rail); }
 .lubi-tl-gutter { position: absolute; left: 0; top: 0; bottom: 0; width: var(--lubi-gutter); border-right: 1px solid var(--lubi-border); pointer-events: none; }
 .lubi-hour-label {
@@ -163,8 +163,12 @@
   background: var(--lubi-card-bg); padding: 2px 0;
 }
 .lubi-hour-label.is-hidden { visibility: hidden; }
+/* Boundary hour labels sit just inside the 24-hour grid instead of clipping at its ends. */
+.lubi-hour-label.is-day-start { transform: none; }
+.lubi-hour-label.is-day-end { transform: translateY(-50%); }
+.lubi-now-label.is-near-day-start, .lubi-now-label.is-near-day-end { transform: none; }
 .lubi-tl-line { position: absolute; left: var(--lubi-gutter); right: 0; height: 0; border-top: 1px solid var(--lubi-border); pointer-events: none; }
-.lubi-tl-line.is-first { border-top-color: transparent; }
+.lubi-tl-line.is-first { border-top-color: var(--lubi-border); }
 .lubi-tl-line-half { border-top-style: dashed; opacity: 0.45; }
 .lubi-tl-canvas {
   position: absolute; top: 0; bottom: 0; left: var(--lubi-gutter);
@@ -327,6 +331,7 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-week-body { grid-column: 1 / -1; display: grid; grid-template-columns: 48px repeat(7, minmax(0, 1fr)); max-height: calc(100vh - 320px); min-height: 360px; overflow-y: auto; border-top: 1px solid var(--lubi-border); }
 .lubi-week-hours { position: relative; border-right: 1px solid var(--lubi-border); }
 .lubi-week-hour { position: absolute; right: 6px; transform: translateY(-50%); font-size: 11px; color: var(--lubi-muted); font-variant-numeric: tabular-nums; }
+.lubi-week-hour.is-day-end { transform: translateY(-100%); }
 .lubi-week-col { position: relative; border-right: 1px solid var(--lubi-border); }
 .lubi-week-col:last-child { border-right: none; }
 /* 周日程空白处拖出新任务时的虚线预览 */
@@ -1210,7 +1215,7 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-root .lubi-tl-canvas { --lubi-plan-w: 0px; --lubi-rec-w: calc(100% - var(--lubi-plan-w)); }
 .lubi-root .lubi-tl-canvas.has-plans { --lubi-plan-w: 30%; }
 .lubi-root .lubi-tl-canvas.has-plans .lubi-gap { right: calc(var(--lubi-plan-w) + 8px); }
-.lubi-plan-lane { position: absolute; top: 0; bottom: 0; right: 0; width: var(--lubi-plan-w); border-left: 1px dashed var(--lubi-line); box-sizing: border-box; pointer-events: none; }
+.lubi-plan-lane { position: absolute; top: calc(-1 * var(--lubi-day-start-gutter, 24px)); bottom: 0; right: 0; width: var(--lubi-plan-w); border-left: 1px dashed var(--lubi-line); box-sizing: border-box; pointer-events: none; }
 .lubi-plan-lane-title {
   position: sticky; top: 0; z-index: 3; padding: 4px 8px; font-size: var(--lubi-fs-xs); font-weight: 600; letter-spacing: 0.04em;
   color: var(--lubi-muted); background: color-mix(in srgb, var(--lubi-card-bg) 88%, transparent);
