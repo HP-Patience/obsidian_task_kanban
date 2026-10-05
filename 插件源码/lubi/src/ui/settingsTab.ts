@@ -1,9 +1,12 @@
-import { App, DropdownComponent, Notice, PluginSettingTab, requestUrl, Setting, TextComponent } from "obsidian";
+import { App, Notice, PluginSettingTab, requestUrl, Setting, TextComponent } from "obsidian";
 import type LubiPlugin from "../main";
 import { CategoryDef, DEFAULT_CATEGORIES } from "../settings";
 import { accentConflicts, parseColor, resolveDefault, RGB } from "../core/color";
 import { ConfirmModal } from "./modals";
 import { curlJson } from "../core/curl";
+import { iconButton, tip } from "./components";
+
+let settingsLabelId = 0;
 
 const COLORS = [
   ["蓝", "var(--color-blue)"],
@@ -41,73 +44,140 @@ export class LubiSettingTab extends PluginSettingTab {
     containerEl.addClass("lubi-settings");
     const s = this.plugin.settings;
     const save = () => void this.plugin.saveSettings();
+    const section = (title: string) => {
+      const host = containerEl.createDiv({ cls: "lubi-settings-section" });
+      host.createEl("h3", { text: title });
+      return host;
+    };
+    const field = (parent: HTMLElement, control: HTMLElement, label: string, column: string) => {
+      const wrap = parent.createEl(control.matches("input, select, textarea") ? "label" : "div", { cls: "lubi-settings-field", attr: { "data-category-field": column } });
+      const caption = wrap.createSpan({ cls: "lubi-settings-field-label", text: label, attr: { id: `lubi-setting-label-${++settingsLabelId}` } });
+      wrap.appendChild(control);
+      if (control.tagName !== "BUTTON") { control.removeAttribute("aria-label"); control.setAttribute("aria-labelledby", caption.id); }
+    };
 
-    new Setting(containerEl).setName("日记文件夹").setDesc("每天一个 YYYY-MM-DD.md，记录写在 ## 记录 下").addText((t) => t.setValue(s.journalFolder).onChange((v) => { s.journalFolder = v.trim() || "日记"; save(); }));
-    new Setting(containerEl).setName("任务数据文件").addText((t) => t.setValue(s.taskFile).onChange((v) => { s.taskFile = v.trim() || "任务/任务数据.json"; save(); }));
-    new Setting(containerEl).setName("备份文件夹").setDesc("迁移旧数据前的整份备份放在这里").addText((t) => t.setValue(s.backupFolder).onChange((v) => { s.backupFolder = v.trim() || "备份"; save(); }));
+    const basics = section("数据与日程");
+    new Setting(basics).setName("日记文件夹").setDesc("每天一份日记，记录写入「记录」章节").addText((t) => {
+      t.inputEl.setAttribute("aria-label", "日记文件夹");
+      return t.setValue(s.journalFolder).onChange((v) => { s.journalFolder = v.trim() || "日记"; save(); });
+    });
+    new Setting(basics).setName("任务数据文件").addText((t) => {
+      t.inputEl.setAttribute("aria-label", "任务数据文件");
+      return t.setValue(s.taskFile).onChange((v) => { s.taskFile = v.trim() || "任务/任务数据.json"; save(); });
+    });
+    new Setting(basics).setName("备份文件夹").setDesc("旧数据迁移前的备份位置").addText((t) => {
+      t.inputEl.setAttribute("aria-label", "备份文件夹");
+      return t.setValue(s.backupFolder).onChange((v) => { s.backupFolder = v.trim() || "备份"; save(); });
+    });
+    const range = new Setting(basics).setName("日程时间范围").setDesc("用于计划页周日程，结束应晚于开始");
+    range.settingEl.addClass("lubi-settings-range");
+    range.controlEl.createSpan({ text: "从" });
+    range.addDropdown((d) => {
+      for (let h = 0; h < 24; h++) d.addOption(String(h), `${String(h).padStart(2, "0")}:00`);
+      d.selectEl.setAttribute("aria-label", "日程开始时间");
+      d.selectEl.dataset.setting = "schedule-start";
+      d.setValue(String(s.scheduleStartHour)).onChange((v) => { s.scheduleStartHour = clamp(Number(v), 0, 23, 6); save(); });
+    });
+    range.controlEl.createSpan({ text: "到" });
+    range.addDropdown((d) => {
+      for (let h = 1; h <= 24; h++) d.addOption(String(h), `${String(h).padStart(2, "0")}:00`);
+      d.selectEl.setAttribute("aria-label", "日程结束时间");
+      d.selectEl.dataset.setting = "schedule-end";
+      d.setValue(String(s.scheduleEndHour)).onChange((v) => { s.scheduleEndHour = clamp(Number(v), 1, 24, 24); save(); });
+    });
+    new Setting(basics).setName("完成任务时自动记一条").setDesc("按计划时间生成待确认记录，可核对和撤销").addToggle((t) => {
+      t.toggleEl.setAttribute("aria-label", "完成任务时自动记一条");
+      return t.setValue(s.promptLogOnComplete).onChange((v) => { s.promptLogOnComplete = v; save(); });
+    });
+    new Setting(basics).setName("每日可用小时").setDesc("用于计划负载计算，不代表实际投入").addText((t) => {
+      t.inputEl.setAttribute("aria-label", "每日可用小时");
+      return t.setPlaceholder("8").setValue(String(s.dailyCapacityHours ?? 8)).onChange((v) => { s.dailyCapacityHours = clamp(Number(v), 1, 24, 8); save(); });
+    });
 
-    new Setting(containerEl).setName("日程显示时段").setDesc("任务页周日程的起止小时").addText((t) => t.setPlaceholder("6").setValue(String(s.scheduleStartHour)).onChange((v) => { s.scheduleStartHour = clamp(Number(v), 0, 23, 6); save(); })).addText((t) => t.setPlaceholder("24").setValue(String(s.scheduleEndHour)).onChange((v) => { s.scheduleEndHour = clamp(Number(v), 1, 24, 24); save(); }));
-    new Setting(containerEl).setName("勾掉任务时自动记一条").setDesc("完成任务后直接在时间轴生成记录（按计划开始时间；没有则从此刻往前推预计时长），可撤销，可拖动调整").addToggle((t) => t.setValue(s.promptLogOnComplete).onChange((v) => { s.promptLogOnComplete = v; save(); }));
-    new Setting(containerEl).setName("每日可用小时").setDesc("任务页周日程表头的负载条：计划时长 ÷ 可用小时，≥90% 变橙、超过变红").addText((t) => t.setPlaceholder("8").setValue(String(s.dailyCapacityHours ?? 8)).onChange((v) => { s.dailyCapacityHours = clamp(Number(v), 1, 24, 8); save(); }));
-
-    new Setting(containerEl).setName("AI 任务创建").setHeading();
-    containerEl.createEl("p", { cls: "lubi-muted", text: "AI 只解析当前输入，确认后才会创建任务。支持 Ollama 及其他 OpenAI 兼容接口。" });
-    new Setting(containerEl).setName("AI 接口地址").setDesc("例如 Ollama：http://127.0.0.1:11434/v1/chat/completions").addText((t) => t.setValue(s.aiEndpoint).onChange((v) => { s.aiEndpoint = v.trim(); save(); }));
-    let modelDropdown: DropdownComponent | undefined;
-    let modelText: TextComponent | undefined;
-    const modelSetting = new Setting(containerEl).setName("AI 模型").setDesc("可手动填写，也可以从接口获取模型列表");
-    modelSetting.addText((t) => { modelText = t; return t.setValue(s.aiModel).setPlaceholder("qwen2.5:7b").onChange((v) => { s.aiModel = v.trim(); if (s.aiModel && modelDropdown?.selectEl.querySelector(`option[value="${CSS.escape(s.aiModel)}"]`)) modelDropdown.setValue(s.aiModel); save(); }); });
-    modelSetting.addDropdown((d) => { modelDropdown = d; d.addOption(s.aiModel || "", s.aiModel || "手动输入的模型").setValue(s.aiModel || "").onChange((v) => { s.aiModel = v; modelText?.setValue(v); save(); }); return d; });
-    modelSetting.addButton((b) => b.setButtonText("获取模型列表").onClick(() => void loadAiModels(s, modelDropdown, modelText, save)));
-    modelSetting.addButton((b) => b.setButtonText("测试连接").onClick(() => void testAiConnection(s)));
-    new Setting(containerEl).setName("AI API Key").setDesc("本地 Ollama 可留空；云端接口按服务商要求填写").addText((t) => { t.inputEl.type = "password"; return t.setValue(s.aiApiKey).onChange((v) => { s.aiApiKey = v.trim(); save(); }); });
-
-    // 分类
-    new Setting(containerEl).setName("分类").setHeading();
-    containerEl.createEl("p", { cls: "lubi-muted", text: "「时间」类记时长，「金钱」类记金额。图标名来自 lucide.dev。勾选「背景」的分类（如睡眠）在时间轴与图表中以斜纹降权显示。" });
-    const warn = containerEl.createDiv({ cls: "lubi-settings-warn" });
-    const list = containerEl.createDiv({ cls: "lubi-cat-settings" });
+    const categories = section("分类");
+    categories.createEl("p", { cls: "lubi-settings-note", text: "时间类记时长，金钱类记金额。背景时间用于睡眠等低强调分类。" });
+    const warn = categories.createDiv({ cls: "lubi-settings-warn" });
+    const list = categories.createDiv({ cls: "lubi-cat-settings" });
     const checkAccent = () => {
       warn.empty();
       const hits = accentConflicts(s.categories, "var(--interactive-accent)", resolveLive);
       warn.toggleClass("is-on", hits.length > 0);
-      if (hits.length) warn.setText(`「${hits.join("、")}」与主题强调色接近：按钮、当前页签也是这个颜色，容易把数据和可点的控件混淆。建议换一个颜色。`);
+      if (hits.length) warn.setText(`「${hits.join("、")}」与按钮强调色接近，建议换色，避免混淆数据与操作。`);
     };
     const draw = () => {
-      list.empty();
-      checkAccent();
+      list.empty(); checkAccent();
+      const header = list.createDiv({ cls: "lubi-category-header", attr: { "aria-hidden": "true" } });
+      for (const title of ["名称", "图标", "颜色", "背景", "类型", "操作"]) header.createSpan({ text: title });
       s.categories.forEach((c, i) => {
-        const st = new Setting(list);
-        st.addText((t) => t.setPlaceholder("名称").setValue(c.name).onChange((v) => { c.name = v.trim() || c.name; save(); }));
-        st.addText((t) => t.setPlaceholder("lucide 图标").setValue(c.icon).onChange((v) => { c.icon = v.trim() || "tag"; save(); }));
-        st.addDropdown((d) => {
-          for (const [l, v] of COLORS) d.addOption(v, l);
-          if (!COLORS.some(([, v]) => v === c.color)) d.addOption(c.color, "自定义");
+        const row = new Setting(list);
+        row.settingEl.addClass("lubi-category-row");
+        const controls = row.controlEl;
+        controls.addClass("lubi-category-controls");
+        row.addText((t) => { field(controls, t.inputEl, "名称", "name"); return t.setValue(c.name).onChange((v) => { c.name = v.trim() || c.name; tip(remove, `删除分类：${c.name}`); tip(up, `上移分类：${c.name}`); save(); }); });
+        row.addText((t) => { field(controls, t.inputEl, "图标", "icon"); return t.setPlaceholder("图标名").setValue(c.icon).onChange((v) => { c.icon = v.trim() || "tag"; save(); }); });
+        row.addDropdown((d) => {
+          field(controls, d.selectEl, "颜色", "color");
+          for (const [name, value] of COLORS) d.addOption(value, name);
+          if (!COLORS.some(([, value]) => value === c.color)) d.addOption(c.color, "自定义");
           d.setValue(c.color).onChange((v) => { c.color = v; save(); checkAccent(); });
         });
-        st.addToggle((t) => { t.setValue(!!c.rest).onChange((v) => { c.rest = v || undefined; save(); }); (t as unknown as { toggleEl?: HTMLElement }).toggleEl?.setAttribute("aria-label", "背景时间"); return t; });
-        st.addDropdown((d) => d.addOption("time", "时间").addOption("money", "金钱").setValue(c.kind).onChange((v) => { c.kind = v as CategoryDef["kind"]; save(); }));
-        st.addExtraButton((b) => b.setIcon("arrow-up").setTooltip("上移").setDisabled(i === 0).onClick(() => { [s.categories[i - 1], s.categories[i]] = [s.categories[i], s.categories[i - 1]]; save(); draw(); }));
-        st.addExtraButton((b) => b.setIcon("trash-2").setTooltip("删除").onClick(() => { s.categories.splice(i, 1); save(); draw(); }));
+        row.addToggle((t) => { field(controls, t.toggleEl, "背景时间", "background"); return t.setValue(!!c.rest).onChange((v) => { c.rest = v || undefined; save(); }); });
+        row.addDropdown((d) => { field(controls, d.selectEl, "类型", "kind"); return d.addOption("time", "时间").addOption("money", "金钱").setValue(c.kind).onChange((v) => { c.kind = v as CategoryDef["kind"]; save(); }); });
+        const actions = controls.createDiv({ cls: "lubi-category-actions" });
+        const up = iconButton(actions, "arrow-up", `上移分类：${c.name}`, () => { [s.categories[i - 1], s.categories[i]] = [s.categories[i], s.categories[i - 1]]; save(); draw(); });
+        up.addClass("lubi-category-up");
+        up.disabled = i === 0;
+        const remove = iconButton(actions, "trash-2", `删除分类：${c.name}`, () => { s.categories.splice(i, 1); save(); draw(); });
+        remove.addClass("lubi-category-remove");
       });
-      const add = new Setting(list);
-      add.addButton((b) => b.setButtonText("添加分类").onClick(() => { s.categories.push({ name: "新分类", icon: "tag", color: "var(--color-base-60)", kind: "time" }); save(); draw(); }));
-      add.addButton((b) => b.setButtonText("恢复默认").onClick(() => { s.categories = DEFAULT_CATEGORIES.map((c) => ({ ...c })); save(); draw(); }));
+      const actions = new Setting(list);
+      actions.settingEl.addClass("lubi-settings-actions");
+      actions.addButton((b) => b.setButtonText("添加分类").onClick(() => { s.categories.push({ name: "新分类", icon: "tag", color: "var(--color-base-60)", kind: "time" }); save(); draw(); }));
+      actions.addButton((b) => b.setButtonText("恢复默认").onClick(() => { s.categories = DEFAULT_CATEGORIES.map((c) => ({ ...c })); save(); draw(); }));
     };
     draw();
 
-    new Setting(containerEl).setName("支出类别").setDesc("逗号分隔").addTextArea((t) => t.setValue(s.expenseTypes.join(", ")).onChange((v) => { s.expenseTypes = v.split(/[,，]/).map((x) => x.trim()).filter(Boolean); if (!s.expenseTypes.length) s.expenseTypes = ["其他"]; save(); }));
+    const ai = containerEl.createEl("details", { cls: "lubi-settings-section lubi-settings-ai" });
+    const summary = ai.createEl("summary");
+    summary.createSpan({ text: "AI 任务创建" });
+    const summaryModel = summary.createSpan({ cls: "lubi-settings-ai-model" });
+    const updateSummary = () => summaryModel.setText(s.aiEndpoint && s.aiModel ? s.aiModel : "未配置");
+    updateSummary();
+    ai.createEl("p", { cls: "lubi-settings-note", text: "只发送当前输入，草稿确认后才创建任务。测试连接可能发送短请求。支持 Ollama 和 OpenAI 兼容接口。" });
+    const endpoint = new Setting(ai).setName("接口地址").setDesc("填写兼容聊天接口地址");
+    endpoint.settingEl.addClass("lubi-setting-stacked");
+    endpoint.addText((t) => { t.inputEl.setAttribute("aria-label", "AI 接口地址"); t.inputEl.dataset.setting = "ai-endpoint"; return t.setValue(s.aiEndpoint).onChange((v) => { s.aiEndpoint = v.trim(); updateSummary(); save(); }); });
+    const choices = ai.createEl("datalist", { attr: { id: `lubi-ai-models-${++settingsLabelId}` } });
+    let modelText: TextComponent | undefined;
+    const model = new Setting(ai).setName("模型").setDesc("可手动填写，也可从获取到的模型中选择");
+    model.settingEl.addClass("lubi-setting-stacked");
+    model.addText((t) => {
+      modelText = t; t.inputEl.setAttribute("list", choices.id); t.inputEl.setAttribute("aria-label", "AI 模型"); t.inputEl.dataset.setting = "ai-model";
+      return t.setValue(s.aiModel).setPlaceholder("模型名称").onChange((v) => { s.aiModel = v.trim(); updateSummary(); save(); });
+    });
+    if (s.aiModel) choices.createEl("option", { value: s.aiModel });
+    const key = new Setting(ai).setName("API Key").setDesc("本地 Ollama 可留空，云端接口按服务商要求填写");
+    key.settingEl.addClass("lubi-setting-stacked");
+    key.addText((t) => { t.inputEl.type = "password"; t.inputEl.setAttribute("aria-label", "AI API Key"); t.inputEl.dataset.setting = "ai-key"; return t.setValue(s.aiApiKey).onChange((v) => { s.aiApiKey = v.trim(); save(); }); });
+    const aiActions = new Setting(ai);
+    aiActions.settingEl.addClass("lubi-settings-actions");
+    aiActions.addButton((b) => b.setButtonText("获取模型列表").onClick(() => void loadAiModels(s, modelText, choices, updateSummary, save)));
+    aiActions.addButton((b) => b.setButtonText("测试连接").onClick(() => void testAiConnection(s)));
+    ai.createEl("p", { cls: "lubi-settings-note", text: "API Key 仍以明文保存在本地插件设置中，请勿共享该设置文件。" });
 
-    // 数据
-    new Setting(containerEl).setName("数据").setHeading();
-    new Setting(containerEl)
-      .setName("迁移旧版数据")
-      .setDesc("把旧版 HTML 卡片日记和 v13 任务数据转换为新格式。转换前会整份备份到备份文件夹。可重复执行，已转换的文件会跳过。")
-      .addButton((b) => b.setButtonText("检查并迁移").setCta().onClick(() => {
-        new ConfirmModal(this.app, "迁移旧数据？", "会先备份，再改写日记文件与任务数据。", () => void this.plugin.runMigration(true), "开始迁移", false).open();
-      }));
-    new Setting(containerEl).setName("重新显示上手引导").addButton((b) => b.setButtonText("显示").onClick(() => { s.onboardingDone = false; save(); new Notice("下次打开每日页会显示引导"); }));
+    const expenses = section("支出类别");
+    new Setting(expenses).setName("类别列表").setDesc("逗号分隔").addTextArea((t) => { t.inputEl.setAttribute("aria-label", "支出类别"); return t.setValue(s.expenseTypes.join(", ")).onChange((v) => { s.expenseTypes = v.split(/[,，]/).map((x) => x.trim()).filter(Boolean); if (!s.expenseTypes.length) s.expenseTypes = ["其他"]; save(); }); });
+
+    const maintenance = section("数据维护");
+    maintenance.addClass("lubi-settings-maintenance");
+    maintenance.createEl("p", { cls: "lubi-settings-note", text: "迁移前会自动备份，请确认备份文件夹。" });
+    new Setting(maintenance).setName("迁移旧版数据").setDesc("转换旧日记与 v13 任务数据，已转换的文件会跳过").addButton((b) => {
+      b.buttonEl.addClass("lubi-settings-maintenance-button");
+      return b.setButtonText("检查并迁移").onClick(() => new ConfirmModal(this.app, "迁移旧数据？", "会先备份，再改写日记文件与任务数据。", () => void this.plugin.runMigration(true), "开始迁移", false).open());
+    });
+    new Setting(maintenance).setName("重新显示入门提示").addButton((b) => b.setButtonText("显示").onClick(() => { s.onboardingDone = false; save(); new Notice("没有历史记录时，每日页会显示简短入门提示"); }));
   }
+
 }
 
 function modelsEndpoint(endpoint: string): string {
@@ -131,16 +201,15 @@ async function fetchAiModels(settings: { aiEndpoint: string; aiApiKey: string })
   return [...new Set(ids)];
 }
 
-async function loadAiModels(settings: { aiEndpoint: string; aiApiKey: string; aiModel: string }, dropdown: DropdownComponent | undefined, text: TextComponent | undefined, save: () => void): Promise<void> {
+async function loadAiModels(settings: { aiEndpoint: string; aiApiKey: string; aiModel: string }, text: TextComponent | undefined, choices: HTMLElement, updateSummary: () => void, save: () => void): Promise<void> {
   try {
     const models = await fetchAiModels(settings);
     if (!models.length) throw new Error("接口没有返回模型");
-    dropdown?.selectEl.empty();
-    for (const model of models) dropdown?.addOption(model, model);
-    dropdown?.setValue(settings.aiModel && models.includes(settings.aiModel) ? settings.aiModel : models[0]);
-    settings.aiModel = dropdown?.getValue() || models[0];
+    choices.empty();
+    for (const model of models) choices.createEl("option", { value: model });
+    settings.aiModel = String(settings.aiModel && models.includes(settings.aiModel) ? settings.aiModel : models[0]);
     text?.setValue(settings.aiModel);
-    save();
+    updateSummary(); save();
     new Notice(`已获取 ${models.length} 个模型，请确认当前模型：${settings.aiModel}`);
   } catch (e) { new Notice(`获取模型列表失败：${(e as Error).message}`, 6000); }
 }

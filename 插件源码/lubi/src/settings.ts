@@ -1,3 +1,5 @@
+import type { NameUse } from "./core/nameHistory";
+
 export type CategoryKind = "time" | "money";
 
 export interface CategoryDef {
@@ -10,6 +12,8 @@ export interface CategoryDef {
 }
 
 export interface LubiSettings {
+  /** Local name recency only; no changes to task or journal schema. */
+  nameUses?: NameUse[];
   journalFolder: string;
   taskFile: string;
   backupFolder: string;

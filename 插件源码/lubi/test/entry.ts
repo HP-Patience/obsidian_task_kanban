@@ -7,3 +7,7 @@ export * from "../src/core/metrics";
 export * from "../src/core/quickparse";
 export * from "../src/core/color";
 export { DEFAULT_CATEGORIES, migratePalette, DEFAULT_SETTINGS } from "../src/settings";
+
+export * from "../src/core/nameHistory";
+
+export * from "../src/core/gantt";

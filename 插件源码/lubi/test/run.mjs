@@ -132,5 +132,72 @@ const legacySettings = { ...C.DEFAULT_SETTINGS, paletteVersion: 1, categories: [
 eq(C.migratePalette(legacySettings), true, "palette migration runs once");
 eq(legacySettings.categories.map((c) => [c.name, c.color, !!c.rest]), [["睡眠", "#6b7a99", true], ["学习", "#123456", false], ["日常", "var(--color-red)", false]], "migration only replaces untouched legacy defaults");
 eq(C.migratePalette(legacySettings), false, "palette migration is idempotent");
+// History candidate source, recency and malformed metadata regressions.
+{
+  const records = [{date:"2020-01-01",start:"09:00",title:"旧记录",category:"学习"}, {date:"2026-01-01",start:"09:00",title:" 重复 ",category:"学习"}, {date:"2026-01-01",start:"10:00",title:"其他分类",category:"运动"}];
+  const tasks = [{title:"重复",category:"学习",created:"2025-01-01T00:00:00Z",date:"2099-01-01"}, {title:"新任务",category:"学习",created:"2026-02-01T00:00:00Z"}];
+  eq(C.historyNames("学习", records, tasks, []), ["新任务","重复","旧记录"], "names: all history, dedup, category boundary and creation rather than scheduled date");
+  eq(C.historyNames("学习", records, tasks, [{category:"学习",title:"旧记录",usedAt:Date.parse("2026-03-01")}, {category:"学习",title:"已删除",usedAt:Date.now()}]), ["旧记录","新任务","重复"], "names: local use overrides old date; deleted names do not reappear");
+  eq(C.validNameUses([null, {}, {category:"学习",title:"",usedAt:1}, {category:"学习",title:"标题",usedAt:Infinity}, {category:"学习",title:"标题",usedAt:1}]).length, 1, "names: validate persisted metadata");
+}
+
+// Gantt is a pure task projection, not a second task store.
+{
+  const task=(id, fields={})=>C.blankTask({id,title:id,category:"学习",created:"2026-09-01T00:00:00Z",...fields});
+  const days=C.eachDate("2026-09-21","2026-10-18");
+  eq([days.length,days[0],days[27]],[28,"2026-09-21","2026-10-18"],"gantt: projection supports a variable date window");
+  const tasks=[task("parent",{startDate:"2026-09-23",endDate:"2026-09-29",date:"2026-09-25"}),task("child",{parent:"parent",date:"2026-09-25"}),task("done",{parent:"parent",date:"2026-09-26",status:"done"}),task("summary"),task("range-child",{parent:"summary",startDate:"2026-09-27",endDate:"2026-10-04"}),task("single",{date:"2026-10-01",estimate:5000}),task("unplanned"),task("actual",{date:"2026-09-25",origin:"record"}),task("repeat",{repeat:{kind:"daily",days:[]},startDate:"2026-09-22",endDate:"2026-09-28",skipDates:["2026-09-24"],doneDates:["2026-09-23"]})];
+  const before=JSON.stringify(tasks),rows=C.ganttRows(tasks,days);
+  eq(rows.some(r=>r.task.id==="actual"||r.task.id==="unplanned"),false,"gantt: actual-record tasks and undated tasks are excluded");
+  eq(rows.find(r=>r.task.id==="single").segments,[{from:"2026-10-01",to:"2026-10-01",done:false}],"gantt: estimated hours never become a multi-day range");
+  eq(rows.find(r=>r.task.id==="summary").segments,[{from:"2026-09-27",to:"2026-10-04",done:false}],"gantt: parent summary includes child date spans without materializing them");
+  eq(rows.find(r=>r.task.id==="summary").summary,true,"gantt: derived parent is marked read-only");
+  eq(rows.find(r=>r.task.id==="child").depth,1,"gantt: child indentation preserves hierarchy");
+  eq(rows.find(r=>r.task.id==="done").segments[0].done,true,"gantt: completed planned task remains visible");
+  const occurrences=rows.find(r=>r.task.id==="repeat").segments;
+  eq([occurrences.length,occurrences.some(o=>o.from==="2026-09-24"),occurrences.find(o=>o.from==="2026-09-23").done],[6,false,true],"gantt: repeat segments follow skips and per-day completion");
+  eq(C.ganttRows(tasks,days,new Set(["parent"])).some(r=>r.task.parent==="parent"),false,"gantt: collapse does not leak children back as roots");
+  eq(JSON.stringify(tasks),before,"gantt: rendering is non-mutating");
+  const t=tasks[0];
+  eq(C.ganttPatch(t,"move",2),{startDate:"2026-09-25",endDate:"2026-10-01",date:"2026-09-27"},"gantt: moving explicit span shifts scheduled day with it");
+  eq(C.ganttPatch(t,"start",10),{startDate:"2026-09-25"},"gantt: left resize cannot pass the scheduled day");
+  eq(C.ganttPatch(t,"end",-10),{endDate:"2026-09-25"},"gantt: right resize cannot exclude scheduled day");
+  eq(C.ganttPatch(tasks.find(t=>t.id==="single"),"move",3),{date:"2026-10-04"},"gantt: single-day move changes date only");
+  eq(C.ganttPatch(tasks.find(t=>t.id==="single"),"end",3),{startDate:"2026-10-01",endDate:"2026-10-04"},"gantt: single-day end resize creates a span and keeps scheduled day");
+  eq(C.ganttPatch(tasks.find(t=>t.id==="single"),"start",-2),{startDate:"2026-09-29",endDate:"2026-10-01"},"gantt: single-day start resize creates both boundaries");
+  eq(C.ganttPatch(tasks.find(t=>t.id==="single"),"end",-2),{},"gantt: resize cannot shrink past scheduled day");
+  eq(C.ganttPatch({...t,startDate:"",endDate:"2026-10-04"},"end",2),null,"gantt: incomplete existing span is not overwritten by dragging");
+  eq(C.ganttPatch(tasks.find(t=>t.id==="repeat"),"move",3),null,"gantt: repeating rules are never mutated by dragging");
+  eq(C.ganttPatch({...t,date:"2026-10-05"},"move",1),null,"gantt: contradictory existing dates must be edited, not silently normalized");
+  const cycle=[task("cycle-a",{parent:"cycle-b",date:"2026-09-25"}),task("cycle-b",{parent:"cycle-a",date:"2026-09-26"})];
+  eq(C.ganttRows(cycle,days).length,2,"gantt: malformed cycles do not duplicate rows or recurse indefinitely");
+}
+
+// Unified Gantt periods use calendar boundaries and clamped month navigation.
+{
+  const week=C.ganttWindow("2026-10-05","week");eq([week.length,week[0],week.at(-1)],[7,"2026-10-05","2026-10-11"],"Gantt week: Monday to Sunday");
+  for(const [anchor,n,end] of [["2026-02-15",28,"2026-02-28"],["2024-02-15",29,"2024-02-29"],["2026-04-15",30,"2026-04-30"],["2026-10-15",31,"2026-10-31"]]) {
+    const days=C.ganttWindow(anchor,"month");eq([days.length,days[0],days.at(-1)],[n,anchor.slice(0,7)+"-01",end],`Gantt month: natural ${n}-day month`);
+  }
+  eq(C.ganttWindow("2026-10-05","day"),["2026-10-05"],"Gantt day: selected day only");
+  eq(C.stepGanttDate("2026-01-31","month",1),"2026-02-28","Gantt navigation: month-end clamp");
+  eq(C.stepGanttDate("2024-01-31","month",1),"2024-02-29","Gantt navigation: leap-year clamp");
+  eq(C.stepGanttDate("2026-12-31","month",1),"2027-01-31","Gantt navigation: cross-year month");
+  eq(C.stepGanttDate("2026-03-31","month",-1),"2026-02-28","Gantt navigation: previous month without overflow");
+}
+
+// Daily Gantt: hourly plans, not actual records or fabricated all-day occupancy.
+{
+  const D="2026-10-05",t=(id,fields={})=>C.blankTask({id,title:id,date:D,created:"2026-09-01T00:00:00Z",...fields});
+  const tasks=[t("midnight",{start:"00:00",estimate:60}),t("timed",{start:"09:00",estimate:90}),t("unset",{start:""}),t("point",{start:"10:00",estimate:0}),t("late",{start:"23:50",estimate:60}),t("actual",{origin:"record",start:"08:00",estimate:30}),t("other",{date:"2026-10-06",start:"11:00"}),t("repeat",{repeat:{kind:"daily",days:[]},startDate:D,doneDates:[D],start:"07:00",estimate:45})];
+  const before=JSON.stringify(tasks),rows=C.dailyGanttRows(tasks,D);
+  eq(rows.map(r=>r.task.id),["midnight","repeat","timed","point","late","unset"],"daily Gantt: today only, timed order, unset last, actual excluded");
+  eq([rows[0].start,rows[0].minutes],[0,60],"daily Gantt: midnight is a real zero start, not missing time");
+  eq([rows.find(r=>r.task.id==="late").minutes,rows.find(r=>r.task.id==="late").visibleMinutes],[60,10],"daily Gantt: midnight clipping preserves the original estimate");
+  eq([rows.find(r=>r.task.id==="point").minutes,rows.find(r=>r.task.id==="unset").start],[0,null],"daily Gantt: unset estimates and start times are not filled in");
+  eq(rows.find(r=>r.task.id==="repeat").done,true,"daily Gantt: repeat completion is per occurrence");
+  eq(JSON.stringify(tasks),before,"daily Gantt: read-only projection");
+}
+
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
 process.exit(fails ? 1 : 0);

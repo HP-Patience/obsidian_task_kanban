@@ -1,6 +1,8 @@
 // Lubi 专用悬停系统；不修改其他插件的提示或全局 .tooltip 样式。
 type Rows = (string | HTMLElement)[];
 const scope = ".lubi-root, .lubi-modal, .lubi-settings, .lubi-tooltip-scope";
+// 清单内容已直接展示；只保留可访问名称，不重复弹出提示。
+const listNames = '.lubi-task .lubi-task-title, .lubi-task .lubi-task-meta, .lubi-task > input[type="checkbox"]';
 const rich = new WeakMap<Element, { rows: () => Rows | null; placement: "pointer" | "side" }>();
 let tipEl: HTMLElement | null = null;
 let pending: number | null = null;
@@ -16,10 +18,12 @@ export function hideTip(): void {
 /** 可访问名称与视觉提示共用文字，但不留会触发 Obsidian 黑框的 aria-label。 */
 function normalize(el: Element): void {
   if (!el.closest(scope)) return;
+  const listName = el.matches(listNames);
+  if (listName) el.removeAttribute("data-lubi-tip");
   const label = el.getAttribute("aria-label") || el.getAttribute("title");
   if (!label) return;
   // 输入框及区域标签只是无障碍名称，不应凭空变成悬停提示。
-  const nameOnly = el.matches('textarea, select, input:not([type="checkbox"]):not([type="radio"]), [role="status"], [role="grid"], [role="group"], .lubi-plan-lane, .lubi-review-signals');
+  const nameOnly = listName || el.matches('textarea, select, input:not([type="checkbox"]):not([type="radio"]), [role="status"], [role="grid"], [role="group"], .lubi-plan-lane, .lubi-review-signals');
   const oldLabel = el.getAttribute("data-lubi-label-id");
   if (oldLabel) document.getElementById(oldLabel)?.remove();
   const svg = el.namespaceURI === "http://www.w3.org/2000/svg";
@@ -45,13 +49,12 @@ export function hoverTip(host: HTMLElement, selector: string, content: (target: 
   if (host.matches(selector)) targets.unshift(host);
   for (const el of targets) rich.set(el, { rows: () => content(el), placement });
 }
-/** 分层信息卡：标题、数据、可选备注、灰色操作提示。 */
-export function infoTip(el: HTMLElement, title: string, details: string[], help: string, notes = ""): void {
-  setTipLabel(el, [title, ...details, notes, help].filter(Boolean).join("。"));
+/** 分层信息卡：仅显示标题、数据与可选备注。 */
+export function infoTip(el: HTMLElement, title: string, details: string[], notes = ""): void {
+  setTipLabel(el, [title, ...details, notes].filter(Boolean).join("。"));
   rich.set(el, { placement: "side", rows: () => {
     const rows: Rows = [createDiv({ cls: "lubi-task-tip-title", text: title }), ...details];
     if (notes.trim()) rows.push(createDiv({ cls: "lubi-task-tip-notes", text: notes }));
-    if (help) rows.push(createDiv({ cls: "lubi-task-tip-help", text: help }));
     return rows;
   } });
 }
@@ -99,10 +102,11 @@ export function installTooltips(): () => void {
   observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-label", "title"] });
   const targetOf = (event: Event): Element | null => {
     if (!(event.target instanceof window.Element) || !event.target.closest(scope)) return null;
+    const nameOnly = !!event.target.closest(listNames);
     let el: Element | null = event.target;
     while (el && el.closest(scope)) {
       normalize(el); // 在 Obsidian 的冒泡监听之前去掉原生提示属性。
-      if (rich.has(el) || el.hasAttribute("data-lubi-tip")) return el;
+      if (!nameOnly && (rich.has(el) || el.hasAttribute("data-lubi-tip"))) return el;
       el = el.parentElement;
     }
     return null;

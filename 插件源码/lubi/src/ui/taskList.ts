@@ -40,8 +40,12 @@ export function groupedRows(plugin: LubiPlugin, list: HTMLElement, items: Task[]
 }
 
 /** 某天的任务清单（分组 + 任务行）。decorate 用于任务页追加拖拽等能力。 */
-export function renderDayTaskList(plugin: LubiPlugin, list: HTMLElement, date: string, rerender: () => void, openNew: OpenRecord, edit: (t: Task) => void, decorate?: (li: HTMLElement, t: Task) => void): Task[] {
+export function renderDayTaskList(plugin: LubiPlugin, list: HTMLElement, date: string, rerender: () => void, openNew: OpenRecord, edit: (t: Task) => void, decorate?: (li: HTMLElement, t: Task) => void, sortByTime = false): Task[] {
   const items = dayTasks(plugin, date);
+  if (sortByTime) {
+    const time = (task: Task) => task.start ? hmToMin(task.start) : Number.MAX_SAFE_INTEGER;
+    items.sort((a, b) => time(a) - time(b));
+  }
   groupedRows(plugin, list, items, edit, (group, t) => {
     const li = taskRow(plugin, group, t, date, rerender, openNew, () => edit(t));
     decorate?.(li, t);
@@ -282,10 +286,7 @@ export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: stri
   if (t.category) catDot(line, categoryOf(plugin.settings, t.category));
   line.createSpan({ cls: "lubi-task-title-text", text: t.title });
   if (t.blocked) tip(icon(line, "octagon-alert", "lubi-icon lubi-blocked-icon"), "受阻");
-  if (t.origin === "record") {
-    const source = tip(line.createSpan({ cls: "lubi-task-source", text: "由记录生成" }), "这条任务由每日页的一条时间记录自动生成");
-    source.setAttribute("aria-label", "由记录生成");
-  }
+  if (t.origin === "record") tip(line, `由记录生成${onClick ? " · 点击编辑" : ""}：${t.title}`);
   const parents = plugin.tasks.pathOf(t).slice(0, -1);
   const meta: string[] = [];
   if (parents.length) meta.push(parents.map((p) => p.title).join(" / "));

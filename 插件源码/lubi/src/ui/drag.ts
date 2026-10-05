@@ -13,6 +13,8 @@ export interface DragState {
 
 export interface DragSpec {
   mode: DragMode;
+  /** Horizontal time axes share the same minute snapping, resize and cancellation logic. */
+  axis?: "x" | "y";
   start: number;
   minutes: number;
   pxPerMin: number;
@@ -69,7 +71,7 @@ export function startDrag(e: PointerEvent, spec: DragSpec): void {
   };
 
   const compute = (ev: PointerEvent): DragState => {
-    const dMin = (ev.clientY - startY) / spec.pxPerMin;
+    const dMin = (spec.axis === "x" ? ev.clientX - startX : ev.clientY - startY) / spec.pxPerMin;
     let start = spec.start;
     let minutes = spec.minutes;
     switch (spec.mode) {

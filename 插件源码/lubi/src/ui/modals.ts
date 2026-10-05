@@ -1,5 +1,6 @@
 import { App, Modal, Notice } from "obsidian";
 import type LubiPlugin from "../main";
+import { nameSuggestions } from "./nameSuggestions";
 import { confirmed, formatEstimateComparison, normalizeEstimatedMinutes, PENDING_KEY, Rec } from "../core/records";
 import { Task, blankTask, RepeatKind } from "../core/tasks";
 import { hmToMin, minToHM, nowHM, todayStr, fmtDuration, shortDate, weekdayZh } from "../core/time";
@@ -257,6 +258,7 @@ export class RecordModal extends Modal {
 
     // 分类：单行胶囊，Alt + 数字切换
     const pool = isMoney ? moneyCats : timeCats;
+    let refreshNames = () => undefined as void;
     const pickCat = (name: string, focus = true) => {
       const next = categoryOf(s, name);
       if (next.kind !== cat.kind) return;
@@ -267,8 +269,7 @@ export class RecordModal extends Modal {
         b.setAttribute("aria-pressed", String(on));
         if (on && focus) b.focus();
       });
-      const dl = contentEl.querySelector("#lubi-title-suggest");
-      if (dl) { dl.empty(); for (const t of this.plugin.recentTitles(name)) dl.createEl("option", { value: t }); }
+      refreshNames();
     };
     const cats = contentEl.createDiv({ cls: "lubi-cat-picker lubi-cat-pills", attr: { role: "group", "aria-label": "分类" } });
     const markOverflow = () => cats.toggleClass("is-overflow", cats.scrollWidth - cats.scrollLeft - cats.clientWidth > 4);
@@ -291,7 +292,7 @@ export class RecordModal extends Modal {
     // 标题（支持一行输入：9:00-10:30 学习 三明治定理 / 30min 跑步）
     const titleRow = contentEl.createDiv({ cls: "lubi-field" });
     const titleLabel = titleRow.createEl("label", { text: isMoney ? "买了什么" : "做了什么" });
-    const titleInput = titleRow.createEl("input", { type: "text", value: this.rec.title, attr: { placeholder: isMoney ? "午饭 / 地铁 / 书" : "做了什么 · 也可一行写完：9:00-10:30 学习 三明治定理", list: "lubi-title-suggest", autocomplete: "off" } });
+    const titleInput = titleRow.createEl("input", { type: "text", value: this.rec.title, attr: { placeholder: isMoney ? "午饭 / 地铁 / 书" : "做了什么 · 也可一行写完：9:00-10:30 学习 三明治定理", autocomplete: "off" } });
     associate(titleLabel, titleInput);
     this.titleInput = titleInput;
     const parseHint = titleRow.createDiv({ cls: "lubi-parse-preview", attr: { "aria-live": "polite" } });
@@ -312,8 +313,15 @@ export class RecordModal extends Modal {
       parseHint.createSpan({ text: `识别为 ${bits.join(" · ")} ·「${q.title || "（还没写做了什么）"}」` });
     };
     titleInput.addEventListener("input", () => { this.rec.title = titleInput.value; clearFieldError(titleInput); applyParse(); });
-    const dl = titleRow.createEl("datalist", { attr: { id: "lubi-title-suggest" } });
-    for (const t of this.plugin.recentTitles(this.rec.category)) dl.createEl("option", { value: t });
+    if (isMoney) {
+      const dl = titleRow.createEl("datalist", { attr: { id: `${titleInput.id}-expense-suggest` } });
+      titleInput.setAttribute("list", dl.id);
+      refreshNames = () => { dl.empty(); for (const title of this.plugin.recentTitles(this.rec.category)) dl.createEl("option", { value: title }); };
+      refreshNames();
+    }
+    if (!isMoney) refreshNames = nameSuggestions(titleInput, this.plugin, () => this.rec.category, title => {
+      this.rec.title = title; this.parsed = null; parseHint.empty(); clearFieldError(titleInput);
+    }).refresh;
     if (focusTitle) window.setTimeout(() => { if (titleInput.isConnected) titleInput.focus(); }, 20);
 
     // 时间联动条：开始 ── 时长 ── 结束
@@ -537,6 +545,9 @@ export class RecordModal extends Modal {
         await this.plugin.journal.update(this.opts.date, this.opts.line, r);
         if (this.opts.rec) await syncLinkedTask(this.plugin, this.opts.rec, r);
       } else saved = await addRecordAsDone(this.plugin, r);
+      const original = this.opts.rec;
+      if (!isMoney && (!this.editing || original?.title.trim() !== saved.title.trim() || original?.category !== saved.category))
+        await this.plugin.rememberName(saved.category, saved.title);
       this.close();
       this.opts.onSaved?.({ ...saved, extra: { ...saved.extra } });
     } catch (e) {
@@ -626,6 +637,7 @@ export class TaskModal extends Modal {
     associate(titleLabel, titleInput);
     this.titleInput = titleInput;
     titleInput.addEventListener("input", () => { this.t.title = titleInput.value; clearFieldError(titleInput); });
+    nameSuggestions(titleInput, this.plugin, () => this.t.category, title => { this.t.title = title; clearFieldError(titleInput); });
     if (focusTitle) window.setTimeout(() => {
       const target = this.opts.focusDate && this.dateInput?.isConnected ? this.dateInput : titleInput;
       if (target.isConnected) target.focus();
@@ -855,7 +867,9 @@ export class TaskModal extends Modal {
     const undoneDate = before?.date || "";
     this.saving = true;
     try {
+      const nameChanged = !this.editing || before?.title.trim() !== this.t.title.trim() || before?.category !== this.t.category;
       const saved = await this.plugin.tasks.upsert(this.t);
+      if (nameChanged) await this.plugin.rememberName(saved.category, saved.title);
       this.close();
       this.opts.onSaved?.(saved);
       const refresh = () => this.opts.onSaved?.(saved);

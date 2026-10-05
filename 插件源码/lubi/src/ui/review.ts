@@ -36,7 +36,7 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   ], state.period, (p) => setState({ period: p }));
   const nav = bar.createDiv({ cls: "lubi-nav" });
   iconButton(nav, "chevron-left", "上一个", () => setState({ anchor: step(state, -1) }));
-  nav.createSpan({ cls: "lubi-nav-label", text: label });
+  nav.createSpan({ cls: "lubi-nav-label lubi-sr-only", text: label });
   iconButton(nav, "chevron-right", "下一个", () => setState({ anchor: step(state, 1) }));
   const todayBtn = nav.createEl("button", { cls: "lubi-btn lubi-btn-sm", text: "本期" });
   todayBtn.addEventListener("click", () => setState({ anchor: todayStr() }));
@@ -52,7 +52,7 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   const invalidDates = [...dailyStats].filter(([, stats]) => stats.invalidCount).map(([date]) => date).sort();
 
   if (!timed.length && !all.length) {
-    emptyState(host, "calendar-search", `${label} 没有记录`, "切换周期，或回到每日页补记。");
+    emptyState(host, "calendar-search", "暂无记录", "切换周期，或补记。");
     return;
   }
 
@@ -65,19 +65,23 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   const oldInvalid = [...oldData.values()].some((recs) => dayTimeStats(recs).invalidCount);
   const oldTotal = oldTimed.reduce((sum, rec) => sum + rec.minutes, 0);
 
-  // KPI：1 张主卡（总时长 + 环比）+ 4 张次卡
+  // 一组摘要展示核心指标，不再为每个数字单独建卡。
   const daysLogged = new Set(timed.map((r) => r.date)).size;
   const spend = all.filter((r) => r.amount !== undefined && !isNaN(r.amount));
-  const kpis = host.createDiv({ cls: "lubi-kpis lubi-kpis-v2" });
+  const kpis = host.createDiv({ cls: "lubi-card lubi-kpis lubi-kpis-v2" });
   const primary = kpi(kpis, "记录总时长", fmtHours(total), undefined, "is-primary");
+  primary.setAttribute("tabindex", "0");
+  tip(primary, "所有时间记录之和，并行记录会重复计入，待确认时长核对前仍是估计。");
   const minDays = state.period === "week" ? 2 : state.period === "month" ? 5 : 14;
   if (!invalidDates.length && !oldInvalid && oldTotal > 0 && daysLogged >= minDays && oldDays >= minDays) {
     const pct = Math.round(((total - oldTotal) / oldTotal) * 100);
     const delta = primary.createDiv({ cls: `lubi-kpi-delta ${pct >= 0 ? "is-up" : "is-down"}` });
     delta.createSpan({ text: `${pct >= 0 ? "↑" : "↓"} ${Math.abs(pct)}%` });
     delta.createSpan({ cls: "lubi-muted", text: ` 较上一期 ${fmtHours(oldTotal)}` });
+  } else if (invalidDates.length || oldInvalid) {
+    primary.createDiv({ cls: "lubi-muted lubi-kpi-sub", text: "有异常记录，暂不做环比" });
   } else {
-    primary.createDiv({ cls: "lubi-muted lubi-kpi-sub", text: invalidDates.length ? "有待校对的异常日，暂不做环比" : "上一期记录不足，暂不做环比" });
+    tip(primary, "上一期记录不足，暂不做环比；记录总时长包含并行记录及待确认时长。");
   }
   // 按计划自动记下、还没核对的记录：时长是估计值，单独提示，避免把「计划」当成「实际」
   const pendingRecs = timed.filter((r) => isPending(r));
@@ -88,7 +92,9 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
     tip(note, "勾选任务时按计划时间 / 预计时长自动生成的记录。在每日页拖到实际时间或点 ✓ 确认后计入实际。");
   }
   const secondary = kpis.createDiv({ cls: "lubi-kpi-grid" });
-  kpi(secondary, "有记录的天数", `${daysLogged} / ${eachDate(from, to).filter((d) => d <= todayStr()).length}`);
+  const coveredTotal = [...dailyStats.values()].reduce((sum2, stats) => sum2 + stats.coveredMinutes, 0);
+  const overlapTotal = Math.max(0, total - coveredTotal);
+  kpi(secondary, "实际覆盖", fmtHours(coveredTotal), "每天重叠区间合并后的覆盖时间");
   if (invalidDates.length) {
     const validDays = [...dailyStats].filter(([, st]) => !st.invalidCount && st.recordedMinutes > 0);
     const validAvg = validDays.length ? validDays.reduce((sum2, [, st]) => sum2 + st.recordedMinutes, 0) / validDays.length : 0;
@@ -96,10 +102,10 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   } else {
     kpi(secondary, "日均记录", daysLogged ? fmtHours(total / daysLogged) : "—", "有记录的天");
   }
-  const coveredTotal = [...dailyStats.values()].reduce((sum2, stats) => sum2 + stats.coveredMinutes, 0);
+  kpi(secondary, "有记录的天数", `${daysLogged} / ${eachDate(from, to).filter((d) => d <= todayStr()).length}`);
+  if (overlapTotal) kpi(secondary, "并行重叠", fmtHours(overlapTotal), "并行记录的重复时长");
   kpi(secondary, "覆盖率", daysLogged ? `${Math.round((coveredTotal / (daysLogged * 1440)) * 100)}%` : "—", "有记录日的区间并集 / 24h");
   kpi(secondary, "支出", spend.length ? `¥${spend.reduce((s2, r) => s2 + (r.amount || 0), 0).toFixed(0)}` : "¥0", spend.length ? `${spend.length} 笔` : "本期没有支出");
-  renderReviewInsights(host, plugin, from, to, data, timed, total, state.period);
 
   if (invalidDates.length) {
     // 异常提示压成一行：说明 + 直接可点的校对按钮；柱顶另有 ⚠ 徽标
@@ -114,22 +120,6 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
     } else links = warning.createDiv({ cls: "lubi-data-warning-links" });
     for (const date of invalidDates) button(links, `校对 ${date}`, () => plugin.openDate(date), { cls: "lubi-btn-sm" });
   }
-
-  const overlapTotal = Math.max(0, total - coveredTotal);
-  const signals = host.createDiv({ cls: "lubi-review-signals", attr: { "aria-label": "本期时间结构" } });
-  const signal = (label: string, value: string, hint: string) => {
-    const item = signals.createDiv({ cls: "lubi-signal" });
-    item.createDiv({ cls: "lubi-signal-value", text: value });
-    item.createDiv({ cls: "lubi-signal-label", text: label });
-    tip(item, hint);
-  };
-  signal("记录投入", fmtHours(total), "所有时间记录之和，并行记录会重复计入。");
-  signal("实际覆盖", fmtHours(coveredTotal), "把每天重叠区间合并后的覆盖时间。");
-  signal("并行重叠", overlapTotal ? fmtHours(overlapTotal) : "0h", "记录投入减去实际覆盖，帮助识别重复计时。");
-  const categoryTotals = new Map<string, number>();
-  for (const rec of timed) categoryTotals.set(rec.category, (categoryTotals.get(rec.category) || 0) + rec.minutes);
-  const topCategory = [...categoryTotals.entries()].sort((a, b) => b[1] - a[1])[0];
-  if (topCategory) signal("最多投入", `${topCategory[0]} ${fmtHours(topCategory[1])}`, "本期记录投入最多的分类，不等同于效率评价。");
 
   // 堆叠柱：纵轴 24h 封顶（年视图按最大月），无底轨，横向网格 + 日均线 + tooltip
   const catOrder = plugin.settings.categories.map((c) => c.name);
@@ -272,8 +262,11 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   if (isYear) renderHeatmap(plugin, host, from, to, dailyStats);
 
   // 分类明细 + 事项 Top
-  const grid = host.createDiv({ cls: "lubi-review-grid" });
-  const byCat = grid.createDiv({ cls: "lubi-card" });
+  const extras = host.createDiv({ cls: "lubi-card lubi-review-extras" });
+  const detail = extras.createEl("details", { cls: "lubi-fold lubi-review-breakdown" });
+  detail.createEl("summary", { text: "分类、事项与支出" });
+  const grid = detail.createDiv({ cls: "lubi-review-grid" });
+  const byCat = grid.createDiv({ cls: "lubi-section" });
   el(byCat, "h3", "lubi-panel-title", "按分类");
   for (const c of cats) {
     const v = sum(timed, c);
@@ -289,8 +282,8 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
     fill.style.background = categoryOf(plugin.settings, c).color;
   }
 
-  const top = grid.createDiv({ cls: "lubi-card" });
-  el(top, "h3", "lubi-panel-title", "事项 Top 10");
+  const top = grid.createDiv({ cls: "lubi-section lubi-review-top" });
+  el(top, "h3", "lubi-panel-title", "事项 Top 5");
   const byTitle = new Map<string, { min: number; n: number; cat: string }>();
   for (const r of timed) {
     const k = `${r.category}·${r.title}`;
@@ -299,20 +292,24 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
     cur.n++;
     byTitle.set(k, cur);
   }
-  const ranked = [...byTitle.entries()].sort((a, b) => b[1].min - a[1].min).slice(0, 10);
+  const ranked = [...byTitle.entries()].sort((a, b) => b[1].min - a[1].min).slice(0, 5);
   const topMax = ranked.length ? ranked[0][1].min : 1;
   for (const [k, v] of ranked) {
-    const row = top.createDiv({ cls: "lubi-legend-row lubi-legend-bar" });
-    row.style.setProperty("--pct", `${Math.round((v.min / topMax) * 100)}%`);
-    row.style.setProperty("--dot", categoryOf(plugin.settings, v.cat).color);
-    catDot(row, categoryOf(plugin.settings, v.cat));
-    row.createSpan({ cls: "lubi-legend-name", text: k.split("·").slice(1).join("·") });
-    row.createSpan({ cls: "lubi-muted", text: `${v.n} 次` });
-    row.createSpan({ cls: "lubi-legend-val", text: fmtHours(v.min) });
+    const row = top.createDiv({ cls: "lubi-row-bar" });
+    const head = row.createDiv({ cls: "lubi-row-bar-head" });
+    const cat = categoryOf(plugin.settings, v.cat);
+    catDot(head, cat);
+    head.createSpan({ cls: "lubi-legend-name", text: k.split("·").slice(1).join("·") });
+    head.createSpan({ cls: "lubi-muted lubi-top-count", text: `${v.n} 次` });
+    head.createSpan({ cls: "lubi-legend-val", text: fmtHours(v.min) });
+    const track = row.createDiv({ cls: "lubi-track" });
+    const fill = track.createDiv({ cls: "lubi-fill" });
+    fill.style.width = `${(v.min / topMax) * 100}%`;
+    fill.style.background = cat.color;
   }
 
   if (spend.length) {
-    const sp = grid.createDiv({ cls: "lubi-card" });
+    const sp = grid.createDiv({ cls: "lubi-section" });
     el(sp, "h3", "lubi-panel-title", "支出");
     const byType = new Map<string, number>();
     for (const r of spend) byType.set(r.expenseType || "其他", (byType.get(r.expenseType || "其他") || 0) + (r.amount || 0));
@@ -336,10 +333,11 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
       row.createSpan({ cls: "lubi-legend-val", text: `¥${(r.amount || 0).toFixed(2)}` });
     }
   }
+  renderReviewInsights(extras, plugin, from, to, data, timed, total);
 }
 
-/** 计划偏差、时间黑洞与时间胶囊：只读分析，不改变任务或日记数据。 */
-function renderReviewInsights(host: HTMLElement, plugin: LubiPlugin, from: string, to: string, data: Map<string, Rec[]>, timed: Rec[], total: number, period: Period): void {
+/** 次要分析统一放在页面底部的折叠区域，不改变任务或日记数据。 */
+function renderReviewInsights(host: HTMLElement, plugin: LubiPlugin, from: string, to: string, data: Map<string, Rec[]>, timed: Rec[], total: number): void {
   const dates = eachDate(from, to).filter((d) => d <= todayStr());
   const instances = new Map<string, { task: Task; date: string; actual: number }>();
   for (const date of dates) {
@@ -367,21 +365,20 @@ function renderReviewInsights(host: HTMLElement, plugin: LubiPlugin, from: strin
   }
   gaps.sort((a, b) => b.largest - a.largest);
 
-  const wrap = host.createDiv({ cls: "lubi-review-insights" });
-  const capsule = wrap.createDiv({ cls: "lubi-card lubi-capsule" });
-  el(capsule, "h3", "lubi-panel-title", period === "week" ? "本周时间胶囊" : "本期时间胶囊");
+  const wrap = host.createEl("details", { cls: "lubi-fold lubi-review-insights" });
+  wrap.createEl("summary", { text: "详细分析" });
+  const capsule = wrap.createDiv({ cls: "lubi-section lubi-capsule" });
+  el(capsule, "h3", "lubi-panel-title", "本期摘要");
   const byCat = new Map<string, number>(), byTitle = new Map<string, number>();
   for (const r of timed) { byCat.set(r.category, (byCat.get(r.category) || 0) + r.minutes); byTitle.set(r.title, (byTitle.get(r.title) || 0) + r.minutes); }
   const topCat = [...byCat.entries()].sort((a, b) => b[1] - a[1])[0];
   const topTitle = [...byTitle.entries()].sort((a, b) => b[1] - a[1])[0];
   capsule.createDiv({ cls: "lubi-capsule-quote", text: total ? `这段时间你投入了 ${fmtHours(total)}，主要花在「${topCat?.[0] || "未分类"}」。` : "这段时间还没有足够记录生成总结。" });
   capsule.createDiv({ cls: "lubi-muted lubi-capsule-detail", text: `${topTitle ? `最多投入事项：${topTitle[0]}（${fmtHours(topTitle[1])}）` : "先记录几条事项，之后会生成重点。"}${gaps.length ? ` · 最大空白 ${fmtDuration(gaps[0].largest)}` : ""}` });
-  const details = wrap.createEl("details", { cls: "lubi-review-details" });
-  details.createEl("summary", { text: "查看详细分析 · 计划偏差 / 时间黑洞" });
-  const detailGrid = details.createDiv({ cls: "lubi-review-detail-grid" });
-  const variance = detailGrid.createDiv({ cls: "lubi-card lubi-insight-card" });
+  const detailGrid = wrap.createDiv({ cls: "lubi-review-detail-grid" });
+  const variance = detailGrid.createDiv({ cls: "lubi-section lubi-insight-card" });
   el(variance, "h3", "lubi-panel-title", "计划 vs 实际");
-  if (!planned.length) variance.createDiv({ cls: "lubi-muted", text: "本期还没有带预计时长的计划。" });
+  if (!planned.length) variance.createDiv({ cls: "lubi-muted", text: "暂无带预计用时的计划" });
   else {
     variance.createDiv({ cls: "lubi-insight-lead", text: `${donePlans}/${planned.length} 个计划已有实际记录 · 预计 ${fmtHours(plannedMin)} · 已记录 ${fmtHours(linkedActual)}` });
     for (const x of planned.slice().sort((a, b) => Math.abs(b.actual - b.task.estimate) - Math.abs(a.actual - a.task.estimate)).slice(0, 4)) {
@@ -392,9 +389,9 @@ function renderReviewInsights(host: HTMLElement, plugin: LubiPlugin, from: strin
       if (x.actual) row.createSpan({ cls: delta > 0 ? "lubi-insight-delta is-warn" : "lubi-insight-delta is-ok", text: `${delta >= 0 ? "+" : "−"}${fmtDuration(Math.abs(delta))}` });
     }
   }
-  const holes = detailGrid.createDiv({ cls: "lubi-card lubi-insight-card" });
-  el(holes, "h3", "lubi-panel-title", "时间黑洞");
-  if (!gaps.length) holes.createDiv({ cls: "lubi-muted", text: "本期没有发现 08:00–22:00 的明显空白。" });
+  const holes = detailGrid.createDiv({ cls: "lubi-section lubi-insight-card" });
+  el(holes, "h3", "lubi-panel-title", "未记录时段");
+  if (!gaps.length) holes.createDiv({ cls: "lubi-muted", text: "08:00–22:00 无未记录时段" });
   else {
     holes.createDiv({ cls: "lubi-insight-lead", text: `最大空白 ${fmtDuration(gaps[0].largest)} · ${shortDate(gaps[0].date)} ${minToHM(gaps[0].start)}` });
     for (const g of gaps.slice(0, 3)) {
@@ -418,7 +415,10 @@ function kpi(parent: HTMLElement, label: string, value: string, sub?: string, cl
   const k = parent.createDiv({ cls: `lubi-kpi ${cls}`.trim() });
   k.createDiv({ cls: "lubi-kpi-label", text: label });
   k.createDiv({ cls: "lubi-kpi-value", text: value });
-  if (sub) k.createDiv({ cls: "lubi-muted lubi-kpi-sub", text: sub });
+  if (sub) {
+    if (label === "有效日均") k.createDiv({ cls: "lubi-muted lubi-kpi-sub", text: sub });
+    else { k.setAttribute("tabindex", "0"); tip(k, sub); }
+  }
   return k;
 }
 

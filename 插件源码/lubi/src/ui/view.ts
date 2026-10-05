@@ -2,12 +2,14 @@
 
 import { ItemView, Menu, WorkspaceLeaf } from "obsidian";
 import type LubiPlugin from "../main";
-import { shiftDate, shortDate, todayStr, weekdayZh, weekStart, monthStart, monthEnd } from "../core/time";
+import { shiftDate, shortDate, todayStr, weekdayZh, weekStart } from "../core/time";
 import { iconButton, segmented, button, debounce, hideTip, tip } from "./components";
 import { renderToday } from "./today";
 import { renderReview, ReviewState } from "./review";
+import { ganttWindow } from "../core/gantt";
 import { recenterWeek, renderTasks, TasksState } from "./tasks";
 import { RecordModal, ShortcutsModal, TaskModal } from "./modals";
+import { AiTaskModal } from "./aiTask";
 
 export const VIEW_TYPE = "lubi-dashboard";
 export type Tab = "today" | "review" | "tasks";
@@ -16,7 +18,7 @@ export class DashboardView extends ItemView {
   date = todayStr();
   tab: Tab = "today";
   review: ReviewState = { period: "week", anchor: todayStr(), display: "chart" };
-  tasksState: TasksState = { weekAnchor: todayStr(), selectedDate: todayStr(), agendaDate: todayStr(), agendaSpan: 1, projectsOpen: false, expanded: new Set() };
+  tasksState: TasksState = { weekAnchor: todayStr(), selectedDate: todayStr(), agendaDate: todayStr(), agendaSpan: 1, scheduleView: "week", ganttPeriod: "day", ganttCollapsed: new Set() };
   private body!: HTMLElement;
   private dateLabel!: HTMLElement;
   private todayBtn!: HTMLButtonElement;
@@ -26,7 +28,7 @@ export class DashboardView extends ItemView {
   private serial = 0;
   private lastRenderKey = "";
   private visitedReview = false;
-  private readonly scrollCache = new Map<string, { body: number; timeline?: number; week?: number }>();
+  private readonly scrollCache = new Map<string, { body: number; timeline?: number; week?: number; ganttLeft?: number; ganttTop?: number }>();
   private panelObserver?: ResizeObserver;
   readonly refresh = debounce(() => void this.render(), 150);
 
@@ -92,9 +94,9 @@ export class DashboardView extends ItemView {
     this.contextLabel = left.createDiv({ cls: "lubi-context", attr: { "aria-live": "polite" } });
 
     const tabs = segmented<Tab>(bar, [
-      { id: "today", label: "每日", icon: "hourglass" },
-      { id: "review", label: "回顾", icon: "bar-chart-3" },
-      { id: "tasks", label: "计划", icon: "list-todo" },
+      { id: "today", label: "每日" },
+      { id: "review", label: "回顾" },
+      { id: "tasks", label: "计划" },
     ], this.tab, (t) => this.setTab(t));
     tabs.addClass("lubi-topbar-tabs");
     tabs.setAttribute("role", "tablist");
@@ -125,6 +127,10 @@ export class DashboardView extends ItemView {
 
   private openMore(e: MouseEvent): void {
     const menu = new Menu();
+    if (this.tab === "tasks") {
+      menu.addItem((i) => i.setTitle("AI 创建任务").setIcon("sparkles").onClick(() => new AiTaskModal(this.app, this.plugin, this.activeDate(), () => this.refresh()).open()));
+      menu.addSeparator();
+    }
     menu.addItem((i) => i.setTitle("打开日记文件").setIcon("file-text").onClick(() => void this.plugin.openJournal(this.activeDate())));
     menu.addItem((i) => i.setTitle("导出全部记录 CSV").setIcon("download").onClick(() => void this.plugin.exportCsv()));
     menu.addItem((i) => i.setTitle("快捷键").setIcon("keyboard").onClick(() => new ShortcutsModal(this.app).open()));
@@ -148,7 +154,7 @@ export class DashboardView extends ItemView {
     else if (key === "?") { e.preventDefault(); new ShortcutsModal(this.app).open(); }
     else if ((key === "ArrowLeft" || key === "ArrowRight") && this.tab !== "review") {
       // 时间轴块内的方向键另有用途；只在非块元素上切换日期
-      if (t && t.closest(".lubi-block, .lubi-timeline, .lubi-chart, .lubi-week")) return;
+      if (t && t.closest(".lubi-block, .lubi-timeline, .lubi-chart, .lubi-week, .lubi-gantt-scroll")) return;
       e.preventDefault();
       this.setDate(shiftDate(this.date, key === "ArrowLeft" ? -1 : 1));
     }
@@ -157,12 +163,13 @@ export class DashboardView extends ItemView {
   private contextText(): string {
     if (this.tab === "review") {
       const a = this.review.anchor;
-      if (this.review.period === "week") { const f = weekStart(a); return `回顾 · ${shortDate(f)} – ${shortDate(shiftDate(f, 6))}`; }
-      if (this.review.period === "month") return `回顾 · ${shortDate(monthStart(a))} – ${shortDate(monthEnd(a))}`;
-      return `回顾 · ${a.slice(0, 4)} 年`;
+      if (this.review.period === "week") { const f = weekStart(a); return `${shortDate(f)} – ${shortDate(shiftDate(f, 6))}`; }
+      if (this.review.period === "month") return `${a.slice(0, 4)} 年 ${Number(a.slice(5, 7))} 月`;
+      return `${a.slice(0, 4)} 年`;
     }
     const a = this.tasksState.weekAnchor;
-    return `计划 · ${shortDate(shiftDate(a, -3))} – ${shortDate(shiftDate(a, 3))}`;
+    if (this.tasksState.scheduleView === "gantt") { const days = ganttWindow(this.tasksState.selectedDate, this.tasksState.ganttPeriod || "day"); return days.length === 1 ? `${days[0]} · 日甘特` : `${shortDate(days[0])} – ${shortDate(days[days.length - 1])}`; }
+    return `${shortDate(shiftDate(a, -3))} – ${shortDate(shiftDate(a, 3))}`;
   }
 
   activeDate(): string {
@@ -173,7 +180,8 @@ export class DashboardView extends ItemView {
   private syncTasksDate(d: string): void {
     const s = this.tasksState;
     s.selectedDate = d;
-    s.weekAnchor = recenterWeek(s.weekAnchor, d);
+    if (s.scheduleView === "gantt") s.weekAnchor = d;
+    else s.weekAnchor = recenterWeek(s.weekAnchor, d);
     s.agendaDate = d;
   }
 
@@ -197,7 +205,7 @@ export class DashboardView extends ItemView {
 
   /** 主按钮文字跟着页面走：说清楚按下去会得到什么 */
   private ctaText(): string {
-    return this.tab === "tasks" ? "加任务" : "记一条";
+    return this.tab === "tasks" ? "新建任务" : "记一条";
   }
 
   private syncTabs(): void {
@@ -249,12 +257,15 @@ export class DashboardView extends ItemView {
         body: this.body.scrollTop,
         timeline: this.body.querySelector<HTMLElement>(".lubi-timeline-scroll")?.scrollTop,
         week: this.body.querySelector<HTMLElement>(".lubi-week-body")?.scrollTop,
+        ganttLeft: this.body.querySelector<HTMLElement>(".lubi-gantt-scroll")?.scrollLeft,
+        ganttTop: this.body.querySelector<HTMLElement>(".lubi-gantt-scroll")?.scrollTop,
       });
       if (this.scrollCache.size > 50) this.scrollCache.delete(this.scrollCache.keys().next().value!);
     }
+    const scheduleChanged = this.tab === "tasks" && this.lastRenderKey.startsWith("tasks:") && this.lastRenderKey.split(":")[1] !== (this.tasksState.scheduleView || "week");
     const key = this.tab === "today" ? `today:${this.date}`
       : this.tab === "review" ? `review:${this.review.period}:${this.review.anchor}`
-      : `tasks:${this.tasksState.selectedDate}:${this.tasksState.weekAnchor}`;
+      : `tasks:${this.tasksState.scheduleView || "week"}:${this.tasksState.ganttPeriod || "day"}:${this.tasksState.selectedDate}:${this.tasksState.weekAnchor}`;
     const host = createDiv();
     host.addClass("lubi-page");
     const rerender = () => this.refresh();
@@ -273,14 +284,25 @@ export class DashboardView extends ItemView {
       err.createEl("pre", { text: (e as Error).stack || String(e) });
     }
     if (serial !== this.serial) return;
+    const planDetails = host.querySelector<HTMLDetailsElement>(".lubi-plan-task-details");
+    if (planDetails) planDetails.open = key === this.lastRenderKey ? this.body.querySelector<HTMLDetailsElement>(".lubi-plan-task-details")?.open ?? true : true;
     this.body.empty();
     this.body.appendChild(host);
     this.lastRenderKey = key;
     if (focusKey && (document.activeElement === active || document.activeElement === document.body)) {
-      const replacement = Array.from(this.body.querySelectorAll<HTMLElement>("[data-lubi-focus]"))
-        .find((element) => element.getAttribute("data-lubi-focus") === focusKey);
+      const replacements = Array.from(this.body.querySelectorAll<HTMLElement>("[data-lubi-focus]"))
+        .filter(element => element.getAttribute("data-lubi-focus") === focusKey);
+      const replacement = replacements.find(element => element.getClientRects().length > 0) || replacements[0];
       replacement?.focus({ preventScroll: true });
     }
+    if (scheduleChanged) window.requestAnimationFrame(() => {
+      if (this.lastRenderKey !== key) return;
+      const control = Array.from(this.body.querySelectorAll<HTMLElement>(".lubi-schedule-switch")).find(element => element.getClientRects().length > 0);
+      if (!control) return;
+      const viewport = this.body.getBoundingClientRect(), rect = control.getBoundingClientRect();
+      // Narrow layouts move between the existing agenda and the schedule region: keep the selected view in sight.
+      if (rect.top < viewport.top || rect.bottom > viewport.bottom) control.scrollIntoView({ block: "start", inline: "nearest", behavior: "auto" });
+    });
     const saved = this.scrollCache.get(key);
     if (saved) {
       this.body.scrollTop = saved.body;
@@ -288,6 +310,8 @@ export class DashboardView extends ItemView {
         if (this.lastRenderKey !== key) return;
         const tl = this.body.querySelector<HTMLElement>(".lubi-timeline-scroll");
         const week = this.body.querySelector<HTMLElement>(".lubi-week-body");
+      const gantt = this.body.querySelector<HTMLElement>(".lubi-gantt-scroll");
+      if (gantt) { if (saved.ganttLeft !== undefined) gantt.scrollLeft = saved.ganttLeft; if (saved.ganttTop !== undefined) gantt.scrollTop = saved.ganttTop; }
         if (tl && saved.timeline !== undefined) { tl.dataset.restored = "1"; tl.scrollTop = saved.timeline; }
         if (week && saved.week !== undefined) { week.dataset.restored = "1"; week.scrollTop = saved.week; }
       });

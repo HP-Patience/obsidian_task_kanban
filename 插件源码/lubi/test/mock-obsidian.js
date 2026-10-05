@@ -93,12 +93,12 @@ class Workspace {
 }
 export class App { constructor() { this.vault = new Vault(); this.workspace = new Workspace(this); } }
 export class Plugin {
-  constructor(app, manifest) { this.app = app; this.manifest = manifest; this._data = null; this.commands = []; this._views = {}; }
+  constructor(app, manifest) { this.app = app; this.manifest = manifest; this._data = null; this.commands = []; this._views = {}; this.settingTabs = []; }
   async loadData() { return this._data; }
   async saveData(d) { this._data = JSON.parse(JSON.stringify(d)); }
   registerView(t, f) { this._views[t] = f; this.app.workspace._factory = (leaf) => f(leaf); }
   addRibbonIcon() { return document.createElement("div"); }
-  addSettingTab() {}
+  addSettingTab(tab) { this.settingTabs.push(tab); }
   addCommand(c) { this.commands.push(c); }
   registerEvent() {}
 }
@@ -110,15 +110,64 @@ export class Modal {
   close() { this.modalEl.remove(); const i = openModals.indexOf(this); if (i >= 0) openModals.splice(i, 1); this.onClose?.(); }
 }
 export class PluginSettingTab { constructor(app, plugin) { this.app = app; this.plugin = plugin; this.containerEl = document.createElement("div"); } }
-export class Setting {
-  constructor(el) { this.settingEl = el.createDiv({ cls: "setting-item" }); this.controlEl = this.settingEl.createDiv(); }
-  setName(n) { this.settingEl.createDiv({ text: n }); return this; } setDesc() { return this; } setHeading() { return this; }
-  addText(f) { const el = this.controlEl.createEl("input"); f({ setValue: (v) => { el.value = v; return this; }, setPlaceholder: () => this, onChange: () => this, inputEl: el }); return this; }
-  addTextArea(f) { return this.addText(f); }
-  addToggle(f) { f({ setValue: () => ({ onChange: () => {} }) }); return this; }
-  addDropdown(f) { const d = { addOption: () => d, setValue: () => d, onChange: () => d }; f(d); return this; }
-  addButton(f) { const b = { setButtonText: () => b, setCta: () => b, onClick: () => b }; f(b); return this; }
-  addExtraButton(f) { const b = { setIcon: () => b, setTooltip: () => b, setDisabled: () => b, onClick: () => b }; f(b); return this; }
+export class TextComponent {
+  constructor(parent, tag = "input") { this.inputEl = parent.createEl(tag, tag === "input" ? { type: "text" } : {}); }
+  setValue(v) { this.inputEl.value = String(v); return this; }
+  getValue() { return this.inputEl.value; }
+  setPlaceholder(v) { this.inputEl.placeholder = v; return this; }
+  onChange(fn) { this.inputEl.addEventListener("input", () => fn(this.inputEl.value)); return this; }
 }
+export class DropdownComponent {
+  constructor(parent) { this.selectEl = parent.createEl("select"); }
+  addOption(value, text) { this.selectEl.createEl("option", { value, text }); return this; }
+  setValue(v) { this.selectEl.value = v; return this; }
+  getValue() { return this.selectEl.value; }
+  onChange(fn) { this.selectEl.addEventListener("change", () => fn(this.selectEl.value)); return this; }
+}
+class MockToggle {
+  constructor(parent) {
+    this.toggleEl = parent.createDiv({ cls: "checkbox-container", attr: { role: "checkbox", tabindex: "0" } });
+    this.value = false;
+    this.toggleEl.addEventListener("click", () => { this.setValue(!this.value); this.changed?.(this.value); });
+    this.toggleEl.addEventListener("keydown", e => { if (["Enter", " "].includes(e.key)) { e.preventDefault(); this.toggleEl.click(); } });
+  }
+  setValue(v) { this.value = !!v; this.toggleEl.toggleClass("is-enabled", this.value); this.toggleEl.setAttribute("aria-checked", String(this.value)); return this; }
+  onChange(fn) { this.changed = fn; return this; }
+}
+class MockButton {
+  constructor(parent, extra = false) { this.buttonEl = parent.createEl("button", { type: "button", cls: extra ? "extra-setting-button clickable-icon" : "" }); this.extraSettingsEl = this.buttonEl; }
+  setButtonText(text) { this.buttonEl.setText(text); return this; }
+  setCta() { this.buttonEl.addClass("mod-cta"); return this; }
+  setWarning() { this.buttonEl.addClass("mod-warning"); return this; }
+  setDisabled(value) { this.buttonEl.disabled = value; return this; }
+  setIcon(name) { setIcon(this.buttonEl, name); return this; }
+  setTooltip(text) { this.buttonEl.setAttribute("aria-label", text); return this; }
+  onClick(fn) { this.buttonEl.addEventListener("click", fn); return this; }
+}
+export class Setting {
+  constructor(parent) {
+    this.settingEl = parent.createDiv({ cls: "setting-item" });
+    this.infoEl = this.settingEl.createDiv({ cls: "setting-item-info" });
+    this.nameEl = this.infoEl.createDiv({ cls: "setting-item-name" });
+    this.descEl = this.infoEl.createDiv({ cls: "setting-item-description" });
+    this.controlEl = this.settingEl.createDiv({ cls: "setting-item-control" });
+  }
+  setName(name) { this.nameEl.setText(name); return this; }
+  setDesc(description) { this.descEl.setText(description); return this; }
+  setHeading() { this.settingEl.addClass("setting-item-heading"); return this; }
+  addText(fn) { fn(new TextComponent(this.controlEl)); return this; }
+  addTextArea(fn) { fn(new TextComponent(this.controlEl, "textarea")); return this; }
+  addToggle(fn) { fn(new MockToggle(this.controlEl)); return this; }
+  addDropdown(fn) { fn(new DropdownComponent(this.controlEl)); return this; }
+  addButton(fn) { fn(new MockButton(this.controlEl)); return this; }
+  addExtraButton(fn) { fn(new MockButton(this.controlEl, true)); return this; }
+}
+let mockRequestHandler = null;
+export function setRequestUrlHandler(handler) { mockRequestHandler = handler; }
+export async function requestUrl(options) {
+  if (!mockRequestHandler) throw new Error("No mock HTTP response configured");
+  return mockRequestHandler(options);
+}
+
 export class WorkspaceLeaf {}
 

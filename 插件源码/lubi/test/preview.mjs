@@ -7,7 +7,7 @@ import { createRequire } from "module";
 const origLoad = Module._load;
 Module._load = function (req, ...a) { return req === "obsidian" ? O : origLoad.call(this, req, ...a); };
 const require = createRequire(import.meta.url);
-const LubiPlugin = require("./plugin.cjs").default;
+const LubiPlugin = require(process.env.LUBI_TEST_PLUGIN || "./plugin.cjs").default;
 const tick = (ms = 40) => new Promise((r) => setTimeout(r, ms));
 
 const app = new O.App();
@@ -49,6 +49,10 @@ button { font-family: inherit; }
 input, select, textarea { font: inherit; border:1px solid var(--background-modifier-border); border-radius:6px; padding:0 8px; background:var(--background-primary); color:inherit; }
 input[type=checkbox] { width:14px; height:14px; padding:0; }
 textarea { padding:6px 8px; }
+.checkbox-container { display:inline-block; width:40px; height:22px; position:relative; border-radius:12px; background:var(--background-modifier-border); cursor:pointer; }
+.checkbox-container::after { content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:var(--background-primary); }
+.checkbox-container.is-enabled { background:var(--interactive-accent); }
+.checkbox-container.is-enabled::after { left:20px; }
 button.mod-cta { background: var(--interactive-accent); color:#fff; border:none; }
 button { border:1px solid var(--background-modifier-border); background:var(--background-primary); color:inherit; border-radius:6px; }
 .lubi-root { --lubi-panel-height: 100vh; }
@@ -63,7 +67,7 @@ const styles = fs.readFileSync(new URL("../styles.css", import.meta.url), "utf8"
 const freeze = (el) => { for (const i of el.querySelectorAll("input, textarea")) { if (i.type === "checkbox") { if (i.checked) i.setAttribute("checked", ""); } else if (i.tagName === "TEXTAREA") i.textContent = i.value; else i.setAttribute("value", i.value); } for (const s of el.querySelectorAll("select")) for (const o of s.options) o.toggleAttribute("selected", o.selected); return el.outerHTML; };
 // 与真实视图一致：按 data-scroll-target 定位首屏
 // 静态页没有插件脚本：按 tasks.ts 同样的算法补上周日程的滚动条轨道宽度
-const boot = `<script>addEventListener("load",()=>{for(const el of document.querySelectorAll("[data-scroll-target]"))el.scrollTop=Number(el.dataset.scrollTarget)||0;for(const b of document.querySelectorAll(".lubi-week-body"))b.parentElement.style.setProperty("--lubi-week-sbw",Math.max(0,b.offsetWidth-b.clientWidth)+"px");});</script>`;
+const boot = `<script>addEventListener("load",()=>{for(const el of document.querySelectorAll("[data-scroll-target]"))el.scrollTop=Number(el.dataset.scrollTarget)||0;for(const b of document.querySelectorAll(".lubi-week-body"))b.parentElement.style.setProperty("--lubi-week-sbw",Math.max(0,b.offsetWidth-b.clientWidth)+"px");const g=document.querySelector(".lubi-gantt-card");if(g&&g.getBoundingClientRect().top>innerHeight-80)g.scrollIntoView({block:"start"});});</script>`;
 const page = (title, body, dark = false) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${shim}${styles}</style></head><body class="${dark ? "theme-dark" : "theme-light"}">${body}${boot}</body></html>`;
 const out = new URL("../preview/", import.meta.url);
 const outDark = new URL("dark/", out);
@@ -74,6 +78,11 @@ fs.writeFileSync = (url, html) => {
   const name = String(url).split("/").pop();
   origWrite(new URL(name, outDark), html.replace('<body class="theme-light">', '<body class="theme-dark">'));
 };
+
+// 设置页仅使用上述合成插件的默认设置，不读取实际 data.json。
+const settingTab = plugin.settingTabs[0];
+settingTab.display();
+fs.writeFileSync(new URL("settings.html", out), page("settings", freeze(settingTab.containerEl)));
 
 // 1. 每日页
 fs.writeFileSync(new URL("today.html", out), page("today", freeze(root)));
@@ -90,6 +99,17 @@ fs.writeFileSync(new URL("review.html", out), page("review", freeze(root)));
 // 3. 任务页
 view.show("tasks"); await tick(200);
 fs.writeFileSync(new URL("tasks.html", out), page("tasks", freeze(root)));
+// Freeze a real production hover event at a non-grid-aligned fractional pointer position.
+{
+  const col=root.querySelector('.lubi-week-col'),height=parseFloat(col.style.height),offset=123.4;
+  const oldRect=col.getBoundingClientRect;
+  col.getBoundingClientRect=()=>({top:-315.75,height:height*1.25,left:0,right:200,width:200,bottom:-315.75+height*1.25});
+  col.dataset.hoverProbeY=String(offset);
+  col.dispatchEvent(new window.MouseEvent('pointermove',{bubbles:true,clientY:-315.75+offset*1.25,clientX:100}));
+  fs.writeFileSync(new URL('tasks-hover.html',out),page('tasks-hover',freeze(root)));
+  col.getBoundingClientRect=oldRect;delete col.dataset.hoverProbeY;col.dispatchEvent(new window.MouseEvent('pointerleave'));
+}
+
 // 4. 编辑模态
 view.show("today"); await tick(200);
 const blocks = [...root.querySelectorAll(".lubi-block:not(.lubi-block-ghost)")];
@@ -116,6 +136,54 @@ const rowEl = rows.find((x) => x.textContent.includes("线性代数")) || rows[0
 rowEl.click(); await tick();
 const tm = O.openModals.at(-1); tm.modalEl.classList.add("modal"); tm.titleEl.classList.add("modal-title"); tm.contentEl.classList.add("modal-content");
 fs.writeFileSync(new URL("modal-task.html", out), page("modal-task", `<div class="lubi-root" style="height:100vh;background:var(--background-secondary)"></div><div class="modal-bg"></div>${freeze(tm.modalEl)}`)); tm.close();
+// Open history-name lists with synthetic names only, for five-row browser geometry checks.
+for (let i = 0; i < 8; i++) await plugin.tasks.upsert({
+  id:`name-layout-${i}`,title:`打游戏 · 候选 ${i + 1}`,category:"学习",parent:null,status:"todo",blocked:false,
+  date:"",start:"",estimate:0,repeat:{kind:"none",days:[]},doneDates:[],skipDates:[],startDate:"",endDate:"",notes:"",order:i,doneAt:"",created:`2026-01-0${i + 1}T00:00:00Z`,updated:"",
+});
+for (const [kind, Form, opts] of [["record",nm.constructor,{date:T,defaults:{category:"学习",title:""}}],["task",tm.constructor,{defaults:{category:"学习",title:"",date:T}}]]) {
+  const form = new Form(app,plugin,opts); form.open(); await tick(100);
+  form.modalEl.classList.add("modal");form.titleEl.classList.add("modal-title");form.contentEl.classList.add("modal-content");
+  const input = form.contentEl.querySelector('[role="combobox"]');input.value="";input.dispatchEvent(new window.Event("input",{bubbles:true}));input.focus();input.click();await tick(100);
+  fs.writeFileSync(new URL(`names-${kind}.html`,out),page(`names-${kind}`,`<div class="lubi-root"><div class="modal-bg"></div>${freeze(form.modalEl)}</div>`));form.close();
+}
+// Gantt preview uses real task rendering with synthetic explicit/derived/repeating ranges.
+{
+  const {blankTask,weekStart,shiftDate}=await import("./core.mjs");const start=weekStart(T);
+  const task=(id,fields)=>blankTask({id,title:id,category:"学习",created:shiftDate(start,-30)+"T00:00:00Z",...fields});
+  for(const t of [
+    task("layout-gantt-parent",{title:"跨天规划（合成数据）",startDate:shiftDate(start,1),endDate:shiftDate(start,12),date:shiftDate(start,5)}),
+    task("layout-gantt-child",{title:"子任务：资料整理与梳理，这是用于检查截断和固定名称栏的长标题",parent:"layout-gantt-parent",startDate:shiftDate(start,2),endDate:shiftDate(start,7),date:shiftDate(start,4)}),
+    task("layout-gantt-done",{title:"已完成子任务",parent:"layout-gantt-parent",date:shiftDate(start,8),status:"done"}),
+    task("layout-gantt-summary",{title:"由子任务汇总日期（只读）"}),
+    task("layout-gantt-range",{title:"阶段二",parent:"layout-gantt-summary",startDate:shiftDate(start,9),endDate:shiftDate(start,18)}),
+    task("layout-gantt-repeat",{title:"重复任务（跳过日留空）",repeat:{kind:"daily",days:[]},startDate:start,endDate:shiftDate(start,20),skipDates:[shiftDate(start,3)],doneDates:[shiftDate(start,1)]}),
+    task("layout-gantt-edge",{title:"窗口裁切（不显示假边界手柄）",startDate:shiftDate(start,-4),endDate:shiftDate(start,30)}),
+    task("layout-gantt-record",{title:"直接记录不应出现在甘特",date:start,origin:"record"})
+  ])await plugin.tasks.upsert(t);
+  view.show("tasks",T);await tick(250);
+  [...root.querySelectorAll('.lubi-week-card .lubi-schedule-switch button')].find(b=>b.textContent==="甘特图").click();await tick(300);
+  root.querySelector('[data-lubi-focus="gantt-period:month"]').click();await tick(300);
+  fs.writeFileSync(new URL('tasks-gantt.html',out),page('tasks-gantt',freeze(root)));
+  root.querySelector('[data-task-id="layout-gantt-parent"] .lubi-gantt-collapse').click();await tick(300);
+  fs.writeFileSync(new URL('tasks-gantt-collapsed.html',out),page('tasks-gantt-collapsed',freeze(root)));
+}
+// Today's hour-based Gantt, with midnight, un-timed, unset-estimate and clipped plans.
+{
+  const {blankTask}=await import("./core.mjs");
+  for(const t of [
+    blankTask({id:"layout-daily-midnight",title:"午夜任务（合成）",date:T,start:"00:00",estimate:60,category:"学习"}),
+    blankTask({id:"layout-daily-timed",title:"今日定时任务（合成）",date:T,start:"09:30",estimate:90,category:"学习"}),
+    blankTask({id:"layout-daily-unset",title:"今日未定时（合成）",date:T,start:"",estimate:45,category:"学习"}),
+    blankTask({id:"layout-daily-point",title:"未填预计（合成）",date:T,start:"11:00",estimate:0,category:"学习"}),
+    blankTask({id:"layout-daily-late",title:"跨午夜计划（合成）",date:T,start:"23:45",estimate:90,category:"学习"})
+  ])await plugin.tasks.upsert(t);
+  [...root.querySelectorAll('.lubi-gantt-card .lubi-gantt-period-switch button')].find(b=>b.dataset.lubiFocus==="gantt-period:day").click();await tick(300);
+  fs.writeFileSync(new URL('tasks-daily-gantt.html',out),page('tasks-daily-gantt',freeze(root)));
+  root.querySelector('[data-lubi-focus="gantt-period:week"]').click();await tick(300);
+  fs.writeFileSync(new URL('tasks-week-gantt.html',out),page('tasks-week-gantt',freeze(root)));
+
+}
 console.log("preview written to", out.pathname);
 process.exit(0);
 

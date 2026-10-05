@@ -10,13 +10,16 @@ import { installTooltips } from "./ui/tooltips";
 import { RecordModal, ConfirmModal } from "./ui/modals";
 import { LubiSettingTab } from "./ui/settingsTab";
 import { Rec } from "./core/records";
+import { historyNames, validNameUses } from "./core/nameHistory";
 
 export default class LubiPlugin extends Plugin {
   settings: LubiSettings = DEFAULT_SETTINGS;
   journal!: Journal;
   tasks!: Tasks;
-  /** 最近记录缓存：用于标题联想与"接着记" */
+  /** 最近记录缓存：用于“接着记”；名称候选另行惰性读取全部历史。 */
   private recent: Rec[] = [];
+  private nameRecords?: Promise<Rec[]>;
+  private settingsWrite: Promise<void> = Promise.resolve();
   private disposeTooltips?: () => void;
   private refreshTimer: number | null = null;
   private pendingTaskReload = false;
@@ -74,12 +77,20 @@ export default class LubiPlugin extends Plugin {
     if (!Array.isArray(this.settings.categories) || !this.settings.categories.length) this.settings.categories = DEFAULT_CATEGORIES.map((c) => ({ ...c }));
     // 旧数据没有 paletteVersion：按 v1 处理，把仍是旧默认值的分类色迁移到 v1.4 色板（自定义颜色不动）。
     if (raw && raw.paletteVersion === undefined) this.settings.paletteVersion = 1;
-    if (raw && migratePalette(this.settings)) await this.saveData(this.settings);
+    this.settings.nameUses = validNameUses(this.settings.nameUses);
+    if (raw && migratePalette(this.settings)) await this.persistSettings();
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
+    this.nameRecords = undefined;
+    await this.persistSettings();
     this.refreshViews();
+  }
+
+  private persistSettings(): Promise<void> {
+    const next = this.settingsWrite.catch(() => undefined).then(() => this.saveData(this.settings));
+    this.settingsWrite = next;
+    return next;
   }
 
   openSettings(): void {
@@ -154,6 +165,7 @@ export default class LubiPlugin extends Plugin {
     const p = normalizePath(path);
     const inJournal = p.startsWith(normalizePath(this.settings.journalFolder) + "/");
     if (inJournal) {
+      this.nameRecords = undefined;
       // 内部编辑需要立即让当前交互看到最新结果，但不必再次扫描最近 14 天日记。
       if (Date.now() - this.journal.lastWriteAt < 1000) {
         this.refreshViews(false);
@@ -192,16 +204,40 @@ export default class LubiPlugin extends Plugin {
     this.recent = [...map.values()].flat();
   }
 
+  /** Existing native expense suggestions; the time-name feature does not change this path. */
   recentTitles(category: string): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const r of this.recent.slice().reverse()) {
       if (r.category !== category || seen.has(r.title)) continue;
-      seen.add(r.title);
-      out.push(r.title);
+      seen.add(r.title); out.push(r.title);
       if (out.length >= 12) break;
     }
     return out;
+  }
+
+  /** Lazy full-history scan, shared by forms; invalidated by journal changes. */
+  async nameCandidates(category: string): Promise<string[]> {
+    if (!this.settings.categories.some(c => c.name === category && c.kind === "time")) return [];
+    if (!this.nameRecords) {
+      const pending = this.journal.readRange(this.journal.dates()).then(map => [...map.values()].flat());
+      this.nameRecords = pending;
+      pending.catch(() => { if (this.nameRecords === pending) this.nameRecords = undefined; });
+    }
+    const [records] = await Promise.all([this.nameRecords, this.tasks.load()]);
+    return historyNames(category, records, this.tasks.all, validNameUses(this.settings.nameUses));
+  }
+
+  /** Called only after a successful form save. Failure must not invite a duplicate data save. */
+  async rememberName(category: string, title: string): Promise<void> {
+    if (!this.settings.categories.some(c => c.name === category && c.kind === "time")) return;
+    const name = title.trim();
+    if (!name) return;
+    this.nameRecords = undefined;
+    this.settings.nameUses = validNameUses(this.settings.nameUses).filter(u => u.category !== category || u.title !== name);
+    this.settings.nameUses.push({ category, title: name, usedAt: Date.now() });
+    try { await this.persistSettings(); }
+    catch { new Notice("内容已保存，但名称排序未能保存；请检查插件存储权限。", 6000); }
   }
 
   /** 某天最后一条记录的结束时间（用于"接着记"） */
