@@ -62,7 +62,7 @@
 .lubi-icon-btn-sm { width: 24px; height: 24px; border-radius: 6px; }
 .lubi-icon-btn-sm svg { width: 14px; height: 14px; }
 
-.lubi-seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 10px; background: var(--background-secondary); }
+.lubi-seg { display: inline-flex; align-items: center; padding: 3px; gap: 2px; border-radius: 10px; background: var(--background-secondary); }
 .lubi-seg-item {
   display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 14px;
   border: none; border-radius: 8px; background: transparent; box-shadow: none;
@@ -624,12 +624,12 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 :is(.lubi-root, .lubi-modal) button.lubi-icon-btn:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 :is(.lubi-root, .lubi-modal) button.lubi-seg-item:not(.clickable-icon) {
   height: 30px; padding: 0 12px; border: 1px solid transparent; color: var(--lubi-muted);
+  justify-content: center; font-weight: 600; line-height: 1; white-space: nowrap;
 }
 :is(.lubi-root, .lubi-modal) button.lubi-seg-item:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 :is(.lubi-root, .lubi-modal) button.lubi-seg-item[aria-pressed="true"]:not(.clickable-icon) {
-  border-color: color-mix(in srgb, var(--lubi-accent) 65%, var(--lubi-border));
-  background: color-mix(in srgb, var(--lubi-accent) 15%, var(--background-primary));
-  box-shadow: inset 0 -2px 0 var(--lubi-accent); color: var(--text-normal); font-weight: 600;
+  border-color: var(--lubi-border); background: var(--background-primary);
+  box-shadow: none; color: var(--text-normal); font-weight: 600;
 }
 .lubi-modal .lubi-status-seg button.lubi-seg-item[data-task-status="todo"] { --lubi-state: var(--lubi-accent); }
 .lubi-modal .lubi-status-seg button.lubi-seg-item[data-task-status="doing"] { --lubi-state: var(--color-blue); }
@@ -1216,6 +1216,8 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 /* 全插件统一悬停；颜色只作用于 Lubi，不覆盖 Obsidian 的 .tooltip。 */
 .lubi-tip { box-sizing: border-box; max-width: min(300px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow: hidden; padding: 8px 12px; border-radius: 8px; background: var(--background-primary); color: var(--text-normal); border: 1px solid var(--background-modifier-border); box-shadow: 0 4px 16px rgba(0,0,0,.12); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .lubi-tip > div:only-child { font-weight: normal; margin: 0; }
+/* 短按钮提示与任务详情分层；不添加动画或恢复已移除的提示。 */
+.lubi-tip.is-label { padding: 6px 10px; line-height: 1.5; box-shadow: var(--lubi-shadow-1); }
 
 /* 实际浏览器对比度检查：统计变化值使用可读的语义色，而非纯亮色。 */
 .lubi-kpi-delta.is-up, .lubi-insight-delta.is-ok { color: color-mix(in srgb, var(--lubi-ok) 55%, var(--text-normal)); }
@@ -1248,8 +1250,15 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-plan.is-compact .lubi-block-actions .lubi-icon-btn { width: 20px; height: 16px; }
 .lubi-root button.lubi-pending-badge { height: auto; min-height: 0; border: 0; box-shadow: none; cursor: pointer; }
 
-/* 今日计划独立卡片，完成度沿用标题中的已做 / 总数。 */
-.lubi-plan-progress { height: 6px; border-radius: var(--lubi-radius-pill); background: var(--lubi-line-soft); overflow: hidden; margin-bottom: var(--lubi-gap-2); }
+/* 今日计划：任务名称为主，时间使用等宽数字，沿用已做 / 总数进度。 */
+.lubi-plan-card > .lubi-panel-head { justify-content: space-between; }
+.lubi-plan-card > .lubi-panel-head > .lubi-muted { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.lubi-plan-task-list .lubi-task { padding: 10px 0; border-radius: 0; border-bottom-color: var(--lubi-line-soft); }
+.lubi-plan-task-list .lubi-task-title { font-size: var(--lubi-fs-md); }
+.lubi-plan-task-list .lubi-task-meta { margin-top: 4px; font-size: var(--lubi-fs-sm); }
+.lubi-plan-task-list .lubi-task-body:has(.lubi-task-title > .lubi-dot) .lubi-task-meta { padding-left: 14px; }
+.lubi-plan-task-list .lubi-task-meta-time { color: var(--text-normal); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lubi-plan-progress { height: 8px; border-radius: var(--lubi-radius-pill); background: var(--lubi-line-soft); overflow: hidden; margin-bottom: var(--lubi-gap-3); }
 .lubi-plan-progress-fill { height: 100%; background: var(--lubi-ok); border-radius: inherit; }
 
 /* 设置页：普通分区与两层分类字段，不为每个设置绘制装饰卡片。 */
@@ -1327,10 +1336,16 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
   }
 }
 
-/* 每日页：悬停和拖选限定在记录 / 计划区域，不横跨两列。 */
+/* 每日页：普通悬停和选择仍按区域显示；拖动时间线连接到左侧刻度。 */
 .lubi-root .lubi-tl-canvas > .lubi-tl-hover, .lubi-root .lubi-tl-canvas > .lubi-block-ghost { left: 0; right: auto; width: var(--lubi-rec-w); }
 .lubi-root .lubi-tl-canvas > .lubi-tl-hover[data-area="plan"], .lubi-root .lubi-tl-canvas > .lubi-block-ghost[data-area="plan"] { left: var(--lubi-rec-w); width: var(--lubi-plan-w); }
 .lubi-root .lubi-tl-canvas > .lubi-tl-hover[data-area="plan"] .lubi-tl-hover-label { left: 4px; transform: none; }
+.lubi-root .lubi-tl-canvas > .lubi-tl-hover.is-drag-guide[data-area="plan"] { left: 0; width: calc(var(--lubi-rec-w) + var(--lubi-plan-w)); }
+.lubi-root .lubi-timeline .lubi-drag-obscured { visibility: hidden; }
+/* 卡片内续接时间线；不改整张卡片的层级，也不覆盖并行记录角标。 */
+.lubi-root .lubi-drag-guide-segment { position: absolute; height: 0; border-top: 1px dashed var(--text-faint); z-index: 1; pointer-events: none; }
+.lubi-root .lubi-drag-guide-host > :is(.lubi-block-head, .lubi-block-meta, .lubi-plan-head, .lubi-plan-time) { position: relative; z-index: 2; }
+
 .lubi-root .lubi-tl-canvas > .lubi-block-ghost[data-area="plan"] { --chip: var(--lubi-info); border-color: var(--lubi-info); background: color-mix(in srgb, var(--lubi-info) 12%, transparent); }
 .lubi-root .lubi-block-ghost[data-area="plan"] .lubi-block-head { color: var(--text-normal); }
 .lubi-plan-gap { position: absolute; left: calc(var(--lubi-rec-w) + 6px); right: 4px; z-index: 1; border-radius: 6px; }

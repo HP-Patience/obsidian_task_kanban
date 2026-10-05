@@ -118,12 +118,13 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   };
   const showHover = (area: Area, minute: number, label = minToHM(minute), target?: HTMLElement, atEnd = false) => {
     hover.dataset.area = area;
+    hover.toggleClass("is-drag-guide", dragging);
     hover.style.top = `${minute * PX_PER_MIN}px`;
     hoverLabel.setText(area === "plan" ? `计划 ${label}` : label);
     hoverLabel.hidden = dragging;
     readout.hidden = !dragging;
     if (dragging) {
-      readout.dataset.area = area; readout.dataset.anchor = "block";
+      readout.dataset.area = area; readout.dataset.anchor = "axis";
       readoutTarget = target || canvas.querySelector<HTMLElement>(".lubi-block-ghost.is-on"); readoutAtEnd = atEnd;
       // Keep the complete time range on one line.
       readout.setText(label.replace(/\s*–\s*/g, "–"));
@@ -132,7 +133,13 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
     }
     hover.addClass("is-on");
   };
-  const hideHover = () => { hover.removeClass("is-on"); hoverLabel.hidden = true; readout.hidden = true; readoutTarget = null; };
+  const hideHover = () => {
+    hover.removeClass("is-on", "is-drag-guide"); hoverLabel.hidden = true; readout.hidden = true; readoutTarget = null;
+    readout.style.visibility = "";
+    tl.querySelectorAll(".lubi-drag-obscured").forEach(el => el.classList.remove("lubi-drag-obscured"));
+    tl.querySelectorAll(".lubi-drag-guide-segment").forEach(el => el.remove());
+    tl.querySelectorAll(".lubi-drag-guide-host").forEach(el => el.classList.remove("lubi-drag-guide-host"));
+  };
   canvas.addEventListener("pointermove", (e) => {
     if (dragging) return;
     if ((e.target as HTMLElement).closest(".lubi-block, .lubi-plan")) {
@@ -370,7 +377,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
       block.style.height = `${Math.max(s.minutes * PX_PER_MIN, 18) - 2}px`;
       timeEl.setText(`${minToHM(s.start)}–${minToHM(s.start + s.minutes)}`);
       durEl.setText(fmtDuration(s.minutes));
-      if (dragging) showHover("record", s.start, `${minToHM(s.start)} – ${minToHM(s.start + s.minutes)}`, block, atEnd);
+      if (dragging) showHover("record", atEnd ? s.start + s.minutes : s.start, `${minToHM(s.start)} – ${minToHM(s.start + s.minutes)}`, block, atEnd);
     };
     const bind = (target: HTMLElement, mode: "move" | "resize-start" | "resize-end") => {
       target.addEventListener("pointerdown", (e) => {
@@ -580,7 +587,7 @@ function renderPlanCard(plugin: LubiPlugin, side: HTMLElement, date: string, pla
   el(head, "h3", "lubi-panel-title", date === todayStr() ? "今日计划" : "当天计划");
   const done = planned.length - openCount;
   head.createSpan({ cls: "lubi-muted", text: `${done}/${planned.length} 已做` });
-  const progress = card.createDiv({ cls: "lubi-plan-progress", attr: { role: "progressbar", "aria-valuemin": "0", "aria-valuemax": String(planned.length), "aria-valuenow": String(done), "aria-label": "计划完成度（已完成或已有记录）" } });
+  const progress = card.createDiv({ cls: "lubi-plan-progress", attr: { role: "progressbar", "aria-valuemin": "0", "aria-valuemax": String(planned.length), "aria-valuenow": String(done), "aria-valuetext": `${done}/${planned.length} 已完成或已有记录`, "aria-label": "计划完成度（已完成或已有记录）" } });
   progress.createDiv({ cls: "lubi-plan-progress-fill" }).style.width = `${Math.round(done / planned.length * 100)}%`;
   const details = card.createEl("details", { cls: "lubi-fold lubi-plan-task-details" });
   details.createEl("summary", { text: "任务清单", attr: { "data-lubi-focus": "plan-task-details" } });

@@ -49,8 +49,62 @@ if (!browser) {
     out.tabsX = r(tabs) && Math.round(r(tabs).left);
     out.tabsW = r(tabs) && Math.round(r(tabs).width);
     out.tabOrder=tabs?[...tabs.querySelectorAll('button')].map(b=>b.dataset.lubiFocus).join('|'):null;
+    out.referenceControls = [...document.querySelectorAll('.lubi-root .lubi-seg')].map(group => {
+      const buttons = [...group.querySelectorAll('.lubi-seg-item')], before = buttons.map(b => r(b).width);
+      const states = buttons.map(b => b.getAttribute('aria-pressed'));
+      buttons.forEach(b => b.setAttribute('aria-pressed', 'true'));
+      const stable = buttons.every((b, i) => Math.abs(r(b).width - before[i]) < .5);
+      buttons.forEach((b, i) => b.setAttribute('aria-pressed', states[i]));
+      return { stable, heights: buttons.map(b => r(b).height), selected: buttons.filter(b => b.getAttribute('aria-pressed') === 'true').every(b => getComputedStyle(b).boxShadow === 'none') };
+    });
+    const progress = document.querySelector('.lubi-plan-progress');
+    if (progress) {
+      const done = +progress.getAttribute('aria-valuenow'), total = +progress.getAttribute('aria-valuemax');
+      const fill = progress.querySelector('.lubi-plan-progress-fill');
+      out.planProgress = { done, total, ratio: r(fill).width / r(progress).width, label: progress.getAttribute('aria-valuetext'), height: r(progress).height };
+    }
     const readout=document.querySelector('.lubi-drag-readout:not([hidden])');
-    if(readout){const target=document.querySelector('.lubi-block.is-dragging,.lubi-plan.is-dragging'),scroller=document.querySelector('.lubi-timeline-scroll');LubiDragReadout.positionDragReadout(readout,target,scroller,document.querySelector('.lubi-timeline'),document.querySelector('.lubi-timeline-wrap'));const sr=r(document.querySelector('.lubi-timeline-scroll')),rr=r(readout);const texts=[...document.querySelectorAll('.lubi-block-title,.lubi-block-time,.lubi-plan-title,.lubi-plan-time,.lubi-hour-label')];out.dragFeedback={visible:rr.width>0&&rr.height>0,contained:rr.left>=0&&rr.right<=innerWidth&&rr.bottom<=innerHeight,leftOfTask:(()=>{const br=r(document.querySelector(".lubi-block.is-dragging,.lubi-plan.is-dragging"));return rr.right<=br.left&&br.left-rr.right<=4.5&&rr.top<sr.bottom&&rr.bottom>sr.top})(),fullText:readout.scrollWidth<=readout.clientWidth,singleLine:getComputedStyle(readout).whiteSpace==='nowrap'&&!readout.firstChild.textContent.includes("\n")&&rr.height<=22,inlineHidden:document.querySelector('.lubi-tl-hover-label').hidden,noTextOverlap:texts.every(el=>{const tr=r(el);const top=Math.max(tr.top,sr.top),bottom=Math.min(tr.bottom,sr.bottom),left=Math.max(tr.left,sr.left),right=Math.min(tr.right,sr.right);return bottom<=top||right<=left||right<=rr.left||left>=rr.right||bottom<=rr.top||top>=rr.bottom}),area:readout.dataset.area};}
+    if (readout) {
+      const target = document.querySelector('.lubi-block.is-dragging,.lubi-plan.is-dragging'), scroller = document.querySelector('.lubi-timeline-scroll');
+      const timeline = document.querySelector('.lubi-timeline'), wrap = document.querySelector('.lubi-timeline-wrap'), canvas = document.querySelector('.lubi-tl-canvas'), guide = canvas.querySelector('.lubi-tl-hover');
+      const body = document.querySelector('.lubi-body');
+      if (r(scroller).bottom > r(body).bottom) body.scrollTop += r(scroller).bottom - r(body).bottom + 4;
+      scroller.scrollTop = Math.max(0, parseFloat(guide.style.top) + 32 - scroller.clientHeight / 2);
+      const position = () => LubiDragReadout.positionDragReadout(readout, target, scroller, timeline, wrap);
+      position();
+      const sr=r(scroller), rr=r(readout), axis=r(canvas).left, line=r(guide);
+      const texts=[...document.querySelectorAll('.lubi-block-title,.lubi-block-time,.lubi-plan-title,.lubi-plan-time,.lubi-hour-label,.lubi-now-label')];
+      out.dragFeedback={visible:rr.width>0&&rr.height>0&&getComputedStyle(readout).visibility!=='hidden',contained:rr.left>=0&&rr.right<=innerWidth&&rr.bottom<=Math.min(sr.bottom,r(body).bottom),leftOfAxis:rr.right<=axis&&axis-rr.right<=4.5,aligned:Math.abs(rr.top+rr.height/2-line.top-line.height/2)<.6,guideToAxis:Math.abs(line.left-axis)<.6,fullText:readout.scrollWidth<=readout.clientWidth,singleLine:getComputedStyle(readout).whiteSpace==='nowrap'&&!readout.firstChild.textContent.includes("\n")&&rr.height<=22,inlineHidden:document.querySelector('.lubi-tl-hover-label').hidden,noTextOverlap:texts.every(el=>{if(getComputedStyle(el).visibility==='hidden')return true;const tr=r(el);const top=Math.max(tr.top,sr.top),bottom=Math.min(tr.bottom,sr.bottom),left=Math.max(tr.left,sr.left),right=Math.min(tr.right,sr.right);return bottom<=top||right<=left||right<=rr.left||left>=rr.right||bottom<=rr.top||top>=rr.bottom}),area:readout.dataset.area};
+      const before=r(readout).top, previousScroll=scroller.scrollTop; scroller.scrollTop+=17; position();
+      out.dragFeedback.scrollSynced=Math.abs((r(readout).top-before)+(scroller.scrollTop-previousScroll))<.6;
+      // Opaque foreground cards reproduce the guide being hidden by card backgrounds.
+      const originalArea=guide.dataset.area, obstacles=[]; guide.dataset.area='plan';
+      for (const selector of ['.lubi-block:not(.lubi-block-ghost)','.lubi-plan']) {
+        const original=timeline.querySelector(selector), clone=original.cloneNode(true), parent=original.parentElement;
+        clone.classList.remove('is-dragging','is-moving','is-resizing','is-selected','is-compact','lubi-block-compact','lubi-drag-guide-host');
+        clone.querySelectorAll('.lubi-drag-guide-segment').forEach(el=>el.remove());
+        clone.style.top=(r(guide).top-r(parent).top-12)+'px'; clone.style.height='60px'; clone.style.zIndex='8'; clone.style.background='var(--background-primary)';
+        if (selector.startsWith('.lubi-block')) { clone.style.left='8px'; clone.style.width='45%'; }
+        parent.appendChild(clone); obstacles.push(clone);
+      }
+      position();
+      out.dragFeedback.cardGuideVisible=obstacles.every(card=>{
+        const segment=card.querySelector(':scope > .lubi-drag-guide-segment'); if (!segment) return false;
+        const cs=getComputedStyle(segment), box=r(segment), rule=r(guide), foreground=card.querySelector('.lubi-block-head,.lubi-plan-head');
+        const textStyle=getComputedStyle(foreground), textBox=r(foreground);
+        segment.style.pointerEvents='auto';
+        const fillHit=document.elementFromPoint(box.left+4,box.top+box.height/2), textLayers=document.elementsFromPoint(textBox.left+2,box.top+box.height/2);
+        segment.style.pointerEvents='';
+        return card.classList.contains('lubi-drag-guide-host')&&cs.borderTopStyle==='dashed'&&parseFloat(cs.borderTopWidth)===1&&cs.pointerEvents==='none'&&box.width>20&&Math.abs(box.top-rule.top)<.6&&fillHit===segment&&parseInt(textStyle.zIndex)>parseInt(cs.zIndex)&&textLayers.indexOf(foreground)>=0&&textLayers.indexOf(foreground)<textLayers.indexOf(segment);
+      });
+      obstacles.forEach(el=>el.remove()); guide.dataset.area=originalArea; position();
+      const originalTop=guide.style.top;
+      out.dragFeedback.boundaries=[0,1344].every(top=>{guide.style.top=top+'px';scroller.scrollTop=top;position();const label=r(readout),rule=r(guide),tick=timeline.querySelector(top===0?'.is-day-start':'.is-day-end');return getComputedStyle(readout).visibility!=='hidden'&&Math.abs(label.top+label.height/2-rule.top-rule.height/2)<.6&&getComputedStyle(tick).visibility==='hidden';});
+      guide.style.top=originalTop; scroller.scrollTop=previousScroll; position();
+      scroller.scrollTop=0; guide.style.top='2000px'; position();
+      out.dragFeedback.offscreenHidden=getComputedStyle(readout).visibility==='hidden'&&!timeline.querySelector('.lubi-drag-obscured,.lubi-drag-guide-segment,.lubi-drag-guide-host');
+      guide.style.top=originalTop; scroller.scrollTop=previousScroll; position();
+    }
     out.barOverflow = bar ? bar.scrollWidth - bar.clientWidth : -1;
     const lr = r(left), tr = r(tabs), rr = r(right);
     out.zoneOverlap = (lr && tr && lr.width && lr.right > tr.left + 1 && getComputedStyle(tabs).gridRow === getComputedStyle(left).gridRow) || (rr && tr && rr.left < tr.right - 1 && getComputedStyle(tabs).gridRow === getComputedStyle(right).gridRow);
@@ -101,6 +155,12 @@ if (!browser) {
       }
     }
     out.foldStates = [...document.querySelectorAll(".lubi-fold")].map(d => ({ open: d.open, summaryVisible: r(d.querySelector("summary")).height > 0, planTasks: d.classList.contains("lubi-plan-task-details"), gaps: d.classList.contains("lubi-gap-card") }));
+    const planRow = document.querySelector('.lubi-plan-task-list .lubi-task:has(.lubi-task-meta)');
+    if (planRow) {
+      const clone = planRow.cloneNode(true); clone.querySelector('.lubi-dot')?.remove(); planRow.parentElement.appendChild(clone);
+      out.planMetaAligned = parseFloat(getComputedStyle(planRow.querySelector('.lubi-task-meta')).paddingLeft) === (planRow.querySelector('.lubi-dot') ? 14 : 0) && parseFloat(getComputedStyle(clone.querySelector('.lubi-task-meta')).paddingLeft) === 0;
+      clone.remove();
+    }
     // smallest visible text
     let min = 99, minAt = '';
     const walker = document.createTreeWalker(document.querySelector('.lubi-root'), NodeFilter.SHOW_TEXT);
@@ -206,6 +266,7 @@ if (!browser) {
     if (areaCanvas) {
       const lane = areaCanvas.querySelector('.lubi-plan-lane'), split = lane ? r(lane).left : r(areaCanvas).right;
       const guide = areaCanvas.querySelector(':scope > .lubi-tl-hover'), ghost = areaCanvas.querySelector('.lubi-block-ghost');
+      guide.classList.remove('is-drag-guide'); // Ordinary hover/selection stays lane-specific.
       for (const area of lane ? ['record','plan'] : ['record']) {
         for (const el of [guide,ghost]) { el.dataset.area = area; el.classList.add('is-on'); }
         ghost.style.top='400px'; ghost.style.height='60px';
@@ -251,6 +312,10 @@ if (!browser) {
     });
     out.tipBackground = parse(getComputedStyle(hint).backgroundColor).slice(0,3);
     hint.remove();
+    const label = document.createElement('div'); label.className = 'lubi-tip is-label'; label.textContent = '编辑'; document.body.appendChild(label);
+    const labelStyle = getComputedStyle(label);
+    out.shortHint = { compact: labelStyle.paddingTop === '6px' && labelStyle.paddingLeft === '10px', surface: parse(labelStyle.backgroundColor).slice(0,3) };
+    label.remove();
     const options = document.querySelector('.lubi-name-options');
     if (options) {
       const input = document.querySelector('[role="combobox"]');
@@ -341,6 +406,13 @@ if (!browser) {
           }
           assert(g.barOverflow <= 1, `${theme} ${page} ${width}px: top bar overflows by ${g.barOverflow}px`);
           assert(!g.zoneOverlap, `${theme} ${page} ${width}px: top bar zones overlap ${JSON.stringify(g)}`);
+          assert(g.referenceControls.every(c => c.stable && c.selected && Math.max(...c.heights) - Math.min(...c.heights) <= .5), `${theme} ${page} ${width}px: shared segments jump or have duplicate emphasis`);
+          if (g.planProgress) {
+            const p = g.planProgress;
+            assert(p.done >= 0 && p.done <= p.total && Math.abs(p.ratio - p.done / p.total) < .011 && p.height === 8 && p.label === `${p.done}/${p.total} 已完成或已有记录`, `${theme} ${width}px: daily progress must reflect the existing completion count`);
+          }
+          assert(g.planMetaAligned !== false && g.shortHint.compact, `${theme} ${page} ${width}px: metadata alignment or compact hint regressed`);
+          assert.deepEqual(g.shortHint.surface, theme === 'light' ? [255,255,255] : [30,30,34], `${theme}: compact hints must follow the theme`);
           assert(g.tipFits && g.tipNotesClamped && g.tipContrast, `${theme} ${page} ${width}px: tooltip geometry, two-line notes, or contrast failed ${JSON.stringify(g)}`);
           assert.deepEqual(g.tipBackground, theme === "light" ? [255,255,255] : [30,30,34], `${theme}: tooltip should use the theme panel surface`);
           assert(g.minFont >= 11, `${theme} ${page} ${width}px: text below 11px (${g.minFont}px at ${g.minAt})`);
@@ -362,10 +434,10 @@ if (!browser) {
         console.log(`ok   top bar ${theme} ${width}px: tabs x=${values[0]} on all pages, text ≥11px, contrast ≥4.5:1, no clipped hour labels`);
       }
     }
-    for(const theme of ["light","dark"]) for(const width of [1400,760,390]) for(const area of ["record","plan"]) {
-      const g=run(theme,"today-drag-"+area,width),d=g.dragFeedback;
-      assert(d?.visible&&d.contained&&d.leftOfTask&&d.fullText&&d.singleLine&&d.inlineHidden&&d.noTextOverlap&&d.area===area,theme+" "+width+"px "+area+": visible unclipped drag feedback beside dragged task without covering task/tick text "+JSON.stringify(d));
-      console.log("ok   drag feedback "+theme+" "+width+"px "+area+": no clipping or text overlap");
+    for(const theme of ["light","dark"]) for(const width of [1400,760,390]) for(const area of ["record","plan"]) for(const mode of ["move","resize-start","resize-end"]) {
+      const g=run(theme,"today-drag-"+area+(mode==="move"?"":"-"+mode),width),d=g.dragFeedback;
+      assert(d?.visible&&d.contained&&d.leftOfAxis&&d.aligned&&d.guideToAxis&&d.cardGuideVisible&&d.scrollSynced&&d.boundaries&&d.offscreenHidden&&d.fullText&&d.singleLine&&d.inlineHidden&&d.noTextOverlap&&d.area===area,theme+" "+width+"px "+area+" "+mode+": axis-aligned drag feedback and guide without clipping or text overlap "+JSON.stringify(d));
+      console.log("ok   drag feedback "+theme+" "+width+"px "+area+" "+mode+": aligned ruler feedback, boundaries and scrolling");
     }
     for(const theme of ["light","dark"]) for(const width of [1560,1000,760,390]) {
       const g=run(theme,"tasks-daily-gantt",width),d=g.dailyGantt;

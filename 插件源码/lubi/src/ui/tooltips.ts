@@ -74,7 +74,7 @@ function show(el: Element, x: number, y: number): void {
   const rows = rich.get(el)?.rows() || [el.getAttribute("data-lubi-tip") || ""];
   if (!rows.length || (rows.length === 1 && rows[0] === "")) return;
   tipEl?.remove();
-  tipEl = document.body.createDiv({ cls: "lubi-tip", attr: { role: "tooltip" } });
+  tipEl = document.body.createDiv({ cls: rich.has(el) ? "lubi-tip" : "lubi-tip is-label", attr: { role: "tooltip" } });
   for (const row of rows) {
     if (typeof row === "string") tipEl.createDiv({ text: row });
     else tipEl.appendChild(row);

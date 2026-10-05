@@ -295,7 +295,12 @@ export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: stri
   if (t.repeat.kind !== "none") meta.push("重复");
   if (meta.length) {
     const text = meta.join(" · ");
-    tip(body.createDiv({ cls: "lubi-task-meta", text }), text);
+    const metadata = body.createDiv({ cls: "lubi-task-meta" });
+    meta.forEach((value, index) => {
+      if (index) metadata.appendChild(document.createTextNode(" · "));
+      metadata.createSpan({ cls: value === t.start ? "lubi-task-meta-time" : "lubi-task-meta-item", text: value });
+    });
+    tip(metadata, text);
   }
   // 已完成却没有对应记录（自动记录失败、记录被删）：提示并可一键补记
   if (done && date <= todayStr() && plugin.settings.promptLogOnComplete) {
