@@ -33,10 +33,12 @@ if (!browser) {
     const esb = spawnSync(process.execPath, [join(project, "node_modules", "esbuild", "bin", "esbuild"), "src/main.ts", "--bundle", "--platform=node", "--format=cjs", "--external:obsidian", "--outfile=test/plugin.cjs", "--log-level=warning"], { cwd: project, encoding: "utf8" });
     assert.equal(esb.status, 0, `esbuild failed: ${esb.stderr}`);
   }
+  const cueBundle = spawnSync(process.execPath, [join(project, "node_modules", "esbuild", "bin", "esbuild"), "src/ui/dragReadout.ts", "--bundle", "--format=iife", "--global-name=LubiDragReadout", "--log-level=warning"], { cwd: project, encoding: "utf8" });
+  assert.equal(cueBundle.status, 0, "drag readout browser bundle failed");
   const gen = spawnSync(process.execPath, [join(project, "test", "preview.mjs")], { cwd: project, encoding: "utf8", timeout: 60000, env: { ...process.env, LUBI_TEST_DAY_START_PLAN: "1" } });
   assert.equal(gen.status, 0, `preview generation failed: ${gen.stderr?.slice(-800)}`);
 
-  const probe = String.raw`<pre id="lubi-result"></pre><script>
+  const probe = `<script>${cueBundle.stdout}</script>` + String.raw`<pre id="lubi-result"></pre><script>
   (() => {
     const out = { viewportWidth: innerWidth };
     const r = (el) => el ? el.getBoundingClientRect() : null;
@@ -46,6 +48,9 @@ if (!browser) {
     const right = document.querySelector('.lubi-topbar-right');
     out.tabsX = r(tabs) && Math.round(r(tabs).left);
     out.tabsW = r(tabs) && Math.round(r(tabs).width);
+    out.tabOrder=tabs?[...tabs.querySelectorAll('button')].map(b=>b.dataset.lubiFocus).join('|'):null;
+    const readout=document.querySelector('.lubi-drag-readout:not([hidden])');
+    if(readout){const target=document.querySelector('.lubi-block.is-dragging,.lubi-plan.is-dragging'),scroller=document.querySelector('.lubi-timeline-scroll');LubiDragReadout.positionDragReadout(readout,target,scroller,document.querySelector('.lubi-timeline'),document.querySelector('.lubi-timeline-wrap'));const sr=r(document.querySelector('.lubi-timeline-scroll')),rr=r(readout);const texts=[...document.querySelectorAll('.lubi-block-title,.lubi-block-time,.lubi-plan-title,.lubi-plan-time,.lubi-hour-label')];out.dragFeedback={visible:rr.width>0&&rr.height>0,contained:rr.left>=0&&rr.right<=innerWidth&&rr.bottom<=innerHeight,leftOfTask:(()=>{const br=r(document.querySelector(".lubi-block.is-dragging,.lubi-plan.is-dragging"));return rr.right<=br.left&&br.left-rr.right<=4.5&&rr.top<sr.bottom&&rr.bottom>sr.top})(),fullText:readout.scrollWidth<=readout.clientWidth,singleLine:getComputedStyle(readout).whiteSpace==='nowrap'&&!readout.firstChild.textContent.includes("\n")&&rr.height<=22,inlineHidden:document.querySelector('.lubi-tl-hover-label').hidden,noTextOverlap:texts.every(el=>{const tr=r(el);const top=Math.max(tr.top,sr.top),bottom=Math.min(tr.bottom,sr.bottom),left=Math.max(tr.left,sr.left),right=Math.min(tr.right,sr.right);return bottom<=top||right<=left||right<=rr.left||left>=rr.right||bottom<=rr.top||top>=rr.bottom}),area:readout.dataset.area};}
     out.barOverflow = bar ? bar.scrollWidth - bar.clientWidth : -1;
     const lr = r(left), tr = r(tabs), rr = r(right);
     out.zoneOverlap = (lr && tr && lr.width && lr.right > tr.left + 1 && getComputedStyle(tabs).gridRow === getComputedStyle(left).gridRow) || (rr && tr && rr.left < tr.right - 1 && getComputedStyle(tabs).gridRow === getComputedStyle(right).gridRow);
@@ -260,8 +265,12 @@ if (!browser) {
     if(gs) {
       const heading=gs.querySelector('.lubi-gantt-heading > .lubi-gantt-name');
       const titles=[...gs.querySelectorAll('.lubi-gantt-title')];
+      const rows=[...gs.querySelectorAll('.lubi-gantt-row')],names=rows.map(row=>row.querySelector('.lubi-gantt-name'));
+      const flat=names.filter(n=>!n.querySelector('.lubi-gantt-collapse,.lubi-gantt-spacer'));
+      const card=gs.closest('.lubi-gantt-card'),cardStyle=getComputedStyle(card);
+      const layout={nameWidth:names.every(n=>r(n).width>=140&&r(n).width<=160&&Math.abs(r(n).width-r(heading).width)<=1),normalRows:rows.every(row=>r(row).height>=38&&r(row).height<=39),normalHeader:Math.abs(r(heading).height-44)<=1,flatLeft:flat.length>0&&flat.every(n=>r(n.querySelector('.lubi-dot')).left-r(n).left<=7),panelFills:Math.abs(r(card).width-r(card.parentElement).width)<=1,scrollerFills:Math.abs(r(gs).width-(card.clientWidth-parseFloat(cardStyle.paddingLeft)-parseFloat(cardStyle.paddingRight)))<=1,tableFills:r(gs.querySelector('.lubi-gantt-table')).width>=gs.clientWidth-1,barInside:[...gs.querySelectorAll('.lubi-gantt-bar')].every(b=>r(b).top>=r(b.closest('.lubi-gantt-row')).top&&r(b).bottom<=r(b.closest('.lubi-gantt-row')).bottom)};
       const done=[...gs.querySelectorAll('.lubi-gantt-bar.is-done')],todo=gs.querySelector('.lubi-gantt-bar:not(.is-done)');
-      out.ganttAppearance={center:getComputedStyle(heading).justifyContent==='center',left:titles.every(el=>getComputedStyle(el).textAlign==='left'),neutral:done.every(el=>getComputedStyle(el).borderLeftColor===getComputedStyle(el).color),changed:!!todo&&done.length>0&&done.every(el=>getComputedStyle(el).borderLeftColor!==getComputedStyle(todo).borderLeftColor)};
+      out.ganttAppearance={layout,center:getComputedStyle(heading).justifyContent==='center',left:titles.every(el=>getComputedStyle(el).textAlign==='left'),neutral:done.every(el=>getComputedStyle(el).borderLeftColor===getComputedStyle(el).color),changed:!!todo&&done.length>0&&done.every(el=>getComputedStyle(el).borderLeftColor!==getComputedStyle(todo).borderLeftColor)};
     }
     if(gs&&!document.querySelector(".lubi-daily-gantt-card")) {
       const names=[...gs.querySelectorAll('.lubi-gantt-row > .lubi-gantt-name')],header=gs.querySelector('.lubi-gantt-heading'),dates=header.querySelector('.lubi-gantt-dates');
@@ -271,7 +280,7 @@ if (!browser) {
       gs.scrollLeft=180;gs.scrollTop=60;
       const sticky=names[0]?Math.abs(r(names[0]).left-before):0;
       const corner=header.querySelector('.lubi-gantt-name'),cornerHit=document.elementFromPoint(Math.max(1,r(corner).left+10),Math.max(1,r(header).top+10));
-      out.gantt={visible:r(gs).width>0&&r(gs).height>0,days:dates.children.length,overflow:document.documentElement.scrollWidth-innerWidth,scroll:gs.scrollLeft,sticky,headerSticky:Math.abs(r(header).top-r(gs).top-1)<=1,nameOverflow:names.some(n=>n.scrollWidth>n.clientWidth+1),aligned:widths.every(w=>w<=1),rows:rows.length,switches:[...document.querySelectorAll('.lubi-schedule-switch')].filter(e=>r(e).width>0&&r(e).height>0).length,actualExcluded:!gs.querySelector('[data-task-id="layout-gantt-record"]'),childVisible:!!gs.querySelector('[data-task-id="layout-gantt-child"]'),cornerAbove:!cornerHit||!!cornerHit.closest('.lubi-gantt-heading'),lineCount:gs.querySelectorAll('.lubi-gantt-today').length};
+      out.gantt={needsScroll:gs.scrollWidth>gs.clientWidth+1,visible:r(gs).width>0&&r(gs).height>0,days:dates.children.length,overflow:document.documentElement.scrollWidth-innerWidth,scroll:gs.scrollLeft,sticky,headerSticky:Math.abs(r(header).top-r(gs).top-1)<=1,nameOverflow:names.some(n=>n.scrollWidth>n.clientWidth+1),aligned:widths.every(w=>w<=1),rows:rows.length,switches:[...document.querySelectorAll('.lubi-schedule-switch')].filter(e=>r(e).width>0&&r(e).height>0).length,actualExcluded:!gs.querySelector('[data-task-id="layout-gantt-record"]'),childVisible:!!gs.querySelector('[data-task-id="layout-gantt-child"]'),cornerAbove:!cornerHit||!!cornerHit.closest('.lubi-gantt-heading'),lineCount:gs.querySelectorAll('.lubi-gantt-today').length};
     }
     const daily=document.querySelector('.lubi-daily-gantt-card');
     if(daily) {
@@ -311,6 +320,8 @@ if (!browser) {
       assert(matches.length > 0, `browser did not return geometry for ${page}`);
       const geometry = JSON.parse(decodeURIComponent(matches[matches.length - 1][1]));
       assert.equal(geometry.viewportWidth, width, `browser CSS viewport must really be ${width}px`);
+      if (geometry.tabOrder !== null) assert.equal(geometry.tabOrder,"seg:today|seg:tasks|seg:review", "all pages share the new top tab order");
+      if (geometry.ganttAppearance) assert(Object.values(geometry.ganttAppearance.layout).every(Boolean), `${theme} ${page} ${width}px: shared compact name column with full-width normal layout ${JSON.stringify(geometry.ganttAppearance.layout)}`);
       return geometry;
     };
     for (const theme of ["light", "dark"]) {
@@ -351,6 +362,11 @@ if (!browser) {
         console.log(`ok   top bar ${theme} ${width}px: tabs x=${values[0]} on all pages, text ≥11px, contrast ≥4.5:1, no clipped hour labels`);
       }
     }
+    for(const theme of ["light","dark"]) for(const width of [1400,760,390]) for(const area of ["record","plan"]) {
+      const g=run(theme,"today-drag-"+area,width),d=g.dragFeedback;
+      assert(d?.visible&&d.contained&&d.leftOfTask&&d.fullText&&d.singleLine&&d.inlineHidden&&d.noTextOverlap&&d.area===area,theme+" "+width+"px "+area+": visible unclipped drag feedback beside dragged task without covering task/tick text "+JSON.stringify(d));
+      console.log("ok   drag feedback "+theme+" "+width+"px "+area+": no clipping or text overlap");
+    }
     for(const theme of ["light","dark"]) for(const width of [1560,1000,760,390]) {
       const g=run(theme,"tasks-daily-gantt",width),d=g.dailyGantt;
       assert(d?.visible&&d.ticks===25&&d.first==="00:00"&&d.last==="24:00"&&d.firstHeader&&d.contained&&d.endpoints&&!d.overlap&&d.sticky&&(!d.needsScroll||d.scroll>0)&&d.overflow<=1&&d.untimedNoBar&&d.point&&d.completedStrike&&d.completedNoCheck&&g.ganttAppearance.center&&g.ganttAppearance.left&&g.ganttAppearance.neutral&&g.ganttAppearance.changed,`${theme} ${width}px: daily time axis/rows/scrolling failed ${JSON.stringify(d)}`);
@@ -364,7 +380,7 @@ if (!browser) {
     }
     for(const theme of ["light","dark"]) for(const width of [1560,1180,1000,760,390]) {
       const g=run(theme,"tasks-gantt",width),a=g.gantt;
-      assert(a?.visible && a.days>=28&&a.days<=31 && a.rows>5 && a.overflow<=1 && a.scroll>0 && a.sticky<=1 && a.headerSticky && !a.nameOverflow && a.aligned && a.switches===1 && a.actualExcluded && a.childVisible && a.lineCount>0&&g.ganttAppearance.center&&g.ganttAppearance.left&&g.ganttAppearance.neutral&&g.ganttAppearance.changed,`${theme} ${width}px: Gantt layout/sticky columns/data projection failed ${JSON.stringify(a)}`);
+      assert(a?.visible && a.days>=28&&a.days<=31 && a.rows>5 && a.overflow<=1 && (!a.needsScroll||a.scroll>0) && a.sticky<=1 && a.headerSticky && !a.nameOverflow && a.aligned && a.switches===1 && a.actualExcluded && a.childVisible && a.lineCount>0&&g.ganttAppearance.center&&g.ganttAppearance.left&&g.ganttAppearance.neutral&&g.ganttAppearance.changed,`${theme} ${width}px: Gantt layout/sticky columns/data projection failed ${JSON.stringify(a)}`);
       assert(g.primaryActions===1 && g.minFont>=11 && g.lowContrast.length===0,`${theme} ${width}px: Gantt has one main action and readable text ${JSON.stringify(g.lowContrast)}`);
       const collapsed=run(theme,"tasks-gantt-collapsed",width).gantt;
       assert(collapsed.visible&&!collapsed.childVisible&&collapsed.rows<a.rows,`${theme} ${width}px: collapsed children still visible`);

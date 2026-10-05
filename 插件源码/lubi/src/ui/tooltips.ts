@@ -103,10 +103,11 @@ export function installTooltips(): () => void {
   const targetOf = (event: Event): Element | null => {
     if (!(event.target instanceof window.Element) || !event.target.closest(scope)) return null;
     const nameOnly = !!event.target.closest(listNames);
+    const suspended = document.body.classList.contains("lubi-dragging") || !!event.target.closest("[data-lubi-tip-suspended]");
     let el: Element | null = event.target;
     while (el && el.closest(scope)) {
       normalize(el); // 在 Obsidian 的冒泡监听之前去掉原生提示属性。
-      if (!nameOnly && (rich.has(el) || el.hasAttribute("data-lubi-tip"))) return el;
+      if (!suspended && !nameOnly && (rich.has(el) || el.hasAttribute("data-lubi-tip"))) return el;
       el = el.parentElement;
     }
     return null;
@@ -121,6 +122,8 @@ export function installTooltips(): () => void {
   listen(document, "pointerover", event => { targetOf(event); });
   listen(document, "pointerout", event => {
     const e = event as PointerEvent;
+    const suspended = e.target instanceof window.Element ? e.target.closest("[data-lubi-tip-suspended]") : null;
+    if (suspended && suspended.getAttribute("data-lubi-tip-suspended") !== "pending" && !document.body.classList.contains("lubi-dragging") && (!(e.relatedTarget instanceof window.Node) || !suspended.contains(e.relatedTarget))) suspended.removeAttribute("data-lubi-tip-suspended");
     if (current && (!(e.relatedTarget instanceof window.Node) || !current.contains(e.relatedTarget))) hideTip();
   });
   listen(document, "pointerleave", event => { if (current && event.target instanceof window.Node && (event.target === current || event.target.contains(current))) hideTip(); });

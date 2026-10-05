@@ -500,7 +500,7 @@ check(root.querySelectorAll(".lubi-chart-legend-item").length >= 1, "chart legen
   check(view.tab === "today", "clicking a bar jumps to today page");
   const tabs = [...root.querySelectorAll(".lubi-topbar-tabs .lubi-seg-item")];
   check(tabs[0].getAttribute("aria-pressed") === "true" && tabs[1].getAttribute("aria-pressed") === "false", "top tabs reflect the jump");
-  tabs[1].click(); await tick(); await tick();
+  tabs.find(b=>b.dataset.lubiFocus === "seg:review").click(); await tick(); await tick();
   check(view.tab === "review" && root.querySelector(".lubi-bars") !== null, "clicking 回顾 returns to review page"); }
 // 10. 周日程 pointer 拖动：跨列 + 改时间
 plugin.settings.scheduleStartHour = 0; view.tasksState.weekAnchor = "2026-09-24"; view.show("tasks", "2026-09-24"); await tick(); // 窗口固定为 9/21–9/27
@@ -1523,6 +1523,7 @@ console.log("data file now:", app.vault.files.get("任务/任务数据.json").sl
   check(repeatBars.length===6&&!repeatBars.some(b=>b.dataset.from==="2026-09-24")&&repeatBars.find(b=>b.dataset.from==="2026-09-23").classList.contains("is-done")&&!row("g-repeat").querySelector(".is-editable, .lubi-gantt-handle"),"gantt integration: repeat segments/skips/done flags and read-only dates");
   check(bar("g-summary").classList.contains("is-summary")&&!bar("g-summary").classList.contains("is-editable")&&!row("g-summary").querySelector(".lubi-gantt-handle"),"gantt integration: derived parent summary is not a draggable explicit span");
   check(row("g-single").querySelectorAll(".lubi-gantt-handle").length===2,"gantt integration: single-day task offers both date boundaries");
+  check(!row("g-single").querySelector(".lubi-gantt-spacer")&&!!row("g-child").querySelector(".lubi-gantt-spacer"),"gantt integration: flat task starts at left while children retain tree indentation");
   row("g-parent").querySelector(".lubi-gantt-collapse").click();await settle();
   check(!row("g-child")&&!row("g-done")&&row("g-summary-child"),"gantt integration: parent collapse hides only its descendants");
   row("g-parent").querySelector(".lubi-gantt-collapse").click();await settle();

@@ -86,6 +86,16 @@ fs.writeFileSync(new URL("settings.html", out), page("settings", freeze(settingT
 
 // 1. 每日页
 fs.writeFileSync(new URL("today.html", out), page("today", freeze(root)));
+// Freeze active drag states using synthetic plans/records, then cancel without persistence.
+{
+  const pointer=(target,type,y)=>{const e=new window.MouseEvent(type,{bubbles:true,cancelable:true,clientX:200,clientY:y,button:0});Object.defineProperty(e,'pointerId',{value:333});target.dispatchEvent(e)};
+  for(const [area,selector] of [['record','.lubi-block'],['plan','.lubi-plan']]) {
+    const block=root.querySelector(selector);if(!block)throw new Error('Missing drag fixture: '+area);
+    pointer(block,'pointerdown',100);pointer(window,'pointermove',156);
+    fs.writeFileSync(new URL('today-drag-'+area+'.html',out),page('today-drag-'+area,freeze(root)));
+    window.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick(40);
+  }
+}
 // 2. 回顾页
 view.show("review"); await tick(200);
 fs.writeFileSync(new URL("review.html", out), page("review", freeze(root)));

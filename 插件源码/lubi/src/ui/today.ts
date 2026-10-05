@@ -1,6 +1,8 @@
 // 每日页：24h 时间轴（实线 = 记录，虚线 = 当天有开始时间的计划）+ 右侧当天分布 / 空白时段 / 当天任务下拉清单。
 // 计划展示：点计划块 = 按实际时间记一条并完成任务；也可直接取消当天计划。
 
+import { hideTip } from "./tooltips";
+import { positionDragReadout } from "./dragReadout";
 import { Notice } from "obsidian";
 import type LubiPlugin from "../main";
 import { formatEstimateComparison, confirmed, isPending, ParsedLine, Rec } from "../core/records";
@@ -75,6 +77,8 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const left = host.createDiv({ cls: "lubi-today-main" });
   const tlWrap = left.createDiv({ cls: "lubi-timeline-wrap" });
   const scroller = tlWrap.createDiv({ cls: "lubi-timeline-scroll" });
+  const readout = tlWrap.createSpan({ cls: "lubi-drag-readout", attr: { role: "status", "aria-live": "polite" } });
+  readout.hidden = true;
   const tl = scroller.createDiv({ cls: `lubi-timeline ${money.length ? "has-rail" : ""}`.trim(), attr: { tabindex: "0" } });
   tl.style.height = `${24 * HOUR_PX + DAY_START_GUTTER_PX + DAY_END_GUTTER_PX}px`;
   tl.style.setProperty("--lubi-day-start-gutter", `${DAY_START_GUTTER_PX}px`);
@@ -100,28 +104,45 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const hover = canvas.createDiv({ cls: "lubi-tl-hover" });
   const hoverLabel = hover.createSpan({ cls: "lubi-tl-hover-label" });
   let dragging = false;
+  let readoutTarget: HTMLElement | null = null;
+  let readoutAtEnd = false;
+  const positionReadout = () => {
+    if (!readout.hidden && readoutTarget) positionDragReadout(readout, readoutTarget, scroller, tl, tlWrap, readoutAtEnd);
+  };
+  scroller.addEventListener("scroll", positionReadout, { passive: true });
   type Area = "record" | "plan";
   const areaAt = (clientX: number): Area => {
     const lane = canvas.querySelector<HTMLElement>(".lubi-plan-lane");
     const rect = lane?.getBoundingClientRect();
     return rect && rect.width > 0 && clientX >= rect.left ? "plan" : "record";
   };
-  const showHover = (area: Area, minute: number, label = minToHM(minute)) => {
+  const showHover = (area: Area, minute: number, label = minToHM(minute), target?: HTMLElement, atEnd = false) => {
     hover.dataset.area = area;
     hover.style.top = `${minute * PX_PER_MIN}px`;
     hoverLabel.setText(area === "plan" ? `计划 ${label}` : label);
+    hoverLabel.hidden = dragging;
+    readout.hidden = !dragging;
+    if (dragging) {
+      readout.dataset.area = area; readout.dataset.anchor = "block";
+      readoutTarget = target || canvas.querySelector<HTMLElement>(".lubi-block-ghost.is-on"); readoutAtEnd = atEnd;
+      // Keep the complete time range on one line.
+      readout.setText(label.replace(/\s*–\s*/g, "–"));
+      readout.setAttribute("aria-label", `${area === "plan" ? "计划" : "记录"} ${label}`);
+      positionReadout();
+    }
     hover.addClass("is-on");
   };
+  const hideHover = () => { hover.removeClass("is-on"); hoverLabel.hidden = true; readout.hidden = true; readoutTarget = null; };
   canvas.addEventListener("pointermove", (e) => {
     if (dragging) return;
     if ((e.target as HTMLElement).closest(".lubi-block, .lubi-plan")) {
-      hover.removeClass("is-on");
+      hideHover();
       return;
     }
     const m = snap5(minuteAt(e.clientY, canvas, PX_PER_MIN));
     showHover(areaAt(e.clientX), m);
   });
-  canvas.addEventListener("pointerleave", () => hover.removeClass("is-on"));
+  canvas.addEventListener("pointerleave", () => { if (!dragging) hideHover(); });
 
   if (date === todayStr()) {
     const nowMin = hmToMin(nowHM());
@@ -254,19 +275,22 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
             mode, start: s0, minutes: mins, pxPerMin: PX_PER_MIN, min: 0, max: 1440, minMinutes: 5, snap: 5,
             onStart: () => {
               dragging = true;
+              pb.setAttribute("data-lubi-tip-suspended", "1"); hideTip();
               suppressPointerClick = true;
               pb.addClass("is-dragging", mode === "move" ? "is-moving" : "is-resizing");
             },
             onMove: (state) => {
               placePlan(state.start, state.minutes);
-              showHover("plan", mode === "resize-end" ? state.start + state.minutes : state.start, `${minToHM(state.start)}–${minToHM(state.start + state.minutes)}`);
+              showHover("plan", mode === "resize-end" ? state.start + state.minutes : state.start, `${minToHM(state.start)}–${minToHM(state.start + state.minutes)}`, pb, mode === "resize-end");
             },
             onEnd: (state) => {
               dragging = false;
-              hover.removeClass("is-on");
+              hideHover();
               pb.removeClass("is-dragging", "is-moving", "is-resizing");
-              if (!state) { placePlan(s0, mins); return; }
+              if (!state) { pb.removeAttribute("data-lubi-tip-suspended"); placePlan(s0, mins); return; }
               if (!state.moved) return;
+              pb.setAttribute("data-lubi-tip-suspended", state.start === s0 && state.minutes === mins ? "settled" : "pending");
+              placePlan(state.start, state.minutes);
               const patch = mode === "move" ? { start: minToHM(state.start) } : mode === "resize-start" ? { start: minToHM(state.start), estimate: state.minutes } : { estimate: state.minutes };
               void updateScheduleWithUndo(plugin, t.id, patch, `${t.title} 计划 → ${minToHM(state.start)}–${minToHM(state.start + state.minutes)}`, rerender);
             },
@@ -341,12 +365,12 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
     iconButton(acts, "pencil", "编辑", () => openEdit(row));
     iconButton(acts, "trash-2", "删除", () => void deleteRecord(plugin, date, row, rerender));
 
-    const live = (s: { start: number; minutes: number }) => {
+    const live = (s: { start: number; minutes: number }, atEnd = false) => {
       block.style.top = `${s.start * PX_PER_MIN}px`;
       block.style.height = `${Math.max(s.minutes * PX_PER_MIN, 18) - 2}px`;
       timeEl.setText(`${minToHM(s.start)}–${minToHM(s.start + s.minutes)}`);
       durEl.setText(fmtDuration(s.minutes));
-      showHover("record", s.start, `${minToHM(s.start)} – ${minToHM(s.start + s.minutes)}`);
+      if (dragging) showHover("record", s.start, `${minToHM(s.start)} – ${minToHM(s.start + s.minutes)}`, block, atEnd);
     };
     const bind = (target: HTMLElement, mode: "move" | "resize-start" | "resize-end") => {
       target.addEventListener("pointerdown", (e) => {
@@ -362,15 +386,17 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
           edges: edges.filter((x) => x !== startMin && x !== startMin + r.minutes),
           onStart: () => {
             dragging = true;
+            block.setAttribute("data-lubi-tip-suspended", "1"); hideTip();
             block.addClass("is-dragging");
             block.addClass(mode === "move" ? "is-moving" : "is-resizing");
           },
-          onMove: live,
+          onMove: s => live(s, mode === "resize-end"),
           onEnd: (s) => {
             dragging = false;
-            hover.removeClass("is-on");
+            hideHover();
             block.removeClass("is-dragging", "is-moving", "is-resizing");
             if (s === null) {
+              block.removeAttribute("data-lubi-tip-suspended");
               live({ start: startMin, minutes: r.minutes });
               return;
             }
@@ -378,6 +404,8 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
               if (mode === "move") openEdit(row);
               return;
             }
+            block.setAttribute("data-lubi-tip-suspended", s.start === startMin && s.minutes === r.minutes ? "settled" : "pending");
+            live(s, mode === "resize-end");
             void commit(row, s.start, s.minutes);
           },
         });
@@ -437,12 +465,12 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
         ghost.style.top = `${s.start * PX_PER_MIN}px`;
         ghost.style.height = `${s.minutes * PX_PER_MIN - 2}px`;
         ghostLabel.setText(`${area === "plan" ? "计划" : "记录"} ${minToHM(s.start)} – ${minToHM(s.start + s.minutes)} · ${fmtDuration(s.minutes)}`);
-        showHover(area, s.start);
+        showHover(area, s.start, `${minToHM(s.start)}–${minToHM(s.start + s.minutes)}`);
       },
       onEnd: (s) => {
         dragging = false;
         ghost.removeClass("is-on");
-        hover.removeClass("is-on");
+        hideHover();
         if (!s || !s.moved) return;
         openArea(area, s.start, s.minutes);
       },

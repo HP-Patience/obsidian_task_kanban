@@ -53,7 +53,7 @@ export function renderGantt(plugin: LubiPlugin, card: HTMLElement, days: string[
         if (collapsed.has(t.id)) collapsed.delete(t.id); else collapsed.add(t.id); rerender();
       }, "lubi-gantt-collapse");
       toggle.setAttribute("aria-expanded", String(!collapsed.has(t.id)));
-    } else name.createSpan({ cls: "lubi-gantt-spacer", attr: { "aria-hidden": "true" } });
+    } else if (row.depth > 0) name.createSpan({ cls: "lubi-gantt-spacer", attr: { "aria-hidden": "true" } });
     catDot(name, categoryOf(plugin.settings, t.category));
     button(name, t.title, openTask, { cls: "lubi-gantt-title" });
     const track = line.createDiv({ cls: "lubi-gantt-track", attr: { role: "cell" } });

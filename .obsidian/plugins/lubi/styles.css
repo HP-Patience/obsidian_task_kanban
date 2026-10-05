@@ -118,7 +118,7 @@
 /* 每日页与任务页共用顶栏日期导航；回顾页显示周期上下文 */
 .lubi-root[data-tab="review"] .lubi-day-nav { display: none; }
 
-.lubi-body { flex: 1; min-height: 0; overflow: auto; background: var(--background-secondary); }
+.lubi-body { overflow-anchor: none; flex: 1; min-height: 0; overflow: auto; background: var(--background-secondary); }
 .lubi-page { padding: var(--lubi-gap-4); min-height: 100%; box-sizing: border-box; }
 
 /* ---------- 每日页 ---------- */
@@ -853,6 +853,9 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 /* ---------- 每日页：时间轴 ---------- */
 .lubi-root .lubi-page.lubi-today { padding-bottom: var(--lubi-gap-3); }
 .lubi-timeline-wrap { position: relative; }
+.lubi-drag-readout { position: absolute; z-index: 10; width: max-content; box-sizing: border-box; pointer-events: none; padding: 2px 3px; border-radius: 3px; background: var(--text-normal); color: var(--background-primary); font-size: 11px; line-height: 14px; white-space: nowrap; text-align: center; font-variant-numeric: tabular-nums; }
+.lubi-root .lubi-timeline { --lubi-gutter: 96px; }
+.lubi-drag-readout[hidden], .lubi-tl-hover-label[hidden] { display: none; }
 .lubi-root .lubi-timeline-scroll {
   height: max(320px, calc(var(--lubi-panel-height, 840px) - 136px));
   border-radius: var(--lubi-radius-card); box-shadow: var(--lubi-shadow-1); scroll-padding-top: 16px;
@@ -1351,10 +1354,10 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-gantt-card > .lubi-panel-head { flex-wrap: wrap; }
 .lubi-root .lubi-tasks.is-gantt .lubi-tasks-week { display: block; min-width: 0; }
 .lubi-root .lubi-tasks.is-gantt .lubi-agenda-host { display: none; }
-.lubi-gantt-scroll { --gantt-name-w: 190px; --gantt-day-w: 34px; max-width: 100%; max-height: 580px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--lubi-border); border-radius: 6px; }
+.lubi-gantt-scroll { --gantt-name-w: 160px; --gantt-day-w: 34px; max-width: 100%; max-height: 580px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--lubi-border); border-radius: 6px; }
 .lubi-gantt-table { min-width: calc(var(--gantt-name-w) + var(--gantt-count, 7) * var(--gantt-day-w)); }
 .lubi-gantt-heading, .lubi-gantt-row { display: grid; grid-template-columns: var(--gantt-name-w) minmax(0, 1fr); min-height: 38px; }
-.lubi-gantt-heading { position: sticky; top: 0; z-index: 7; background: var(--background-secondary); }
+.lubi-gantt-heading { min-height: 44px; position: sticky; top: 0; z-index: 7; background: var(--background-secondary); }
 .lubi-gantt-row { border-top: 1px solid var(--lubi-border); }
 .lubi-gantt-name { position: sticky; left: 0; z-index: 5; display: flex; align-items: center; gap: 5px; min-width: 0; padding: 4px 6px 4px calc(6px + var(--gantt-indent, 0px)); border-right: 1px solid var(--lubi-border); background: var(--background-primary); }
 .lubi-gantt-heading > .lubi-gantt-name { justify-content: center; z-index: 8; background: var(--background-secondary); font-size: var(--font-ui-small); font-weight: 600; }
@@ -1380,7 +1383,7 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-gantt-handle::after { content: ""; position: absolute; top: 5px; bottom: 5px; width: 2px; left: 2px; background: var(--chip); border-radius: 1px; }
 .lubi-gantt-bar.is-dragging { cursor: grabbing; z-index: 4; }
 .lubi-gantt-empty { padding: 18px 12px; font-size: var(--font-ui-small); }
-@container (max-width: 600px) { .lubi-gantt-scroll { --gantt-name-w: 145px; } }
+@container (max-width: 600px) { .lubi-gantt-scroll { --gantt-name-w: 140px; } }
 @media (prefers-reduced-motion: reduce) { .lubi-gantt-bar { transition: none; } }
 
 .lubi-gantt-title > span { display: block; width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

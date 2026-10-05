@@ -124,7 +124,7 @@ export class DeleteTaskModal extends Modal {
 
 export const SHORTCUTS: [string, string][] = [
   ["N", "新建（每日 / 回顾页：记一条；任务页：加任务）"],
-  ["1 / 2 / 3", "切换 每日 · 回顾 · 任务"],
+  ["1 / 2 / 3", "切换 每日 · 计划 · 回顾"],
   ["T", "回到今天（每日 / 任务页）"],
   ["← / →", "前一天 / 后一天（每日 / 任务页）"],
   ["?", "打开本速查卡"],
@@ -218,10 +218,12 @@ export class RecordModal extends Modal {
 
   onOpen(): void {
     this.modalEl.addClass("lubi-modal");
-    this.render();
+    this.render(false);
+    this.titleEl.tabIndex = 0;
+    this.titleEl.focus({ preventScroll: true });
   }
 
-  private render(focusTitle = true): void {
+  private render(focusTitle = false): void {
     const { contentEl, titleEl } = this;
     contentEl.empty();
     const s = this.plugin.settings;
@@ -597,10 +599,12 @@ export class TaskModal extends Modal {
     // 捕获阶段监听：子控件 stopPropagation 也能更新「未保存」
     const dirtyCheck = () => window.setTimeout(() => this.syncDirty(), 0);
     for (const ev of ["input", "change", "click"]) this.contentEl.addEventListener(ev, dirtyCheck, true);
-    this.render();
+    this.render(!!this.opts.focusDate);
+    this.titleEl.tabIndex = 0;
+    if (!this.opts.focusDate) this.titleEl.focus({ preventScroll: true });
   }
 
-  private render(focusTitle = true): void {
+  private render(focusTitle = false): void {
     const { contentEl, titleEl } = this;
     contentEl.empty();
     const parent = this.t.parent ? this.plugin.tasks.byId(this.t.parent) : null;

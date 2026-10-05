@@ -95,8 +95,8 @@ export class DashboardView extends ItemView {
 
     const tabs = segmented<Tab>(bar, [
       { id: "today", label: "每日" },
-      { id: "review", label: "回顾" },
       { id: "tasks", label: "计划" },
+      { id: "review", label: "回顾" },
     ], this.tab, (t) => this.setTab(t));
     tabs.addClass("lubi-topbar-tabs");
     tabs.setAttribute("role", "tablist");
@@ -149,7 +149,7 @@ export class DashboardView extends ItemView {
     if (!active) return;
     const key = e.key;
     if (key === "n" || key === "N") { e.preventDefault(); this.openNew(); }
-    else if (key === "1" || key === "2" || key === "3") { e.preventDefault(); this.setTab((["today", "review", "tasks"] as Tab[])[Number(key) - 1]); }
+    else if (key === "1" || key === "2" || key === "3") { e.preventDefault(); this.setTab((["today", "tasks", "review"] as Tab[])[Number(key) - 1]); }
     else if ((key === "t" || key === "T") && this.tab !== "review") { e.preventDefault(); this.setDate(todayStr()); }
     else if (key === "?") { e.preventDefault(); new ShortcutsModal(this.app).open(); }
     else if ((key === "ArrowLeft" || key === "ArrowRight") && this.tab !== "review") {
@@ -211,7 +211,7 @@ export class DashboardView extends ItemView {
   private syncTabs(): void {
     this.contentEl.dataset.tab = this.tab;
     this.ctaLabel?.setText(this.ctaText());
-    this.contentEl.querySelectorAll(".lubi-topbar-tabs .lubi-seg-item").forEach((b, i) => b.setAttribute("aria-pressed", String(["today", "review", "tasks"][i] === this.tab)));
+    this.contentEl.querySelectorAll(".lubi-topbar-tabs .lubi-seg-item").forEach((b, i) => b.setAttribute("aria-pressed", String(["today", "tasks", "review"][i] === this.tab)));
   }
 
   /** 外部跳转：可同时指定页与日期，不重建顶栏 */
@@ -238,6 +238,7 @@ export class DashboardView extends ItemView {
 
   async render(): Promise<void> {
     const serial = ++this.serial;
+    const sameReview = this.tab === "review" && this.lastRenderKey.startsWith("review:");
     const active = document.activeElement as HTMLElement | null;
     const focusKey = active && this.body.contains(active) ? active.getAttribute("data-lubi-focus") : null;
     hideTip();
@@ -286,6 +287,7 @@ export class DashboardView extends ItemView {
     if (serial !== this.serial) return;
     const planDetails = host.querySelector<HTMLDetailsElement>(".lubi-plan-task-details");
     if (planDetails) planDetails.open = key === this.lastRenderKey ? this.body.querySelector<HTMLDetailsElement>(".lubi-plan-task-details")?.open ?? true : true;
+    const bodyScroll = this.body.scrollTop;
     this.body.empty();
     this.body.appendChild(host);
     this.lastRenderKey = key;
@@ -304,8 +306,9 @@ export class DashboardView extends ItemView {
       if (rect.top < viewport.top || rect.bottom > viewport.bottom) control.scrollIntoView({ block: "start", inline: "nearest", behavior: "auto" });
     });
     const saved = this.scrollCache.get(key);
+    if (sameReview) this.body.scrollTop = bodyScroll;
     if (saved) {
-      this.body.scrollTop = saved.body;
+      if (!sameReview) this.body.scrollTop = saved.body;
       window.requestAnimationFrame(() => {
         if (this.lastRenderKey !== key) return;
         const tl = this.body.querySelector<HTMLElement>(".lubi-timeline-scroll");
