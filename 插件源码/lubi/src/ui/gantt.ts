@@ -18,7 +18,7 @@ export function ganttShell(card: HTMLElement, text: string, daily = false): { ta
   return { table, header };
 }
 
-export function renderGantt(plugin: LubiPlugin, card: HTMLElement, days: string[], collapsed: Set<string>, rerender: () => void, edit: (t: Task) => void, save: (id: string, patch: GanttPatch, message: string) => Promise<void>): void {
+export function renderGantt(plugin: LubiPlugin, card: HTMLElement, days: string[], collapsed: Set<string>, rerender: () => void, edit: (t: Task, date?: string) => void, save: (id: string, patch: GanttPatch, message: string) => Promise<void>): void {
   const rows = ganttRows(plugin.tasks.all, days, collapsed);
   const count = days.length;
   const { table, header } = ganttShell(card, "规划任务甘特图，可横向滚动");
@@ -83,7 +83,7 @@ export function renderGantt(plugin: LubiPlugin, card: HTMLElement, days: string[
       place(segment);
       infoTip(bar, t.title, [`${segment.from}${segment.from !== segment.to ? ` – ${segment.to}` : ""}`, segment.done ? "已完成" : "未完成", ...(row.summary ? ["子任务日期汇总"] : []), ...(t.repeat.kind !== "none" ? ["重复任务 · 日期分段"] : [])], t.notes);
       let suppressClick = false;
-      const open = openTask;
+      const open = () => { const current = plugin.tasks.byId(t.id); if (current) edit(current, segment.from); else { new Notice("任务已不存在", 5000); rerender(); } };
       bar.addEventListener("click", e => {
         stopAll(e);
         if ((e.target as HTMLElement).closest(".lubi-gantt-handle")) return;

@@ -83,7 +83,7 @@ check(root.querySelectorAll(".lubi-bar-col").length === 30, "review month has 30
 view.show("tasks", "2026-09-24"); await tick();
 check(root.querySelectorAll(".lubi-week-col").length === 7, "week schedule 7 columns");
 check(root.querySelectorAll(".lubi-task-lists.lubi-card").length === 1 && !root.querySelector(".lubi-task-lists .lubi-card"), "simplify: selected-day, inbox and narrow agenda share one list card");
-check(!root.querySelector(".lubi-list-card:first-child .lubi-panel-head button") && root.querySelector(".lubi-list-card:nth-of-type(3) .lubi-panel-head button"), "simplify: duplicate day-create button removed, distinct inbox create retained");
+check(!root.querySelector(".lubi-list-card:first-child .lubi-panel-head button") && root.querySelector(".lubi-list-card:nth-of-type(2) .lubi-panel-head button"), "simplify: duplicate day-create button removed, distinct inbox create retained");
 check(root.querySelectorAll(".mod-cta").length === 1 && root.querySelector(".lubi-quick-add input"), "simplify: task page has one primary CTA and keeps quick input");
 root.querySelector(".lubi-more-btn").click();
 const aiMenu = O.menus.at(-1).items.find(i => i.title === "AI 创建任务");
@@ -93,8 +93,11 @@ check(O.openModals.at(-1)?.constructor.name === "AiTaskModal" && O.openModals.at
 O.openModals.at(-1)?.close();
 check(JSON.stringify([...app.vault.files]) === beforeSimplifiedRender, "simplify: viewing all pages, expanding analysis and opening AI do not rewrite data");
 
+// A timed planned fixture: actual-record tasks are no longer a planning-list fixture.
+await plugin.tasks.upsert((await import('./core.mjs')).blankTask({id:'quiet-planning-row',title:'合成任务行悬停检查',date:'2026-09-24',start:'20:15',estimate:30,category:'学习'}));
+await new Promise(resolve=>setTimeout(resolve,200));view.show('tasks','2026-09-24');await tick();
 // 清单中已展示的任务内容不再重复提示；操作入口和读屏名称仍保留。
-const quietRow = root.querySelector('.lubi-task-start').closest('.lubi-task');
+const quietRow = root.querySelector('.lubi-task[data-task-id="quiet-planning-row"]');
 const quietTitle = quietRow.querySelector('.lubi-task-title');
 const quietMeta = quietRow.querySelector('.lubi-task-meta');
 const quietCheckbox = quietRow.querySelector('input[type=checkbox]');
@@ -116,7 +119,7 @@ startHint.blur();
 const weekTicks = [...root.querySelectorAll(".lubi-week-hour")];
 const weekColumns = [...root.querySelectorAll(".lubi-week-col")];
 const bottomLines = [...root.querySelectorAll(".lubi-week-line.is-day-end")];
-check(weekTicks[0]?.textContent === "06:00" && weekTicks.at(-1)?.textContent === "24:00", "week ruler: final configured hour appears at the bottom");
+check(weekTicks[0]?.textContent === "00:00" && weekTicks.at(-1)?.textContent === "24:00", "week ruler: full-day planning shows 00:00 through 24:00");
 check(bottomLines.length === 7 && bottomLines.every(line => line.style.top === weekColumns[0]?.style.height), "week ruler: 24:00 boundary aligns across all seven columns");
 check(root.querySelectorAll(".lubi-wblock").length >= 1, `week blocks: ${root.querySelectorAll(".lubi-wblock").length}`);
 await checkInfoWithoutFooter(root.querySelector(".lubi-wblock"), "weekly task", ["预计用时："]);
@@ -267,8 +270,10 @@ view.show("today"); await tick();
   const t = plugin.tasks.all.find((x) => x.title === "补记午饭后散步");
   check(!!t && t.origin === "record" && plugin.tasks.isDoneOn(t, D), "new: daily record creates a done task");
   view.show("tasks", D); await tick();
-  check([...root.querySelectorAll(".lubi-task.is-done .lubi-task-title-text")].some((x) => x.textContent === "补记午饭后散步"), "new: the done task shows on the task page");
-  // 在任务页取消勾选 → 记录一起移除
+  check(!root.querySelector(`[data-task-id="${t.id}"]`), "new: an actual-record task is excluded from planning presentations");
+  view.show("today", D); await tick();
+  check([...root.querySelectorAll(".lubi-task.is-done .lubi-task-title-text")].some(x => x.textContent === "补记午饭后散步"), "new: the generated done task remains in the daily task list");
+  // 在每日页取消勾选 → 记录一起移除
   const r = [...root.querySelectorAll(".lubi-task")].find((x) => x.querySelector(".lubi-task-title-text")?.textContent === "补记午饭后散步");
   r.querySelector("input[type=checkbox]").click(); await settle();
   check(!app.vault.files.get(`日记/${D}.md`).includes("补记午饭后散步"), "new: unchecking the done task removes its record");
@@ -505,7 +510,7 @@ check(root.querySelectorAll(".lubi-chart-legend-item").length >= 1, "chart legen
   tabs.find(b=>b.dataset.lubiFocus === "seg:review").click(); await tick(); await tick();
   check(view.tab === "review" && root.querySelector(".lubi-bars") !== null, "clicking 回顾 returns to review page"); }
 // 10. 周日程 pointer 拖动：跨列 + 改时间
-plugin.settings.scheduleStartHour = 0; view.tasksState.weekAnchor = "2026-09-24"; view.show("tasks", "2026-09-24"); await tick(); // 窗口固定为 9/21–9/27
+plugin.settings.scheduleStartHour = 0; view.show("tasks", "2026-09-24"); await tick(); // 窗口固定为 9/21–9/27
 { const cols = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => document.getElementById(b.getAttribute("aria-labelledby"))?.textContent || ""); check(cols.length === 7 && cols[3].includes("2026-09-24"), `week window centred on anchor: ${cols[3]}`); }
 const wb = root.querySelector(".lubi-wblock");
 const wt = plugin.tasks.all.find((t) => t.title === wb.querySelector(".lubi-wblock-title").textContent);
@@ -633,9 +638,9 @@ await plugin.journal.add({ date: "2026-10-12", start: "09:00", minutes: 60, cate
 view.review.period = "week"; view.show("review", "2026-10-12"); await tick(); await tick();
 check(!root.textContent.includes("至少 2 天"), "sparse comparison does not claim a trend");
 view.show("tasks", "2026-09-24"); await tick(); await tick();
-check(root.querySelector(".lubi-agenda-card")?.textContent.includes("日程"), "narrow-panel agenda provides a date and task path");
+check(root.querySelector(".lubi-planning-head")&&root.querySelector(".lubi-week"), "planning keeps the selected presentation and shared controls instead of a separate narrow agenda");
 const visibleOrder = [...root.querySelectorAll(".lubi-tasks-left > .lubi-list-card, .lubi-tasks-left > .lubi-agenda-host")].map((node) => node.classList.contains("lubi-agenda-host") ? "agenda" : node.textContent.includes("未安排") ? "inbox" : "today");
-check(JSON.stringify(visibleOrder) === JSON.stringify(["today", "agenda", "inbox"]), "agenda precedes inbox in DOM and keyboard order");
+check(JSON.stringify(visibleOrder) === JSON.stringify(["today", "inbox"]), "selected-day list precedes inbox without a duplicate narrow agenda");
 // 原生拖放：未安排 → 上方选中日清单（整个卡片都是落点）。
 const taskTransfer = () => ({
   values: new Map(), types: [], effectAllowed: "", dropEffect: "",
@@ -1212,13 +1217,12 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   const input = (el, value, type = 'input') => { el.value = value; el.dispatchEvent(new window.Event(type, { bubbles: true })); };
   const row = name => [...host.querySelectorAll('.setting-item')].find(el => el.querySelector('.setting-item-name')?.textContent === name);
   const button = text => [...host.querySelectorAll('button')].find(el => el.textContent === text);
-  const start = host.querySelector('[data-setting=schedule-start]'), end = host.querySelector('[data-setting=schedule-end]');
-  check(start.options.length === 24 && start.options[0].textContent === '00:00' && end.options[end.options.length-1].textContent === '24:00', "settings: hour selectors expose midnight and the end of day");
-  input(start, '0', 'change'); input(end, '24', 'change'); await tick();
-  check(stored.scheduleStartHour === 0 && stored.scheduleEndHour === 24, "settings: hour controls preserve numeric persisted fields");
+  const legacyHours=[settingsPlugin.settings.scheduleStartHour,settingsPlugin.settings.scheduleEndHour];
+  check(!host.querySelector('[data-setting=schedule-start],[data-setting=schedule-end]'), "settings: obsolete calendar clipping controls are removed without replacing them");
   input(row('日记文件夹').querySelector('input'), '测试日记');
   input(row('任务数据文件').querySelector('input'), '任务/测试任务.json');
   input(row('备份文件夹').querySelector('input'), '测试备份');
+  check(JSON.stringify([stored.scheduleStartHour,stored.scheduleEndHour])===JSON.stringify(legacyHours), 'settings: unrelated saves preserve legacy numeric hour fields');
   input(row('每日可用小时').querySelector('input'), '100');
   const auto = row('完成任务时自动记一条').querySelector('[role=checkbox]'); auto.click(); await tick();
   check(stored.journalFolder === '测试日记' && stored.taskFile === '任务/测试任务.json' && stored.backupFolder === '测试备份' && stored.dailyCapacityHours === 24 && stored.promptLogOnComplete === (auto.getAttribute('aria-checked') === 'true'), "settings: paths, capacity clamp and auto-record toggle retain save behavior");
@@ -1495,7 +1499,7 @@ console.log("data file now:", app.vault.files.get("任务/任务数据.json").sl
   const before=JSON.stringify([...ha.vault.files]);
   pe(col,"pointerdown",223.4);pe(window,"pointermove",251.4);pe(window,"pointerup",251.4);await tick();
   const form=O.openModals.at(-1);
-  check(form?.constructor.name==="TaskModal" && form.t.start==="08:00" && form.t.estimate===30,"planning hover: creating a task retains the original snapped start/duration");form?.close();
+  check(form?.constructor.name==="TaskModal" && form.t.start==="02:00" && form.t.estimate===30,"planning hover: creating a task uses the full-day origin and retains quarter-hour snapping");form?.close();
   check(JSON.stringify([...ha.vault.files])===before,"planning hover: hover and cancelled creation write nothing");
   hp.onunload();hv.containerEl.remove();
 }
@@ -1510,10 +1514,10 @@ console.log("data file now:", app.vault.files.get("任务/任务数据.json").sl
   await gp.journal.add({date:D,start:"09:00",minutes:30,category:"学习",title:"真实记录不可被规划改写（合成夹具）",extra:{}});
   const gv=await gp.activateView("tasks",D),gr=gv.contentEl;
   const settle=async()=>{for(let i=0;i<8;i++)await tick()};await settle();
-  const switchMode=async(mode)=>{[...gr.querySelectorAll(".lubi-week-card .lubi-schedule-switch button,.lubi-gantt-card .lubi-schedule-switch button")].find(b=>b.dataset.lubiFocus===`schedule:${mode}`).click();await settle();if(mode==="gantt"){gr.querySelector('[data-lubi-focus="gantt-period:month"]').click();await settle()}};
+  const switchMode=async(mode)=>{[...gr.querySelectorAll(".lubi-schedule-switch button")].find(b=>b.dataset.lubiFocus===`schedule:${mode}`).click();await settle();if(mode==="gantt"){gr.querySelector('[data-lubi-focus="planning-period:month"]').click();await settle()}};
   const row=id=>gr.querySelector(`.lubi-gantt-row[data-task-id="${id}"]`),bar=id=>row(id)?.querySelector(".lubi-gantt-bar");
   const modelBefore=JSON.stringify(gp.tasks.all),vaultBefore=JSON.stringify([...ga.vault.files]);
-  check(gv.tasksState.scheduleView==="week" && gr.querySelector(".lubi-week")&&!gr.querySelector(".lubi-gantt-card"),"gantt integration: defaults to week without persisting another default");
+  check(gv.tasksState.scheduleView==="calendar" && gr.querySelector(".lubi-week")&&!gr.querySelector(".lubi-gantt-card"),"gantt integration: defaults to week without persisting another default");
   await switchMode("gantt");
   check(gr.querySelectorAll(".lubi-gantt-card").length===1 && !gr.querySelector(".lubi-week") && !gr.querySelector(".lubi-tasks-projects"),"gantt integration: alternate view occupies the same schedule region, not an added project panel");
   check(gr.querySelectorAll(".lubi-gantt-date").length===30 && gr.querySelector(".lubi-schedule-range").textContent==="9/1 – 9/30" && gr.querySelector(".lubi-topbar-left").textContent.includes("9/1"),"gantt integration: date header and shared context use the natural-month window");
@@ -1555,7 +1559,7 @@ console.log("data file now:", app.vault.files.get("任务/任务数据.json").sl
   const single=JSON.stringify(gp.tasks.byId("g-single"));await gesture(bar("g-single"),3);
   check(gp.tasks.byId("g-single").date==="2026-09-29"&&gp.tasks.byId("g-single").startDate===""&&gp.tasks.byId("g-single").endDate===""&&gp.tasks.byId("g-single").estimate===70,"gantt integration: single-day drag changes date only");await undo();
   for(const period of ["week","month"]) {
-    gr.querySelector('[data-lubi-focus="gantt-period:'+period+'"]').click();await settle();
+    gr.querySelector('[data-lubi-focus="planning-period:'+period+'"]').click();await settle();
     await gesture(bar("g-single").querySelector(".is-end"),2);
     check(gp.tasks.byId("g-single").startDate==="2026-09-26"&&gp.tasks.byId("g-single").endDate==="2026-09-28"&&gp.tasks.byId("g-single").date==="2026-09-26"&&gp.tasks.byId("g-single").estimate===70,period+" Gantt: end resize extends single-day plan without changing time/estimate");await undo();
     await gesture(bar("g-single").querySelector(".is-start"),-2);
@@ -1586,18 +1590,18 @@ console.log("data file now:", app.vault.files.get("任务/任务数据.json").sl
   // Undo must not create contradictory dates after a concurrent span edit.
   await gesture(bar("g-parent"),2);t=gp.tasks.byId("g-parent");await gp.tasks.upsert({...t,startDate:"2026-09-27"});await settle();const conflicting=JSON.stringify(gp.tasks.byId("g-parent"));await undo();
   check(JSON.stringify(gp.tasks.byId("g-parent"))===conflicting&&O.notices.at(-1).includes("日期冲突"),"gantt integration: undo refuses a conflicting partially changed span");
-  const nav=gr.querySelector('.lubi-gantt-card button[data-lubi-tip="向后 月"]')||gr.querySelector('.lubi-gantt-card button[aria-label="向后 月"]');nav.click();await settle();
+  const nav=gr.querySelector('[data-lubi-focus="planning:next"]');nav.click();await settle();
   check(gr.querySelector(".lubi-schedule-range").textContent==="10/1 – 10/31","gantt integration: existing forward navigation advances one natural month");
-  gr.querySelector('.lubi-gantt-card button[data-lubi-tip="向后 月"]').click();await settle();
+  gr.querySelector('[data-lubi-focus="planning:next"]').click();await settle();
   check(!!gr.querySelector(".lubi-gantt-empty")&&gr.querySelectorAll(".lubi-gantt-date").length===30&&!gr.querySelector(".lubi-gantt-row"),"gantt integration: empty future month keeps date headers without inventing tasks");
-  gr.querySelector('.lubi-gantt-card button[data-lubi-tip="向前 月"]').click();await settle();
-  gr.querySelector('.lubi-gantt-card button[data-lubi-tip="向前 月"]').click();await settle();
+  gr.querySelector('[data-lubi-focus="planning:previous"]').click();await settle();
+  gr.querySelector('[data-lubi-focus="planning:previous"]').click();await settle();
   const anchor=gr.querySelector(".lubi-schedule-range").textContent;gr.querySelector('.lubi-gantt-date[data-date="2026-09-28"]').click();await settle();
   check(gv.tasksState.selectedDate==="2026-09-28"&&gr.querySelector(".lubi-schedule-range").textContent===anchor,"gantt integration: selecting an in-window date does not unexpectedly recenter it");
-  await switchMode("week");check(gr.querySelector(".lubi-week")&&!gr.querySelector(".lubi-gantt-card")&&gv.tasksState.weekAnchor==="2026-09-28","gantt integration: switching back preserves selected day and original weekly behavior");
+  await switchMode("calendar");check(gr.querySelector(".lubi-month-calendar")&&!gr.querySelector(".lubi-gantt-card")&&gv.tasksState.selectedDate==="2026-09-28"&&gv.tasksState.period==="month","gantt integration: switching back preserves selected day and shared month range");
   const restarted=await gp.activateView("tasks",D); // Existing view retains its session; a fresh view still defaults to week.
   const newLeaf=ga.workspace.getLeaf();await newLeaf.setViewState({type:"lubi-dashboard",active:true});await settle();
-  check(newLeaf.view.tasksState.scheduleView==="week","gantt integration: a fresh view does not persist the last selected Gantt mode");
+  check(newLeaf.view.tasksState.scheduleView==="calendar","gantt integration: a fresh view does not persist the last selected Gantt mode");
   check(JSON.stringify([...ga.vault.files].filter(([p])=>p.startsWith("日记/")))===journalBefore&&!gr.querySelector(".lubi-error"),"gantt integration: all planning gestures leave actual records untouched, with no render errors");
   gp.onunload();gv.containerEl.remove();newLeaf.view.containerEl.remove();
 }
@@ -1610,9 +1614,10 @@ console.log("data file now:", app.vault.files.get("任务/任务数据.json").sl
   await dp.journal.add({date:D,start:"08:00",minutes:15,title:"保护实际记录（合成）",category:"学习",extra:{}});
   const dv=await dp.activateView("tasks",D);const root=dv.contentEl;const settle=async()=>{for(let i=0;i<8;i++)await tick()};await settle();
   const before=JSON.stringify([...da.vault.files]);
-  [...root.querySelectorAll('.lubi-week-card .lubi-schedule-switch button')].find(b=>b.dataset.lubiFocus==="schedule:gantt").click();await settle();
+  [...root.querySelectorAll('.lubi-schedule-switch button')].find(b=>b.dataset.lubiFocus==="schedule:gantt").click();await settle();
+  root.querySelector('[data-lubi-focus="planning-period:day"]').click();await settle();
   const row=id=>root.querySelector(`.lubi-daily-gantt-card .lubi-gantt-row[data-task-id="${id}"]`),bar=id=>row(id)?.querySelector('.lubi-gantt-bar');
-  check(dv.tasksState.selectedDate===D&&dv.tasksState.scheduleView==="gantt"&&dv.tasksState.ganttPeriod==="day"&&root.querySelectorAll('.lubi-daily-gantt-card').length===1&&!root.querySelector('.lubi-week'),"daily Gantt: entry selects actual today in the existing schedule region");
+  check(dv.tasksState.selectedDate===D&&dv.tasksState.scheduleView==="gantt"&&dv.tasksState.period==="day"&&root.querySelectorAll('.lubi-daily-gantt-card').length===1&&!root.querySelector('.lubi-week'),"daily Gantt: entry selects actual today in the existing schedule region");
   check(row("dg-repeat")?.classList.contains("is-done") && row("dg-repeat")?.querySelector(".lubi-gantt-title")?.textContent === "每日重复" && !row("dg-repeat").querySelector(".lubi-gantt-title")?.textContent.includes("✓") && !bar("dg-repeat")?.querySelector(".lubi-gantt-bar-label")?.textContent.includes("✓"),"daily Gantt: completed names use strikethrough class without checkmarks");
   const ticks=[...root.querySelectorAll('.lubi-daily-gantt-tick')];
   check(ticks.length===25&&ticks[0].textContent==="00:00"&&ticks.at(-1).textContent==="24:00"&&root.querySelector('.lubi-gantt-table').firstElementChild.classList.contains('lubi-gantt-heading'),"daily Gantt: first row is a complete 00:00–24:00 time axis");
@@ -1633,17 +1638,17 @@ console.log("data file now:", app.vault.files.get("任务/任务数据.json").sl
   await dragTime(bar('dg-plan').querySelector('.is-start'),-30);check(dp.tasks.byId('dg-plan').start==='08:30'&&dp.tasks.byId('dg-plan').estimate===90,"daily Gantt: start handle keeps the original finish time");await undo();
   const snapshot=JSON.stringify(dp.tasks.all);await dragTime(bar('dg-plan'),50,{cancel:true});check(JSON.stringify(dp.tasks.all)===snapshot,"daily Gantt: Escape cancels without writing");
   await dragTime(bar('dg-point'),7,{shift:true});check(dp.tasks.byId('dg-point').start==='10:07'&&dp.tasks.byId('dg-point').estimate===0,"daily Gantt: Shift minute precision and empty estimate are preserved");await undo();
-  root.querySelector('.lubi-daily-gantt-card button[data-lubi-tip="向后 天"]').click();await settle();check(dv.tasksState.selectedDate===shiftDate(D,1)&&root.querySelector('.lubi-schedule-range').textContent.includes(shiftDate(D,1)),"daily Gantt: shared navigation advances one day, not 28");
-  root.querySelector('.lubi-daily-gantt-card .lubi-nav .lubi-btn').click();await settle();check(dv.tasksState.selectedDate===D,"daily Gantt: Today returns to actual current date");
+  root.querySelector('[data-lubi-focus="planning:next"]').click();await settle();check(dv.tasksState.selectedDate===shiftDate(D,1)&&root.querySelector('.lubi-schedule-range').textContent.includes(shiftDate(D,1)),"daily Gantt: shared navigation advances one day, not 28");
+  root.querySelector('[data-lubi-focus="planning:today"]').click();await settle();check(dv.tasksState.selectedDate===D,"daily Gantt: Today returns to actual current date");
   check(JSON.stringify([...da.vault.files].filter(([p])=>p.startsWith('日记/')))===journalBefore&&!root.querySelector('.lubi-error'),"daily Gantt: planning edits never alter actual records or render errors");
   const filesBeforePeriods=JSON.stringify([...da.vault.files]);
-  root.querySelector('[data-lubi-focus="gantt-period:week"]').click();await settle();
+  root.querySelector('[data-lubi-focus="planning-period:week"]').click();await settle();
   check(root.querySelectorAll('.lubi-gantt-date').length===7&&!root.querySelector('.lubi-daily-gantt-axis'),"unified Gantt: week period is available within the same entry");
-  root.querySelector('[data-lubi-focus="gantt-period:month"]').click();await settle();
+  root.querySelector('[data-lubi-focus="planning-period:month"]').click();await settle();
   check(root.querySelectorAll('.lubi-gantt-date').length>=28&&root.querySelectorAll('.lubi-gantt-date').length<=31,"unified Gantt: month period uses actual month length");
-  root.querySelector('[data-lubi-focus="gantt-period:day"]').click();await settle();
+  root.querySelector('[data-lubi-focus="planning-period:day"]').click();await settle();
   check(root.querySelectorAll('.lubi-daily-gantt-tick').length===25&&JSON.stringify([...da.vault.files])===filesBeforePeriods,"unified Gantt: period switching preserves daily timeline and writes no data");
-  check([...root.querySelectorAll('.lubi-gantt-card .lubi-schedule-switch button')].map(b=>b.textContent).join('|')==='周日程|甘特图',"unified Gantt: one top-level Gantt entry, no duplicate Today Gantt entry");
+  check([...root.querySelectorAll('.lubi-schedule-switch button')].map(b=>b.textContent).join('|')==='日历|甘特图|列表',"unified Gantt: one top-level Gantt entry, no duplicate Today Gantt entry");
   dp.onunload();dv.containerEl.remove();
 }
 

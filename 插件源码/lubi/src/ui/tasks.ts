@@ -1,30 +1,28 @@
-// 任务页：左 今日清单 + 未安排；右 七日日程（今天居中）（拖放）
+// 计划页：同一日期范围的日历 / 甘特图 / 列表。
 
 import { Notice } from "obsidian";
 import type LubiPlugin from "../main";
 import { Task, blankTask } from "../core/tasks";
-import { daysBetween, fmtDuration, hmToMin, minToHM, nowHM, shiftDate, shortDate, todayStr, weekdayZh } from "../core/time";
+import { fmtDuration, hmToMin, minToHM, nowHM, shortDate, todayStr, weekdayZh } from "../core/time";
 import { categoryOf } from "../settings";
-import { button, catDot, el, emptyState, HOUR_PX, hoverTip, infoTip, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
-import { TaskModal, RecordModal, openUnifiedRecord } from "./modals";
-import { dayTasks, groupedRows, OpenRecord, renderDayTaskList, taskRow } from "./taskList";
+import { button, el, HOUR_PX, hoverTip, infoTip, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
+import { TaskModal, openUnifiedRecord } from "./modals";
+import { groupedRows, OpenRecord, taskRow } from "./taskList";
 import { startDrag } from "./drag";
-import { Rec } from "../core/records";
 import { explicitSpan, GanttPeriod, ganttWindow, stepGanttDate } from "../core/gantt";
 import { renderGantt } from "./gantt";
 import { renderDailyGantt } from "./dailyGantt";
+import { planDatePatch, planInbox, planOccurrences } from "../core/planning";
+import { renderMonthCalendar, renderRangeList } from "./planningViews";
 
 const SNAP = 15;
 let weekDayLabelId = 0;
 
 export interface TasksState {
-  weekAnchor: string;
   selectedDate: string;
-  agendaDate: string;
-  agendaSpan: 1 | 3;
-  scheduleView?: "week" | "gantt";
-  ganttPeriod?: GanttPeriod;
-  ganttCollapsed?: Set<string>;
+  scheduleView: "calendar" | "gantt" | "list";
+  period: GanttPeriod;
+  ganttCollapsed: Set<string>;
 }
 
 type ScheduleFields = Pick<Task, "date" | "start" | "estimate" | "startDate" | "endDate">;
@@ -45,13 +43,13 @@ async function writeSchedule(plugin: LubiPlugin, task: Task, patch: Partial<Sche
 }
 
 /** 只恢复本次实际改动且仍保持本次值的字段，绝不覆盖撤销期间对任务的其他修改。 */
-export async function updateScheduleWithUndo(plugin: LubiPlugin, id: string, patch: Partial<ScheduleFields>, message: string, rerender: () => void): Promise<void> {
+export async function updateScheduleWithUndo(plugin: LubiPlugin, id: string, patch: Partial<ScheduleFields>, message: string, rerender: () => void, onSaved?: () => void): Promise<void> {
   const task = plugin.tasks.byId(id);
   if (!task) { new Notice("任务已不存在，无法调整"); return; }
   const keys = Object.keys(patch) as (keyof ScheduleFields)[];
   const original: ScheduleFields = { date: task.date, start: task.start, estimate: task.estimate, startDate: task.startDate, endDate: task.endDate };
   const changed = keys.filter((key) => original[key] !== patch[key]);
-  if (!changed.length) { rerender(); return; }
+  if (!changed.length) { rerender(); onSaved?.(); return; }
   const written: ScheduleFields = { ...original, ...patch };
   try {
     await writeSchedule(plugin, task, patch);
@@ -79,71 +77,103 @@ export async function updateScheduleWithUndo(plugin: LubiPlugin, id: string, pat
       } catch (e) { new Notice(`撤销失败：${(e as Error).message}`, 6000); }
     });
     rerender();
+    onSaved?.();
   } catch (e) { new Notice(`调整失败：${(e as Error).message}`, 6000); rerender(); }
 }
 
 export function renderTasks(plugin: LubiPlugin, host: HTMLElement, date: string, state: TasksState, rerender: () => void): void {
   host.empty();
-  host.addClass("lubi-tasks");
+  host.addClass("lubi-tasks", "lubi-planning");
   host.toggleClass("is-gantt", state.scheduleView === "gantt");
-  const openNew: OpenRecord = (d, onRec) => openUnifiedRecord(plugin, date, d, async (rec) => { if (rec && onRec) await onRec(rec); rerender(); });
-  const edit = (t: Task) => new TaskModal(plugin.app, plugin, { task: t, recordDate: date, onSaved: rerender }).open();
+  host.toggleClass("is-list", state.scheduleView === "list");
+  const openNew: OpenRecord = (d, onRec) => openUnifiedRecord(plugin, date, d, async rec => { if (rec && onRec) await onRec(rec); rerender(); });
+  const edit = (task: Task, occurrenceDate = date) => new TaskModal(plugin.app, plugin, { task, recordDate: occurrenceDate, onSaved: rerender }).open();
   const create = (defaults: Partial<Task> = {}) => new TaskModal(plugin.app, plugin, { defaults, onSaved: rerender }).open();
-
-  const top = host.createDiv({ cls: "lubi-tasks-top" });
+  const days = ganttWindow(state.selectedDate, state.period);
+  renderPlanningHead(host, state, days, rerender);
+  const top = host.createDiv({ cls: "lubi-tasks-top lubi-planning-top" });
   const lists = top.createDiv({ cls: "lubi-tasks-left lubi-card lubi-task-lists" });
-  renderLists(plugin, lists, date, rerender, openNew, edit, create);
-  // DOM 顺序即键盘顺序：选中日任务 → 窄屏议程 → 未安排；宽屏隐藏议程，保留右侧周日程。
-  const agendaHost = lists.createDiv({ cls: "lubi-agenda-host" });
-  renderAgenda(plugin, agendaHost, state, rerender, edit);
-  const inbox = lists.querySelectorAll(".lubi-list-card")[1];
-  if (inbox) lists.insertBefore(agendaHost, inbox);
-  renderWeek(plugin, top.createDiv({ cls: "lubi-tasks-week" }), date, state, rerender, edit);
+  renderLists(plugin, lists, date, rerender, openNew, edit, create, state.scheduleView !== "list");
+  const main = top.createDiv({ cls: "lubi-tasks-week lubi-planning-main" });
+  const card = main.createDiv({ cls: `lubi-card ${state.scheduleView === "gantt" ? "lubi-gantt-card" : state.scheduleView === "list" ? "lubi-plan-list-card" : state.period === "month" ? "lubi-month-card" : "lubi-week-card"}` });
+  const save = (id: string, patch: Partial<ScheduleFields>, message: string) => updateScheduleWithUndo(plugin, id, patch, message, rerender);
+  const drop = (target: HTMLElement, day: string) => bindDrop(plugin, target, day, null, rerender, true, () => {
+    if (state.scheduleView === "calendar" && state.period === "month" && day.slice(0, 7) !== date.slice(0, 7)) plugin.openDate(day, "tasks");
+  });
+  if (state.scheduleView === "list") renderRangeList(plugin, card, days, rerender, edit, makeDraggable, drop);
+  else if (state.scheduleView === "gantt") {
+    if (state.period === "day") { card.addClass("lubi-daily-gantt-card"); renderDailyGantt(plugin, card, date, rerender, edit, save); }
+    else renderGantt(plugin, card, days, state.ganttCollapsed, rerender, edit, save);
+  } else if (state.period === "month") renderMonthCalendar(plugin, card, date, edit, makeDraggable, drop);
+  else renderCalendarSchedule(plugin, card, date, state, rerender, edit);
+}
+
+function renderPlanningHead(host: HTMLElement, state: TasksState, days: string[], rerender: () => void): void {
+  const head = host.createDiv({ cls: "lubi-panel-head lubi-planning-head" });
+  const views = segmented<TasksState["scheduleView"]>(head, [{ id: "calendar", label: "日历" }, { id: "gantt", label: "甘特图" }, { id: "list", label: "列表" }], state.scheduleView, value => { state.scheduleView = value; rerender(); });
+  views.addClass("lubi-schedule-switch");
+  views.querySelectorAll<HTMLElement>("button").forEach((button, i) => button.dataset.lubiFocus = `schedule:${["calendar", "gantt", "list"][i]}`);
+  const periods = segmented<GanttPeriod>(head, [{ id: "day", label: "日" }, { id: "week", label: "周" }, { id: "month", label: "月" }], state.period, value => { state.period = value; rerender(); });
+  periods.addClass("lubi-planning-period-switch");
+  periods.querySelectorAll<HTMLElement>("button").forEach((button, i) => button.dataset.lubiFocus = `planning-period:${["day", "week", "month"][i]}`);
+  head.createSpan({ cls: "lubi-muted lubi-schedule-range", text: days.length === 1 ? days[0] : `${shortDate(days[0])} – ${shortDate(days[days.length - 1])}` });
+  const nav = head.createDiv({ cls: "lubi-nav lubi-push-right" });
+  const shift = (direction: number) => { state.selectedDate = stepGanttDate(state.selectedDate, state.period, direction); rerender(); };
+  const unit = state.period === "day" ? "天" : state.period === "week" ? "周" : "月";
+  const prev = iconButton(nav, "chevron-left", `向前一${unit}`, () => shift(-1)); prev.dataset.lubiFocus = "planning:previous";
+  button(nav, "今天", () => { state.selectedDate = todayStr(); rerender(); }, { cls: "lubi-btn-sm" }).dataset.lubiFocus = "planning:today";
+  const next = iconButton(nav, "chevron-right", `向后一${unit}`, () => shift(1)); next.dataset.lubiFocus = "planning:next";
 }
 
 // ---------- 左栏 ----------
 
-function renderLists(plugin: LubiPlugin, host: HTMLElement, date: string, rerender: () => void, openNew: OpenRecord, edit: (t: Task) => void, create: (d?: Partial<Task>) => void): void {
-  const today = dayTasks(plugin, date);
-  const card = host.createDiv({ cls: "lubi-section lubi-list-card" });
-  // 整张当天清单都可接收任务，包括空列表、标题和快速输入区域。
-  bindDrop(plugin, card, date, null, rerender);
-  const head = card.createDiv({ cls: "lubi-panel-head" });
-  el(head, "h3", "lubi-panel-title", date === todayStr() ? "今天" : `${shortDate(date)} 周${weekdayZh(date)}`);
-  const done = today.filter((t) => plugin.tasks.isDoneOn(t, date)).length;
-  head.createSpan({ cls: "lubi-muted", text: today.length ? `${done}/${today.length}` : "" });
+function renderLists(plugin: LubiPlugin, host: HTMLElement, date: string, rerender: () => void, openNew: OpenRecord, edit: (t: Task) => void, create: (d?: Partial<Task>) => void, showToday: boolean): void {
+  if (showToday) {
+    const occurrences = planOccurrences(plugin.tasks.all, [date]).sort((a, b) => a.task.order - b.task.order || a.task.created.localeCompare(b.task.created));
+    const today = occurrences.map(item => item.task);
+    const card = host.createDiv({ cls: "lubi-section lubi-list-card" });
+    // 整张当天清单都可接收任务，包括空列表、标题和快速输入区域。
+    bindDrop(plugin, card, date, null, rerender);
+    const head = card.createDiv({ cls: "lubi-panel-head" });
+    el(head, "h3", "lubi-panel-title", date === todayStr() ? "今天" : `${shortDate(date)} 周${weekdayZh(date)}`);
+    const done = today.filter((t) => plugin.tasks.isDoneOn(t, date)).length;
+    head.createSpan({ cls: "lubi-muted", text: today.length ? `${done}/${today.length}` : "" });
 
-  const list = card.createDiv({ cls: "lubi-task-list" });
-  if (!today.length) list.createDiv({ cls: "lubi-muted lubi-pad", text: "暂无安排" });
-  renderDayTaskList(plugin, list, date, rerender, openNew, edit, (li, t) => {
-    makeDraggable(li, t);
-    bindTaskSort(plugin, li, t, list, rerender);
-  });
-  // 快速输入：键盘按回车，触屏有明确的添加按钮。
-  const quick = card.createDiv({ cls: "lubi-quick-add" });
-  const input = quick.createEl("input", { type: "text", attr: { placeholder: "添加当天任务", "aria-label": `添加 ${date} 的待办`, "data-lubi-focus": "quick-add" } });
-  let saving = false;
-  const add = async () => {
-    const title = input.value.trim();
-    if (!title || saving) { input.focus(); return; }
-    saving = true;
-    try {
-      const firstCat = plugin.settings.categories.find((c) => c.kind === "time")?.name || "";
-      await plugin.tasks.upsert(blankTask({ title, date, category: firstCat }));
-      input.value = "";
-      rerender();
-    } catch (e) { new Notice(`添加失败：${(e as Error).message}`, 6000); }
-    finally { saving = false; }
-  };
-  input.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" || e.isComposing) return;
-    e.preventDefault();
-    void add();
-  });
-  button(quick, "添加", () => void add(), { cls: "lubi-btn-sm" });
-
-  // 未安排
-  const inbox = plugin.tasks.inbox();
+    const list = card.createDiv({ cls: "lubi-task-list" });
+    if (!today.length) list.createDiv({ cls: "lubi-muted lubi-pad", text: "暂无安排" });
+    groupedRows(plugin, list, today, edit, (group, t) => {
+      const occurrence = occurrences.find(item => item.task.id === t.id)!;
+      const li = taskRow(plugin, group, t, date, rerender, openNew, () => edit(t), { compact: true, timed: occurrence.timed,
+        span: occurrence.from !== occurrence.to ? `${shortDate(occurrence.from)} – ${shortDate(occurrence.to)}` : undefined });
+      li.dataset.date = date;
+      makeDraggable(li, t);
+      bindTaskSort(plugin, li, t, list, rerender);
+    });
+    // 快速输入：键盘按回车，触屏有明确的添加按钮。
+    const quick = card.createDiv({ cls: "lubi-quick-add" });
+    const input = quick.createEl("input", { type: "text", attr: { placeholder: "添加当天任务", "aria-label": `添加 ${date} 的待办`, "data-lubi-focus": "quick-add" } });
+    let saving = false;
+    const add = async () => {
+      const title = input.value.trim();
+      if (!title || saving) { input.focus(); return; }
+      saving = true;
+      try {
+        const firstCat = plugin.settings.categories.find((c) => c.kind === "time")?.name || "";
+        await plugin.tasks.upsert(blankTask({ title, date, category: firstCat }));
+        input.value = "";
+        rerender();
+      } catch (e) { new Notice(`添加失败：${(e as Error).message}`, 6000); }
+      finally { saving = false; }
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || e.isComposing) return;
+      e.preventDefault();
+      void add();
+    });
+    button(quick, "添加", () => void add(), { cls: "lubi-btn-sm" });
+  }
+  // 未安排：显式跨度和实际记录生成的任务不混入未安排。
+  const inbox = planInbox(plugin.tasks.all);
   const ib = host.createDiv({ cls: "lubi-section lubi-list-card" });
   const ih = ib.createDiv({ cls: "lubi-panel-head" });
   el(ih, "h3", "lubi-panel-title", "未安排");
@@ -152,7 +182,7 @@ function renderLists(plugin: LubiPlugin, host: HTMLElement, date: string, rerend
   const il = ib.createDiv({ cls: "lubi-task-list" });
   if (!inbox.length) il.createDiv({ cls: "lubi-muted lubi-pad", text: "暂无未安排任务" });
   groupedRows(plugin, il, inbox, edit, (group, t) => {
-    const li = taskRow(plugin, group, t, date, rerender, openNew, () => edit(t));
+    const li = taskRow(plugin, group, t, date, rerender, openNew, () => edit(t), { compact: true });
     makeDraggable(li, t);
     bindTaskSort(plugin, li, t, il, rerender);
     const act = li.querySelector<HTMLElement>(".lubi-task-actions") ?? li.createDiv({ cls: "lubi-task-actions" });
@@ -168,6 +198,7 @@ function makeDraggable(elm: HTMLElement, t: Task): void {
   elm.addClass("is-draggable");
   elm.addEventListener("dragstart", (e) => {
     e.dataTransfer?.setData("text/lubi-task", t.id);
+    if (elm.dataset.date) e.dataTransfer?.setData("text/lubi-task-date", elm.dataset.date);
     e.dataTransfer?.setData("text/plain", t.title);
     if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
     elm.addClass("is-dragging");
@@ -242,110 +273,15 @@ function bindTaskSort(plugin: LubiPlugin, row: HTMLElement, task: Task, list: HT
   });
 }
 
-function scheduleSwitch(host: HTMLElement, state: TasksState, rerender: () => void): void {
-  const control = segmented<"week" | "gantt">(host, [{ id: "week", label: "周日程" }, { id: "gantt", label: "甘特图" }], state.scheduleView || "week", mode => {
-    state.scheduleView = mode;
-    state.weekAnchor = state.selectedDate;
-    rerender();
-  });
-  control.addClass("lubi-schedule-switch");
-  control.querySelectorAll<HTMLElement>("button").forEach((b, i) => b.dataset.lubiFocus = `schedule:${i === 0 ? "week" : "gantt"}`);
-}
-
-// ---------- 窄面板：可切换的单日 / 三日议程，日期、完成与编辑都不依赖拖动 ----------
-
-function renderAgenda(plugin: LubiPlugin, host: HTMLElement, state: TasksState, rerender: () => void, edit: (task: Task) => void): void {
-  const card = host.createDiv({ cls: "lubi-section lubi-agenda-card" });
-  const span = state.agendaSpan;
-  const first = state.agendaDate || state.selectedDate;
-  const dates = Array.from({ length: span }, (_, i) => shiftDate(first, i));
-  const head = card.createDiv({ cls: "lubi-panel-head lubi-agenda-head" });
-  el(head, "h3", "lubi-panel-title", "日程");
-  scheduleSwitch(head, state, rerender);
-  head.createSpan({ cls: "lubi-muted", text: dates.length === 1 ? first : `${shortDate(first)} – ${shortDate(dates[dates.length - 1])}` });
-  const navigate = (target: string) => {
-    state.agendaDate = target;
-    state.selectedDate = target;
-    state.weekAnchor = recenterWeek(state.weekAnchor, target);
-    rerender();
-  };
-  const nav = head.createDiv({ cls: "lubi-nav lubi-push-right" });
-  iconButton(nav, "chevron-left", `向前 ${span} 天`, () => navigate(shiftDate(first, -span)));
-  button(nav, "今天", () => navigate(todayStr()), { cls: "lubi-btn-sm" });
-  iconButton(nav, "chevron-right", `向后 ${span} 天`, () => navigate(shiftDate(first, span)));
-  segmented<"one" | "three">(card, [{ id: "one", label: "单日" }, { id: "three", label: "三日" }], span === 1 ? "one" : "three", (value) => {
-    state.agendaSpan = value === "one" ? 1 : 3;
-    state.agendaDate = state.selectedDate;
-    rerender();
-  }).addClass("lubi-agenda-range");
-  for (const d of dates) {
-    const section = card.createDiv({ cls: "lubi-agenda-day" });
-    const day = section.createEl("button", { cls: `lubi-agenda-day-title ${d === state.selectedDate ? "is-selected" : ""}`, text: `${d === todayStr() ? "今天 · " : ""}${shortDate(d)} 周${weekdayZh(d)}`, attr: { type: "button", "aria-current": d === state.selectedDate ? "date" : "false" } });
-    day.addEventListener("click", () => navigate(d));
-    const list = section.createDiv({ cls: "lubi-task-list" });
-    const tasks = plugin.tasks.forDate(d).filter((t) => !plugin.tasks.children(t.id).length);
-    if (!tasks.length) list.createDiv({ cls: "lubi-muted lubi-pad-sm", text: "没有安排" });
-    else for (const task of tasks) {
-      taskRow(plugin, list, task, d, rerender, (defaults, onRec) => openUnifiedRecord(plugin, d, defaults, async (rec) => { if (rec && onRec) await onRec(rec); rerender(); }), () => edit(task));
-    }
-    button(section, `在 ${shortDate(d)} 新建任务`, () => new TaskModal(plugin.app, plugin, { defaults: { date: d }, onSaved: rerender }).open(), { cls: "lubi-btn-ghost lubi-btn-sm lubi-agenda-add" });
-  }
-}
-
-// ---------- 七日周日程（宽面板保留拖动） ----------
-
-/** 周日程窗口：以锚点日为中心的连续 7 天（前 3 天 · 锚点 · 后 3 天），默认锚点是今天，今天就在正中 */
-export function weekWindow(anchor: string): string[] {
-  return Array.from({ length: 7 }, (_, i) => shiftDate(anchor, i - 3));
-}
-
-/** 选中日期仍在当前 7 天窗口里就不挪窗口（点表头不会让整张表跳动），跳出窗口才以它为新中心 */
-export function recenterWeek(anchor: string, d: string): string {
-  return Math.abs(daysBetween(anchor, d)) <= 3 ? anchor : d;
-}
-
-function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: TasksState, rerender: () => void, edit: (t: Task) => void): void {
+// ---------- 日 / 周时间日历 ----------
+function renderCalendarSchedule(plugin: LubiPlugin, card: HTMLElement, date: string, state: TasksState, rerender: () => void, edit: (t: Task, date?: string) => void): void {
   const s = plugin.settings;
-  const startH = Math.max(0, Math.min(23, s.scheduleStartHour));
-  const endH = Math.max(startH + 1, Math.min(24, s.scheduleEndHour));
-  const isGantt = state.scheduleView === "gantt";
-  const period = state.ganttPeriod || "day";
-  const isDaily = isGantt && period === "day";
-  const days = isGantt ? ganttWindow(state.selectedDate, period) : weekWindow(state.weekAnchor);
-
-  const card = host.createDiv({ cls: `lubi-card ${isGantt ? "lubi-gantt-card" : "lubi-week-card"}` });
-  const head = card.createDiv({ cls: "lubi-panel-head" });
-  scheduleSwitch(head, state, rerender);
-  if (isGantt) {
-    const periods = segmented<GanttPeriod>(head, [{ id: "day", label: "日" }, { id: "week", label: "周" }, { id: "month", label: "月" }], period, value => { state.ganttPeriod = value; rerender(); });
-    periods.addClass("lubi-gantt-period-switch");
-    periods.querySelectorAll<HTMLElement>("button").forEach((button, i) => button.dataset.lubiFocus = `gantt-period:${["day", "week", "month"][i]}`);
-  }
-  head.createSpan({ cls: "lubi-muted lubi-schedule-range", text: isDaily ? `${days[0]}${days[0] === todayStr() ? " · 今天" : ""}` : `${shortDate(days[0])} – ${shortDate(days[days.length - 1])}` });
-  const nav = head.createDiv({ cls: "lubi-nav lubi-push-right" });
-  const shift = (direction: number) => {
-    const next = isGantt ? stepGanttDate(state.selectedDate, period, direction) : shiftDate(state.selectedDate, direction * 7);
-    state.weekAnchor = isGantt ? next : shiftDate(state.weekAnchor, direction * 7);
-    state.selectedDate = next; state.agendaDate = next; rerender();
-  };
-  const unit = isGantt ? (period === "day" ? "天" : period === "week" ? "周" : "月") : "7 天";
-  iconButton(nav, "chevron-left", `向前 ${unit}`, () => shift(-1));
-  const wk = nav.createEl("button", { cls: "lubi-btn lubi-btn-sm", text: "今天" });
-  wk.addEventListener("click", () => { state.weekAnchor = todayStr(); state.selectedDate = todayStr(); state.agendaDate = state.selectedDate; rerender(); });
-  iconButton(nav, "chevron-right", `向后 ${unit}`, () => shift(1));
-
-  if (isDaily) {
-    card.addClass("lubi-daily-gantt-card");
-    renderDailyGantt(plugin, card, state.selectedDate, rerender, edit, (id, patch, message) => updateScheduleWithUndo(plugin, id, patch, message, rerender));
-    return;
-  }
-  if (isGantt) {
-    renderGantt(plugin, card, days, state.ganttCollapsed ||= new Set(), rerender, edit,
-      (id, patch, message) => updateScheduleWithUndo(plugin, id, patch, message, rerender));
-    return;
-  }
-
+  const startH = 0, endH = 24;
+  const days = ganttWindow(date, state.period);
+  const daily = new Map(days.map(day => [day, planOccurrences(plugin.tasks.all, [day])]));
   const grid = card.createDiv({ cls: "lubi-week" });
+  grid.style.setProperty("--lubi-calendar-days", String(days.length));
+  grid.toggleClass("is-single-day", days.length === 1);
   // 表头 + 全天条
   const corner = grid.createDiv({ cls: "lubi-week-corner" });
   corner.setText("");
@@ -360,7 +296,7 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
     dayButton.createSpan({ cls: "lubi-week-date", text: String(Number(d.slice(8, 10))) });
     dayButton.addEventListener("click", () => plugin.openDate(d, "tasks"));
     renderLoad(plugin, h, d);
-    const allDay = plugin.tasks.forDate(d).filter((t) => !t.start && !plugin.tasks.children(t.id).length);
+    const allDay = daily.get(d)!.filter(item => !item.timed).map(item => item.task);
     // 没有全天任务就不占表头高度；表头本身仍是全天任务的拖放区
     const strip = allDay.length ? h.createDiv({ cls: "lubi-allday" }) : null;
     if (strip) for (const t of allDay) {
@@ -381,12 +317,12 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
         return rows;
       }, "side");
       chip.style.setProperty("--chip", categoryOf(s, t.category).color);
-      if (doneChip) chip.createSpan({ cls: "lubi-allday-check", text: "✓ ", attr: { "aria-hidden": "true" } });
       chip.createSpan({ text: t.title });
       chip.addEventListener("click", (e) => {
         stopAll(e);
-        edit(t);
+        edit(t, d);
       });
+      chip.dataset.date = d;
       makeDraggable(chip, t);
     }
     bindDrop(plugin, h, d, null, rerender);
@@ -396,7 +332,7 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
   // 表身有纵向滚动条、表头没有：把滚动条宽度补成表头最右侧的一条空轨道，列线才能上下对齐
   const syncGutter = () => grid.style.setProperty("--lubi-week-sbw", `${Math.max(0, body.offsetWidth - body.clientWidth)}px`);
   window.requestAnimationFrame(syncGutter);
-  if (typeof ResizeObserver !== "undefined") new ResizeObserver(syncGutter).observe(body);
+  // No unowned ResizeObserver per render; the next panel render resyncs the gutter.
   const hours = body.createDiv({ cls: "lubi-week-hours" });
   hours.style.height = `${(endH - startH) * HOUR_PX}px`;
   for (let h = startH; h < endH; h++) {
@@ -476,7 +412,7 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
       const now = col.createDiv({ cls: "lubi-now" });
       now.style.top = `${((hmToMin(nowHM()) - startH * 60) / 60) * HOUR_PX}px`;
     }
-    const items = plugin.tasks.forDate(d).filter((t) => t.start && !plugin.tasks.children(t.id).length);
+    const items = daily.get(d)!.filter(item => item.timed).map(item => item.task);
     for (const t of items) {
       const startMin = hmToMin(t.start);
       const dur = Math.max(t.estimate || 30, SNAP);
@@ -495,7 +431,7 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
       block.setAttribute("role", "button");
       infoTip(block, t.title, [`${shortDate(d)} · ${t.start}–${minToHM(startMin + dur)}`, `预计用时：${t.estimate ? fmtDuration(t.estimate) : "未设置（显示按 30 分钟）"}`, plugin.tasks.isDoneOn(t, d) ? "已完成" : "待完成"], t.notes);
       block.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); edit(t); }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); edit(t, d); }
       });
       const pxPerMin = HOUR_PX / 60;
       const bindDrag = (target: HTMLElement, mode: "move" | "resize-start" | "resize-end") => {
@@ -511,7 +447,7 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
             max: endH * 60,
             minMinutes: SNAP,
             snap: SNAP,
-            horizontal: mode === "move" ? { colWidth, minCol: -dayIdx, maxCol: 6 - dayIdx } : undefined,
+            horizontal: mode === "move" ? { colWidth, minCol: -dayIdx, maxCol: days.length - 1 - dayIdx } : undefined,
             onStart: () => {
               dragging = true;
               block.addClass("is-dragging", mode === "move" ? "is-moving" : "is-resizing");
@@ -535,7 +471,7 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
                 return;
               }
               if (!st.moved) {
-                if (mode === "move") edit(t);
+                if (mode === "move") edit(t, d);
                 return;
               }
               void (async () => {
@@ -546,7 +482,9 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
                   if (cur.repeat.kind !== "none" && nd !== d) {
                     new Notice("重复任务不能用拖动换天；请在编辑中调整重复规则"); rerender(); return;
                   }
-                  const patch = cur.repeat.kind === "none" ? { date: nd, start: minToHM(st.start) } : { start: minToHM(st.start) };
+                  const moved = cur.repeat.kind === "none" ? planDatePatch(cur, nd) : {};
+                  if (!moved) { new Notice("排期跨度无效，请在编辑中调整"); rerender(); return; }
+                  const patch = { ...moved, start: minToHM(st.start) };
                   await updateScheduleWithUndo(plugin, t.id, patch, `${t.title} → ${nd} ${minToHM(st.start)}`, rerender);
                 } else if (mode === "resize-start") {
                   await updateScheduleWithUndo(plugin, t.id, { start: minToHM(st.start), estimate: st.minutes }, `${t.title} → ${minToHM(st.start)}–${minToHM(st.start + st.minutes)}`, rerender);
@@ -608,7 +546,7 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
   });
   // 首屏：窗口含今天 = 现在 − 1h；否则 = 最早的定时任务（没有则从头）
   const scrollEl = card.querySelector(".lubi-week-body") as HTMLElement | null;
-  const earliest = Math.min(...days.flatMap((d) => plugin.tasks.forDate(d).filter((t) => t.start).map((t) => hmToMin(t.start))), Infinity);
+  const earliest = Math.min(...days.flatMap((d) => daily.get(d)!.filter(item => item.timed).map(item => hmToMin(item.task.start))), Infinity);
   const targetMin = days.includes(todayStr()) ? hmToMin(nowHM()) - 60 : Number.isFinite(earliest) ? earliest - 30 : startH * 60;
   const targetPx = Math.max(0, Math.round(((targetMin - startH * 60) / 60) * HOUR_PX));
   if (scrollEl) scrollEl.dataset.scrollTarget = String(targetPx);
@@ -645,7 +583,7 @@ function snap(min: number): number {
   return Math.round(min / SNAP) * SNAP;
 }
 
-function bindDrop(plugin: LubiPlugin, target: HTMLElement, date: string, startH: number | null, rerender: () => void): void {
+function bindDrop(plugin: LubiPlugin, target: HTMLElement, date: string, startH: number | null, rerender: () => void, preserveStart = false, onSaved?: () => void): void {
   target.addEventListener("dragover", (e) => {
     if (!e.dataTransfer?.types.includes("text/lubi-task")) return;
     e.preventDefault();
@@ -666,11 +604,14 @@ function bindDrop(plugin: LubiPlugin, target: HTMLElement, date: string, startH:
     let start = "";
     if (startH !== null) {
       const rect = target.getBoundingClientRect();
-      start = minToHM(startH * 60 + snap(((e.clientY - rect.top) / HOUR_PX) * 60));
+      start = minToHM(Math.max(0, Math.min(1440 - SNAP, startH * 60 + snap(((e.clientY - rect.top) / HOUR_PX) * 60))));
     }
     const task = plugin.tasks.byId(id);
     if (!task) return;
     if (task.repeat.kind !== "none") { new Notice("重复任务请在编辑中调整规则或时间"); return; }
-    await updateScheduleWithUndo(plugin, id, { date, start }, `${task.title} → ${date}${start ? ` ${start}` : " 全天"}`, rerender);
+    const moved = planDatePatch(task, date, e.dataTransfer?.getData("text/lubi-task-date") || undefined);
+    if (!moved) { new Notice("排期跨度无效，请在编辑中调整"); return; }
+    if (preserveStart) start = task.start;
+    await updateScheduleWithUndo(plugin, id, { ...moved, start }, `${task.title} → ${date}${start ? ` ${start}` : " 全天"}`, rerender, onSaved);
   });
 }

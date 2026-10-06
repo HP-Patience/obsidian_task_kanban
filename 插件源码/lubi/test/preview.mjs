@@ -191,8 +191,8 @@ for (const [kind, Form, opts] of [["record",m.constructor,{date:T,defaults:{cate
     task("layout-gantt-record",{title:"直接记录不应出现在甘特",date:start,origin:"record"})
   ])await plugin.tasks.upsert(t);
   view.show("tasks",T);await tick(250);
-  [...root.querySelectorAll('.lubi-week-card .lubi-schedule-switch button')].find(b=>b.textContent==="甘特图").click();await tick(300);
-  root.querySelector('[data-lubi-focus="gantt-period:month"]').click();await tick(300);
+  [...root.querySelectorAll('.lubi-schedule-switch button')].find(b=>b.textContent==="甘特图").click();await tick(300);
+  root.querySelector('[data-lubi-focus="planning-period:month"]').click();await tick(300);
   fs.writeFileSync(new URL('tasks-gantt.html',out),page('tasks-gantt',freeze(root)));
   root.querySelector('[data-task-id="layout-gantt-parent"] .lubi-gantt-collapse').click();await tick(300);
   fs.writeFileSync(new URL('tasks-gantt-collapsed.html',out),page('tasks-gantt-collapsed',freeze(root)));
@@ -207,11 +207,24 @@ for (const [kind, Form, opts] of [["record",m.constructor,{date:T,defaults:{cate
     blankTask({id:"layout-daily-point",title:"未填预计（合成）",date:T,start:"11:00",estimate:0,category:"学习"}),
     blankTask({id:"layout-daily-late",title:"跨午夜计划（合成）",date:T,start:"23:45",estimate:90,category:"学习"})
   ])await plugin.tasks.upsert(t);
-  [...root.querySelectorAll('.lubi-gantt-card .lubi-gantt-period-switch button')].find(b=>b.dataset.lubiFocus==="gantt-period:day").click();await tick(300);
+  [...root.querySelectorAll('.lubi-planning-period-switch button')].find(b=>b.dataset.lubiFocus==="planning-period:day").click();await tick(300);
   fs.writeFileSync(new URL('tasks-daily-gantt.html',out),page('tasks-daily-gantt',freeze(root)));
-  root.querySelector('[data-lubi-focus="gantt-period:week"]').click();await tick(300);
+  root.querySelector('[data-lubi-focus="planning-period:week"]').click();await tick(300);
   fs.writeFileSync(new URL('tasks-week-gantt.html',out),page('tasks-week-gantt',freeze(root)));
 
+}
+// All nine planning presentations, including month/list compact task labels.
+{
+  const {blankTask,shiftDate}=await import('./core.mjs');
+  for(const t of [
+    blankTask({id:'planning-long',title:'合成规划任务：复习基础知识并整理错题与下一步安排',date:T,start:'08:00',estimate:60,category:'学习'}),
+    blankTask({id:'planning-complete',title:'合成已完成任务',date:T,start:'12:00',estimate:30,status:'done',category:'运动'}),
+    blankTask({id:'planning-span',title:'合成跨日任务',startDate:shiftDate(T,-2),endDate:shiftDate(T,3),category:'学习'})
+  ])await plugin.tasks.upsert(t);
+  for(const mode of ['calendar','gantt','list'])for(const period of ['day','week','month']) {
+    view.tasksState.scheduleView=mode;view.tasksState.period=period;view.show('tasks',T);await tick(200);
+    fs.writeFileSync(new URL(`planning-${mode}-${period}.html`,out),page(`planning-${mode}-${period}`,freeze(root)));
+  }
 }
 console.log("preview written to", out.pathname);
 process.exit(0);

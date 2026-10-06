@@ -69,22 +69,7 @@ export class LubiSettingTab extends PluginSettingTab {
       t.inputEl.setAttribute("aria-label", "备份文件夹");
       return t.setValue(s.backupFolder).onChange((v) => { s.backupFolder = v.trim() || "备份"; save(); });
     });
-    const range = new Setting(basics).setName("日程时间范围").setDesc("用于计划页周日程，结束应晚于开始");
-    range.settingEl.addClass("lubi-settings-range");
-    range.controlEl.createSpan({ text: "从" });
-    range.addDropdown((d) => {
-      for (let h = 0; h < 24; h++) d.addOption(String(h), `${String(h).padStart(2, "0")}:00`);
-      d.selectEl.setAttribute("aria-label", "日程开始时间");
-      d.selectEl.dataset.setting = "schedule-start";
-      d.setValue(String(s.scheduleStartHour)).onChange((v) => { s.scheduleStartHour = clamp(Number(v), 0, 23, 6); save(); });
-    });
-    range.controlEl.createSpan({ text: "到" });
-    range.addDropdown((d) => {
-      for (let h = 1; h <= 24; h++) d.addOption(String(h), `${String(h).padStart(2, "0")}:00`);
-      d.selectEl.setAttribute("aria-label", "日程结束时间");
-      d.selectEl.dataset.setting = "schedule-end";
-      d.setValue(String(s.scheduleEndHour)).onChange((v) => { s.scheduleEndHour = clamp(Number(v), 1, 24, 24); save(); });
-    });
+    // Planning calendars always show the full day; retain legacy hour fields only in saved data.
     new Setting(basics).setName("完成任务时自动记一条").setDesc("按计划时间生成待确认记录，可核对和撤销").addToggle((t) => {
       t.toggleEl.setAttribute("aria-label", "完成任务时自动记一条");
       return t.setValue(s.promptLogOnComplete).onChange((v) => { s.promptLogOnComplete = v; save(); });

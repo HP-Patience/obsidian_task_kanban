@@ -260,7 +260,7 @@ export async function deleteRecord(plugin: LubiPlugin, date: string, row: Parsed
   rerender();
 }
 
-export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: string, rerender: () => void, openNew: OpenRecord, onClick?: () => void): HTMLElement {
+export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: string, rerender: () => void, openNew: OpenRecord, onClick?: () => void, options: { compact?: boolean; span?: string; timed?: boolean } = {}): HTMLElement {
   const done = plugin.tasks.isDoneOn(t, date);
   const li = ul.createDiv({ cls: `lubi-task ${done ? "is-done" : ""} ${t.blocked ? "is-blocked" : ""}`.trim() });
   const cb = li.createEl("input", { type: "checkbox" });
@@ -289,10 +289,11 @@ export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: stri
   if (t.origin === "record") tip(line, `由记录生成${onClick ? " · 点击编辑" : ""}：${t.title}`);
   const parents = plugin.tasks.pathOf(t).slice(0, -1);
   const meta: string[] = [];
-  if (parents.length) meta.push(parents.map((p) => p.title).join(" / "));
-  if (t.start) meta.push(t.start);
-  if (t.estimate) meta.push(fmtDuration(t.estimate));
-  if (t.repeat.kind !== "none") meta.push("重复");
+  if (parents.length && !options.compact) meta.push(parents.map((p) => p.title).join(" / "));
+  if (t.start && options.timed !== false) meta.push(options.compact && t.estimate ? `${t.start}–${minToHM(hmToMin(t.start) + t.estimate)}` : t.start);
+  if (options.span) meta.push(options.span);
+  if (t.estimate && !options.compact) meta.push(fmtDuration(t.estimate));
+  if (t.repeat.kind !== "none" && !options.compact) meta.push("重复");
   if (meta.length) {
     const text = meta.join(" · ");
     const metadata = body.createDiv({ cls: "lubi-task-meta" });

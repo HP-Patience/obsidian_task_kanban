@@ -6,6 +6,7 @@
 - [Lubi 教学手册](../Lubi%20教学手册.md)：按当前 v1.6 流程操作，含预计对比、凌晨规划、AI 草稿、CSV 与清空任务。
 - [更新日志](../CHANGELOG.md)：版本变更、验证边界和已知限制。
 - [维护与构建](mcp-lubi-plugin.md)：当前模块、数据约定和发布检查。
+- [计划页展示规则](planning-views-questionnaire.md)：日历 / 甘特图 / 列表与日 / 周 / 月的实现约定及验证边界。
 - [历史名称候选](history-name-suggestions.md)：已确认的名称复用范围、搜索和排序规则。
 - [开发约定](../AGENTS.md)：AI / 开发者共同遵守的修改与提交范围。
 

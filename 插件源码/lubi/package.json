@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "test:core": "esbuild test/entry.ts --bundle --platform=node --format=esm --alias:obsidian=./test/stub-obsidian.js --outfile=test/core.mjs && node test/run.mjs",
-    "test:smoke": "esbuild src/main.ts --bundle --platform=node --format=cjs --external:obsidian --outfile=test/plugin.cjs && node test/smoke.mjs && node test/ui-interactions.mjs && node test/unified-actual.mjs",
-    "test:layout": "node test/chart-layout.mjs && node test/tasks-ui-layout.mjs && node test/topbar-layout.mjs && node test/settings-layout.mjs",
+    "test:core": "esbuild test/entry.ts --bundle --platform=node --format=esm --alias:obsidian=./test/stub-obsidian.js --outfile=test/core.mjs && node test/run.mjs && node test/planning-core.mjs",
+    "test:smoke": "esbuild src/main.ts --bundle --platform=node --format=cjs --external:obsidian --outfile=test/plugin.cjs && node test/smoke.mjs && node test/ui-interactions.mjs && node test/unified-actual.mjs && node test/planning-interactions.mjs",
+    "test:layout": "node test/chart-layout.mjs && node test/tasks-ui-layout.mjs && node test/topbar-layout.mjs && node test/settings-layout.mjs && node test/planning-layout.mjs",
     "test": "npm run test:core && npm run test:smoke && npm run test:layout"
   },
   "license": "MIT",

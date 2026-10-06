@@ -7,7 +7,7 @@ import { iconButton, segmented, button, debounce, hideTip, tip } from "./compone
 import { renderToday } from "./today";
 import { renderReview, ReviewState } from "./review";
 import { ganttWindow } from "../core/gantt";
-import { recenterWeek, renderTasks, TasksState } from "./tasks";
+import { renderTasks, TasksState } from "./tasks";
 import { ShortcutsModal, TaskModal } from "./modals";
 import { AiTaskModal } from "./aiTask";
 
@@ -20,7 +20,7 @@ export class DashboardView extends ItemView {
   date = todayStr();
   tab: Tab = "today";
   review: ReviewState = { period: "week", anchor: todayStr(), display: "chart" };
-  tasksState: TasksState = { weekAnchor: todayStr(), selectedDate: todayStr(), agendaDate: todayStr(), agendaSpan: 1, scheduleView: "week", ganttPeriod: "day", ganttCollapsed: new Set() };
+  tasksState: TasksState = { selectedDate: todayStr(), scheduleView: "calendar", period: "week", ganttCollapsed: new Set() };
   private body!: HTMLElement;
   private dateLabel!: HTMLElement;
   private todayBtn!: HTMLButtonElement;
@@ -171,9 +171,8 @@ export class DashboardView extends ItemView {
       if (this.review.period === "month") return `${a.slice(0, 4)} 年 ${Number(a.slice(5, 7))} 月`;
       return `${a.slice(0, 4)} 年`;
     }
-    const a = this.tasksState.weekAnchor;
-    if (this.tasksState.scheduleView === "gantt") { const days = ganttWindow(this.tasksState.selectedDate, this.tasksState.ganttPeriod || "day"); return days.length === 1 ? `${days[0]} · 日甘特` : `${shortDate(days[0])} – ${shortDate(days[days.length - 1])}`; }
-    return `${shortDate(shiftDate(a, -3))} – ${shortDate(shiftDate(a, 3))}`;
+    const days = ganttWindow(this.tasksState.selectedDate, this.tasksState.period);
+    return days.length === 1 ? days[0] : `${shortDate(days[0])} – ${shortDate(days[days.length - 1])}`;
   }
 
   activeDate(): string {
@@ -182,11 +181,7 @@ export class DashboardView extends ItemView {
 
   /** 每日页与任务页共用同一个日期：任一页翻天，另一页跟着走 */
   private syncTasksDate(d: string): void {
-    const s = this.tasksState;
-    s.selectedDate = d;
-    if (s.scheduleView === "gantt") s.weekAnchor = d;
-    else s.weekAnchor = recenterWeek(s.weekAnchor, d);
-    s.agendaDate = d;
+    this.tasksState.selectedDate = d;
   }
 
   setDate(d: string): void {
@@ -267,10 +262,10 @@ export class DashboardView extends ItemView {
       });
       if (this.scrollCache.size > 50) this.scrollCache.delete(this.scrollCache.keys().next().value!);
     }
-    const scheduleChanged = this.tab === "tasks" && this.lastRenderKey.startsWith("tasks:") && this.lastRenderKey.split(":")[1] !== (this.tasksState.scheduleView || "week");
+    const scheduleChanged = this.tab === "tasks" && this.lastRenderKey.startsWith("tasks:") && this.lastRenderKey.split(":")[1] !== this.tasksState.scheduleView;
     const key = this.tab === "today" ? `today:${this.date}`
       : this.tab === "review" ? `review:${this.review.period}:${this.review.anchor}`
-      : `tasks:${this.tasksState.scheduleView || "week"}:${this.tasksState.ganttPeriod || "day"}:${this.tasksState.selectedDate}:${this.tasksState.weekAnchor}`;
+      : `tasks:${this.tasksState.scheduleView}:${this.tasksState.period}:${this.tasksState.selectedDate}`;
     const host = createDiv();
     host.addClass("lubi-page");
     const rerender = () => this.refresh();

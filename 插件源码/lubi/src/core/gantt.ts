@@ -82,6 +82,18 @@ export function ganttRows(tasks: Task[], days: string[], collapsed = new Set<str
   return out;
 }
 
+/** Actionable allocations: preserve explicitly scheduled parents, not derived summaries. */
+export function scheduledPlanRows(tasks: Task[], days: string[]): GanttRow[] {
+  return ganttRows(tasks, days).flatMap(row => {
+    if (!row.hasChildren || !row.summary) return row.segments.length ? [row] : [];
+    const task = row.task;
+    if (isValidDate(task.date) && task.date >= days[0] && task.date <= days[days.length - 1]) {
+      return [{ ...row, summary: false, segments: [{ from: task.date, to: task.date, done: task.status === "done" }] }];
+    }
+    return [];
+  });
+}
+
 /** Inclusive day intervals; resize cannot exclude the scheduled execution day. */
 export function ganttPatch(task: Task, action: GanttAction, delta: number): GanttPatch | null {
   if (task.repeat.kind !== "none" || !Number.isFinite(delta)) return null;
@@ -122,11 +134,11 @@ export function ganttPatch(task: Task, action: GanttAction, delta: number): Gant
 
 export interface DailyGanttRow { task: Task; start: number | null; minutes: number; visibleMinutes: number; done: boolean }
 
-/** Today's scheduled leaf tasks only; actual records never become plan bars. */
+/** Scheduled allocations, including explicit parent plans; never actual-record tasks. */
 export function dailyGanttRows(tasks: Task[], date: string): DailyGanttRow[] {
-  const parents = new Set(tasks.map(t => t.parent).filter(Boolean));
-  return tasks.filter(t => t.origin !== "record" && !parents.has(t.id) && occursOn(t, date)).map(task => {
-    const start = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(task.start) ? hmToMin(task.start) : null;
+  return scheduledPlanRows(tasks, [date]).map(({ task }) => {
+    const isTimed = !explicitSpan(task) || task.date === date || task.repeat.kind !== "none";
+    const start = isTimed && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(task.start) ? hmToMin(task.start) : null;
     const minutes = Number.isFinite(task.estimate) && task.estimate > 0 ? task.estimate : 0;
     return { task, start, minutes, visibleMinutes: start === null ? 0 : Math.min(minutes, 1440 - start), done: task.repeat.kind === "none" ? task.status === "done" : task.doneDates.includes(date) };
   }).sort((a, b) => (a.start ?? 1440) - (b.start ?? 1440) || a.task.order - b.task.order || a.task.created.localeCompare(b.task.created));

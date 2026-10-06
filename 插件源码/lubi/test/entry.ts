@@ -11,3 +11,5 @@ export { DEFAULT_CATEGORIES, migratePalette, DEFAULT_SETTINGS } from "../src/set
 export * from "../src/core/nameHistory";
 
 export * from "../src/core/gantt";
+
+export * from "../src/core/planning";
