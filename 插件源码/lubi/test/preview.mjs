@@ -97,6 +97,10 @@ fs.writeFileSync(new URL("today.html", out), page("today", freeze(root)));
     window.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick(40);
   }
 }
+// 无实际记录的日期：保留分类底环，不清空演示数据。
+view.show('today','2088-02-15');await tick(200);
+fs.writeFileSync(new URL('today-empty.html',out),page('today-empty',freeze(root)));
+view.show('today',T);await tick(200);
 // 2. 回顾页
 view.show("review"); await tick(200);
 fs.writeFileSync(new URL("review.html", out), page("review", freeze(root)));
@@ -106,6 +110,15 @@ fs.writeFileSync(new URL("review.html", out), page("review", freeze(root)));
   if (yearBtn) { yearBtn.click(); await tick(300); fs.writeFileSync(new URL("review-year.html", out), page("review-year", freeze(root))); }
   const weekBtn = [...root.querySelectorAll(".lubi-review .lubi-seg-item")].find((x) => x.textContent.trim() === "周");
   if (weekBtn) { weekBtn.click(); await tick(200); }
+}
+// 空回顾使用没有演示记录的周期；不清除或写入任何 Vault 数据。
+{
+  const savedReview = { ...view.review };
+  for (const period of ['week','month','year']) {
+    view.review.period=period;view.review.display='chart';view.show('review','2088-02-15');await tick(200);
+    fs.writeFileSync(new URL('review-empty-'+period+'.html',out),page('review-empty-'+period,freeze(root)));
+  }
+  view.review={...savedReview};
 }
 // 3. 任务页
 view.show("tasks"); await tick(200);
@@ -140,6 +153,11 @@ plugin.quickLog(); await tick();
 const nm = O.openModals.at(-1); nm.modalEl.classList.add("modal"); nm.titleEl.classList.add("modal-title"); nm.contentEl.classList.add("modal-content");
 fs.writeFileSync(new URL("modal-new.html", out), page("modal-new", `<div class="lubi-root" style="height:100vh;background:var(--background-secondary)"></div><div class="modal-bg"></div>${freeze(nm.modalEl)}`));
 nm.close();
+const actualForm=new nm.constructor(app,plugin,{defaults:{title:'实际用时布局（合成）',category:'学习',date:T,estimate:45},recordDate:T});actualForm.open();await tick(60);
+for(const [key,value,event]of [['minutes','60','input'],['start','10:00','change']]){const input=actualForm.contentEl.querySelector('[data-actual='+key+']');input.value=value;input.dispatchEvent(new window.Event(event,{bubbles:true}))}
+actualForm.contentEl.querySelector('.lubi-actual-details').open=true;
+actualForm.modalEl.classList.add('modal');actualForm.titleEl.classList.add('modal-title');actualForm.contentEl.classList.add('modal-content');
+fs.writeFileSync(new URL('modal-actual.html',out),page('modal-actual',`<div class="lubi-root"><div class="modal-bg"></div>${freeze(actualForm.modalEl)}</div>`));actualForm.close();
 // 6. 任务模态：点任务页里的一行
 view.show("tasks"); await tick(200);
 const rows = [...root.querySelectorAll(".lubi-task")];
@@ -152,7 +170,7 @@ for (let i = 0; i < 8; i++) await plugin.tasks.upsert({
   id:`name-layout-${i}`,title:`打游戏 · 候选 ${i + 1}`,category:"学习",parent:null,status:"todo",blocked:false,
   date:"",start:"",estimate:0,repeat:{kind:"none",days:[]},doneDates:[],skipDates:[],startDate:"",endDate:"",notes:"",order:i,doneAt:"",created:`2026-01-0${i + 1}T00:00:00Z`,updated:"",
 });
-for (const [kind, Form, opts] of [["record",nm.constructor,{date:T,defaults:{category:"学习",title:""}}],["task",tm.constructor,{defaults:{category:"学习",title:"",date:T}}]]) {
+for (const [kind, Form, opts] of [["record",m.constructor,{date:T,defaults:{category:"学习",title:""}}],["task",tm.constructor,{defaults:{category:"学习",title:"",date:T}}]]) {
   const form = new Form(app,plugin,opts); form.open(); await tick(100);
   form.modalEl.classList.add("modal");form.titleEl.classList.add("modal-title");form.contentEl.classList.add("modal-content");
   const input = form.contentEl.querySelector('[role="combobox"]');input.value="";input.dispatchEvent(new window.Event("input",{bubbles:true}));input.focus();input.click();await tick(100);

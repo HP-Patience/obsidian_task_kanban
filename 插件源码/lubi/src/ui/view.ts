@@ -8,11 +8,13 @@ import { renderToday } from "./today";
 import { renderReview, ReviewState } from "./review";
 import { ganttWindow } from "../core/gantt";
 import { recenterWeek, renderTasks, TasksState } from "./tasks";
-import { RecordModal, ShortcutsModal, TaskModal } from "./modals";
+import { ShortcutsModal, TaskModal } from "./modals";
 import { AiTaskModal } from "./aiTask";
 
 export const VIEW_TYPE = "lubi-dashboard";
 export type Tab = "today" | "review" | "tasks";
+
+let tabLabelId = 0;
 
 export class DashboardView extends ItemView {
   date = todayStr();
@@ -101,14 +103,16 @@ export class DashboardView extends ItemView {
     tabs.addClass("lubi-topbar-tabs");
     tabs.setAttribute("role", "tablist");
     tabs.querySelectorAll<HTMLElement>(".lubi-seg-item").forEach((b, i) => {
-      const label = b.textContent || "";
-      tip(b, `${label}（${i + 1}）`);
+      const label = b.querySelector("span")!;
+      label.id = `lubi-tab-label-${++tabLabelId}`;
+      b.setAttribute("aria-labelledby", label.id);
+      b.setAttribute("aria-keyshortcuts", String(i + 1));
     });
 
     const right = bar.createDiv({ cls: "lubi-topbar-right" });
     const cta = button(right, this.ctaText(), () => this.openNew(), { primary: true, icon: "plus", cls: "lubi-topbar-cta" });
     this.ctaLabel = cta.querySelector<HTMLElement>("span:not(.lubi-icon)") || undefined;
-    tip(cta, "新建（N）：每日 / 回顾页记一条，计划页加任务；窗口顶部可在「记录 | 计划」之间切换");
+    tip(cta, "新建（N）：统一任务表单，可填写预计及实际用时，或切换记录支出");
     cta.createSpan({ cls: "lubi-kbd lubi-kbd-cta", text: "N" });
     iconButton(right, "more-horizontal", "更多", () => undefined, "lubi-more-btn").addEventListener("click", (e) => this.openMore(e));
 
@@ -121,8 +125,8 @@ export class DashboardView extends ItemView {
 
   /** 唯一的新建入口：任务页默认「待做」，其他页默认「已完成」；窗口顶部可随时切换 */
   openNew(): void {
-    if (this.tab === "tasks") new TaskModal(this.app, this.plugin, { defaults: { date: this.tasksState.selectedDate }, onSaved: () => this.refresh() }).open();
-    else new RecordModal(this.app, this.plugin, { date: this.activeDate(), onSaved: () => this.refresh() }).open();
+    if (this.tab === "tasks") new TaskModal(this.app, this.plugin, { defaults: { date: this.tasksState.selectedDate }, recordDate: this.tasksState.selectedDate, onSaved: () => this.refresh() }).open();
+    else new TaskModal(this.app, this.plugin, { defaults: { date: this.activeDate() }, recordDate: this.activeDate(), quickActual: true, onSaved: () => this.refresh() }).open();
   }
 
   private openMore(e: MouseEvent): void {
@@ -205,7 +209,7 @@ export class DashboardView extends ItemView {
 
   /** 主按钮文字跟着页面走：说清楚按下去会得到什么 */
   private ctaText(): string {
-    return this.tab === "tasks" ? "新建任务" : "记一条";
+    return "新建任务";
   }
 
   private syncTabs(): void {

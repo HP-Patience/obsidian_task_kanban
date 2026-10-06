@@ -238,11 +238,12 @@ export class Tasks {
 
   // ---------- 变更 ----------
 
-  async upsert(task: Task): Promise<Task> {
+  async upsert(task: Task, completeParents = false): Promise<Task> {
     task.updated = new Date().toISOString();
     const i = this.store.tasks.findIndex((t) => t.id === task.id);
     if (i >= 0) this.store.tasks[i] = task;
     else this.store.tasks.push(task);
+    if (completeParents && task.status === "done" && task.parent) this.autoCompleteParent(task.parent);
     await this.commit();
     return task;
   }

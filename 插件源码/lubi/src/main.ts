@@ -7,7 +7,7 @@ import { shiftDate, todayStr, minToHM, hmToMin, stamp } from "./core/time";
 import { DashboardView, VIEW_TYPE, Tab } from "./ui/view";
 import { hideTip } from "./ui/components";
 import { installTooltips } from "./ui/tooltips";
-import { RecordModal, ConfirmModal } from "./ui/modals";
+import { TaskModal, ConfirmModal } from "./ui/modals";
 import { LubiSettingTab } from "./ui/settingsTab";
 import { Rec } from "./core/records";
 import { historyNames, validNameUses } from "./core/nameHistory";
@@ -37,7 +37,7 @@ export default class LubiPlugin extends Plugin {
     this.addSettingTab(new LubiSettingTab(this.app, this));
 
     this.addCommand({ id: "open", name: "打开面板", callback: () => void this.activateView() });
-    this.addCommand({ id: "log", name: "新建（记录 / 任务）", callback: () => this.quickLog() });
+    this.addCommand({ id: "log", name: "新建任务 / 支出", callback: () => this.quickLog() });
     this.addCommand({ id: "open-today", name: "打开面板 · 每日页", callback: () => void this.activateView("today") });
     this.addCommand({ id: "open-review", name: "打开面板 · 回顾页", callback: () => void this.activateView("review") });
     this.addCommand({ id: "open-tasks", name: "打开面板 · 任务页", callback: () => void this.activateView("tasks") });
@@ -154,7 +154,7 @@ export default class LubiPlugin extends Plugin {
   quickLog(): void {
     const v = this.views()[0];
     if (v) { v.openNew(); return; }
-    new RecordModal(this.app, this, { date: todayStr(), onSaved: () => this.refreshViews() }).open();
+    new TaskModal(this.app, this, { defaults: { date: todayStr() }, recordDate: todayStr(), quickActual: true, onSaved: () => this.refreshViews() }).open();
   }
 
   shiftDate(date: string, days: number): string {

@@ -11,15 +11,72 @@ const D='2026-09-24';
 const {blankTask}=await import('./core.mjs');await plugin.tasks.upsert(blankTask({id:'history-candidate',title:'可主动选择的历史任务',category:'学习'}));let Record;
 const view=await plugin.activateView('today',D);await tick();const root=view.contentEl;
 check([...root.querySelectorAll('.lubi-topbar-tabs button')].map(x=>x.dataset.lubiFocus).join('|')==='seg:today|seg:tasks|seg:review','top tabs are daily/plan/review');
-for(const page of ['today','tasks']){view.show(page,D);await tick();view.openNew();await tick();let modal=O.openModals.at(-1);if(page==='today')Record=modal.constructor;check(!modal.contentEl.contains(document.activeElement)||!document.activeElement.matches('input[type=text]'),'opening '+page+' does not focus the title');check([...modal.contentEl.querySelectorAll('.lubi-name-options')].every(x=>x.hidden),'opening '+page+' does not open history');if(page==='today'){[...modal.contentEl.querySelectorAll('.lubi-kind-seg button')].find(x=>x.textContent.includes('支出')).click();await tick();modal=O.openModals.at(-1);check(!document.activeElement.matches('input[type=text]'),'opening expense does not focus title')}if(page==='tasks'){const input=modal.contentEl.querySelector('[role=combobox]');input.focus();await tick();check(!modal.contentEl.querySelector('.lubi-name-options').hidden,'explicit input focus still opens history')}modal.close()}
+for(const [i,tab] of [...root.querySelectorAll('.lubi-topbar-tabs button')].entries()) {
+  const label=['每日','计划','回顾'][i];
+  check(!tab.hasAttribute('data-lubi-tip')&&!tab.hasAttribute('title')&&!tab.hasAttribute('aria-label'),label+' tab has no custom or native hover hint');
+  check(document.getElementById(tab.getAttribute('aria-labelledby'))?.textContent===label&&tab.getAttribute('aria-keyshortcuts')===String(i+1),label+' tab retains an explicit accessible name and shortcut');
+  tab.dispatchEvent(new window.MouseEvent('pointermove',{bubbles:true,clientX:200,clientY:30,buttons:0}));await new Promise(r=>setTimeout(r,300));
+  check(!document.querySelector('.lubi-tip'),label+' tab hover shows no tooltip');
+  tab.focus();await tick();check(!document.querySelector('.lubi-tip'),label+' tab focus shows no tooltip');tab.blur();
+  tab.click();await tick();check(view.tab===['today','tasks','review'][i],label+' tab still switches pages');
+}
+
+view.show('tasks',D);await tick();
+const headerDates=[...root.querySelectorAll('.lubi-week-day-button')].map(button=>document.getElementById(button.getAttribute('aria-labelledby')).textContent.match(/\d{4}-\d{2}-\d{2}/)[0]);
+check(headerDates.length===7,'week schedule keeps seven date headers');
+for(const [i,date] of headerDates.entries()) {
+  const button=root.querySelectorAll('.lubi-week-day-button')[i];
+  check(button.isConnected&&!button.hasAttribute('data-lubi-tip')&&!button.hasAttribute('title')&&!button.hasAttribute('aria-label'),'week header '+i+' has no custom or native hover hint');
+  check(document.getElementById(button.getAttribute('aria-labelledby'))?.textContent.includes(date),'week header '+i+' retains its full-date accessible name');
+  button.dispatchEvent(new window.MouseEvent('pointermove',{bubbles:true,clientX:200,clientY:30,buttons:0}));await new Promise(r=>setTimeout(r,300));
+  check(!document.querySelector('.lubi-tip'),'week header '+i+' hover shows no tooltip');
+  button.focus();await tick();check(!document.querySelector('.lubi-tip'),'week header '+i+' focus shows no tooltip');button.blur();
+  button.click();await tick();await tick();check(view.tasksState.selectedDate===date&&root.querySelectorAll('.lubi-week-day-button')[i].getAttribute('aria-current')==='date','week header '+i+' still selects the date without shifting the week');
+}
+await plugin.tasks.upsert(blankTask({id:'quiet-header-drop',title:'合成表头排期任务',category:'学习'}));await tick();
+const headerDrop=root.querySelectorAll('.lubi-week-day-button')[3].closest('.lubi-week-day');
+const headerTransfer={types:['text/lubi-task'],dropEffect:'',getData:type=>type==='text/lubi-task'?'quiet-header-drop':''};
+for(const type of ['dragover','drop']) { const event=new window.Event(type,{bubbles:true,cancelable:true});Object.defineProperty(event,'dataTransfer',{value:headerTransfer});headerDrop.dispatchEvent(event);if(type==='dragover')check(event.defaultPrevented&&headerDrop.classList.contains('is-drop'),'quiet week header still accepts task dragover');await tick();await tick(); }
+check(plugin.tasks.byId('quiet-header-drop').date===headerDates[3]&&plugin.tasks.byId('quiet-header-drop').start==='','quiet week header still schedules a dropped task as all-day');
+for(const page of ['today','tasks']){view.show(page,D);await tick();view.openNew();await tick();let modal=O.openModals.at(-1);check(!modal.contentEl.contains(document.activeElement)||!document.activeElement.matches('input[type=text]'),'opening '+page+' does not focus the title');check([...modal.contentEl.querySelectorAll('.lubi-name-options')].every(x=>x.hidden),'opening '+page+' does not open history');if(page==='today'){[...modal.contentEl.querySelectorAll('.lubi-kind-seg button')].find(x=>x.textContent.includes('支出')).click();await tick();modal=O.openModals.at(-1);Record=modal.constructor;check(!document.activeElement.matches('input[type=text]'),'opening expense does not focus title')}if(page==='tasks'){const input=modal.contentEl.querySelector('[role=combobox]');input.focus();await tick();check(!modal.contentEl.querySelector('.lubi-name-options').hidden,'explicit input focus still opens history')}modal.close()}
 const money=plugin.settings.categories.find(c=>c.kind==='money');const expense=new Record(app,plugin,{date:D,defaults:{category:money.name}});expense.open();await tick();check(!document.activeElement.matches('input[type=text]'),'initial expense opening does not focus title');expense.close();
-for(const [key,page] of [['2','tasks'],['3','review']]){root.dispatchEvent(new window.KeyboardEvent('keydown',{key,bubbles:true}));await tick();check(view.tab===page,'shortcut '+key+' follows new tab order')}
+for(const [key,page] of [['1','today'],['2','tasks'],['3','review']]){root.dispatchEvent(new window.KeyboardEvent('keydown',{key,bubbles:true}));await tick();check(view.tab===page,'shortcut '+key+' follows new tab order')}
+const donutDate='2096-02-15';
+for(const expenseOnly of [false,true]) {
+  if(expenseOnly)await plugin.journal.add({date:donutDate,start:'12:00',minutes:0,category:money.name,title:'合成支出',amount:15,expenseType:'餐饮',extra:{}});
+  const filesBefore=JSON.stringify([...app.vault.files]);view.show('today',donutDate);await tick();
+  const card=root.querySelector('.lubi-distribution'),ring=card?.querySelector('.lubi-donut');
+  check(!!ring&&ring.querySelector('.lubi-donut-center')?.textContent==='0h'&&ring.querySelector('.lubi-donut-sub')?.textContent==='覆盖 0%','empty '+(expenseOnly?'expense-only ':'')+'distribution keeps the ring with zero time and coverage');
+  check(ring?.querySelectorAll('circle').length===1&&!ring.querySelector('circle[stroke-dasharray]')&&!card.querySelector('.lubi-legend-row')&&card.textContent.includes('暂无记录'),'empty distribution has only the neutral base ring without invented category slices');
+  check(!/NaN|Infinity/.test(card.textContent)&&JSON.stringify([...app.vault.files])===filesBefore,'rendering the empty donut produces no invalid totals or record/task writes');
+  if(expenseOnly)check(card.querySelector('.lubi-kv-val')?.textContent==='¥15.00 · 1 笔','expense-only distribution keeps real spending while its time ring stays empty');
+}
+const emptyReviewFiles=JSON.stringify([...app.vault.files]);
+for(const [period,count] of [['week',7],['month',29],['year',12]]) {
+  view.review.period=period;view.review.display='chart';view.show('review','2088-02-15');await tick();
+  const review=root.querySelector('.lubi-review');
+  check(!!review?.querySelector('.lubi-kpis')&&!!review.querySelector('.lubi-chart-card')&&!!review.querySelector('.lubi-review-extras'),'empty '+period+' review keeps metrics, chart and details');
+  check(review.querySelector('.lubi-kpis')?.textContent.includes('0h')&&review.querySelector('.lubi-kpis')?.textContent.includes('¥0')&&review.querySelector('.lubi-review-empty-note')?.textContent==='本期暂无记录','empty '+period+' review shows zero values and a concise note');
+  check(review.querySelectorAll('.lubi-bar-col').length===count&&review.querySelectorAll('.lubi-bar-col.is-empty').length===count,'empty '+period+' review keeps every date bucket with no data bars');
+  check(['暂无分类记录','暂无事项记录','暂无支出记录'].every(label=>review.querySelector('.lubi-review-extras')?.textContent.includes(label)),'empty '+period+' review keeps all detail sections');
+  check(!review.querySelector('.lubi-empty,.lubi-chart-avg,.lubi-kpi-delta')&&!/NaN|Infinity/.test(review.textContent)&&[...review.querySelectorAll('[style]')].every(el=>!/NaN|Infinity/.test(el.getAttribute('style'))),'empty '+period+' review has no collapsed placeholder, invented average, delta or invalid numeric values');
+  if(period==='year')check(review.querySelectorAll('.lubi-heat-cell[data-date]').length===366&&review.querySelectorAll('.lubi-heat-cell[data-date].lv-0').length===366,'empty year review keeps all leap-year heatmap dates at zero coverage');
+  [...review.querySelectorAll('.lubi-chart-mode button')].find(button=>button.textContent==='表格').click();await tick();
+  const table=root.querySelector('.lubi-review-table-wrap');
+  check(!table.hidden&&table.querySelectorAll('tbody tr').length===count&&[...table.querySelectorAll('tbody tr')].every(row=>[...row.querySelectorAll('td')].slice(0,2).every(cell=>cell.textContent==='0h')),'empty '+period+' review table keeps all dates and zero record/coverage values');
+  [...root.querySelectorAll('.lubi-chart-mode button')].find(button=>button.textContent==='图表').click();await tick();
+  check(!root.querySelector('.lubi-chart').hidden&&root.querySelector('.lubi-review-table-wrap').hidden,'empty '+period+' review switches back to the chart');
+}
+check(JSON.stringify([...app.vault.files])===emptyReviewFiles,'opening empty review views and toggling the table never writes records or tasks');
+view.review.period='week';view.review.display='chart';
 view.show('review',D);await tick();const body=root.querySelector('.lubi-body'),empty=body.empty.bind(body);body.empty=()=>{empty();body.scrollTop=0};
 body.scrollTop=92;[...root.querySelectorAll('.lubi-review .lubi-seg-item')].find(x=>x.textContent==='年').click();await tick();check(body.scrollTop===92,'first switch to year preserves body scroll despite DOM replacement');
 body.scrollTop=51;[...root.querySelectorAll('.lubi-review .lubi-seg-item')].find(x=>x.textContent==='周').click();await tick();check(body.scrollTop===51,'period switch keeps current viewport instead of stale cached scroll');
 const readRange=plugin.journal.readRange.bind(plugin.journal);plugin.journal.readRange=async(...args)=>{const result=await readRange(...args);body.scrollTop=37;return result};
 [...root.querySelectorAll('.lubi-review .lubi-seg-item')].find(x=>x.textContent==='年').click();await tick();check(body.scrollTop===37,'period rendering retains a scroll made while records load');plugin.journal.readRange=readRange;
 await plugin.tasks.upsert(blankTask({id:'cue-plan',title:'计划标题不应被盖住',category:'学习',date:D,start:'09:00',estimate:60}));await plugin.journal.add({date:D,start:'08:00',minutes:60,category:'学习',title:'记录标题不应被盖住',extra:{}});
+// Allow fixture-triggered debounced refresh to finish before checking focused tooltips.
+await new Promise(resolve=>setTimeout(resolve,220));
 view.show('today',D);await tick();
 const planMeta=root.querySelector('.lubi-plan-task-list .lubi-task-meta-time');
 check(planMeta?.textContent==='09:00'&&planMeta.parentElement.textContent.includes('09:00 · 1h'),'daily plan preserves metadata text and separates time styling');

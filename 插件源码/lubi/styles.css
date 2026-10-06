@@ -388,7 +388,7 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-root .lubi-chart .lubi-bar-col:hover { background: color-mix(in srgb, var(--background-modifier-hover) 70%, transparent); }
 .lubi-bar-stack { position: relative; width: 60%; max-width: 40px; min-height: 0; display: flex; flex-direction: column-reverse; border-radius: 4px 4px 0 0; overflow: visible; }
 .lubi-chart.is-dense .lubi-bar-stack { width: 70%; max-width: 16px; border-radius: 3px 3px 0 0; }
-.lubi-bar-col.is-today .lubi-bar-stack { outline: 1.5px solid var(--lubi-accent); outline-offset: 1px; }
+.lubi-bar-col.is-today:not(.is-empty) .lubi-bar-stack { outline: 1.5px solid var(--lubi-accent); outline-offset: 1px; }
 .lubi-bar-stack.is-over { border-top: 2px dashed var(--color-orange); }
 .lubi-bar-seg { width: 100%; flex: 0 0 auto; min-height: 1px; }
 .lubi-bar-seg:last-child { border-radius: 4px 4px 0 0; }
@@ -998,7 +998,8 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-heat-legend .lubi-heat-cell { cursor: default; width: 11px; height: 11px; aspect-ratio: auto; }
 
 /* ---------- 任务页 ---------- */
-.lubi-root .lubi-week-body { max-height: max(320px, calc(var(--lubi-panel-height, 840px) - 318px)); }
+.lubi-root .lubi-week-card { padding-bottom: var(--lubi-gap-3); }
+.lubi-root .lubi-week-body { max-height: max(320px, calc(var(--lubi-panel-height, 840px) - 270px)); }
 .lubi-root .lubi-week-hour { font-size: var(--lubi-fs-xs); }
 .lubi-root .lubi-week-hour:first-child { transform: translateY(2px); }
 .lubi-root .lubi-wblock-title { font-size: var(--lubi-fs-xs); }
@@ -1262,7 +1263,7 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-plan-progress-fill { height: 100%; background: var(--lubi-ok); border-radius: inherit; }
 
 /* 设置页：普通分区与两层分类字段，不为每个设置绘制装饰卡片。 */
-.lubi-settings { container-type: inline-size; max-width: 860px; margin-inline: auto; padding: 16px 24px; box-sizing: border-box; color: var(--text-normal); }
+.lubi-settings { container-type: inline-size; width: 100%; max-width: 860px; align-self: stretch; margin-inline: auto; padding: 16px 24px; box-sizing: border-box; color: var(--text-normal); }
 .lubi-settings-intro, .lubi-settings-note { color: var(--text-muted); font-size: 13px; line-height: 1.6; margin: 0 0 12px; }
 .lubi-settings-section { margin-top: 24px; min-width: 0; }
 .lubi-settings .lubi-settings-section > h3 { margin: 0 0 10px; padding: 0; font-size: 16px; font-weight: 650; text-align: left; }
@@ -1418,3 +1419,13 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-daily-gantt-unset { display: inline-block; padding-top: 9px; font-size: var(--font-ui-small); }
 
 .lubi-gantt-card .lubi-gantt-row.is-done .lubi-gantt-title { text-decoration: line-through; color: var(--lubi-muted); }
+
+.lubi-review-empty-note { font-size: 12px; }
+.lubi-review-empty-detail { padding: 8px 0; }
+
+/* Actual time reuses the task form; no separate time-entry tab or modal. */
+.lubi-task-modal .lubi-plan-start-field { grid-column: 1 / -1; }
+.lubi-actual-hint { margin: 8px 0; font-size: 12px; line-height: 1.5; }
+.lubi-actual-details { margin: 8px 0 12px; }
+.lubi-actual-details > summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
+.lubi-actual-details[open] > summary { margin-bottom: 8px; }

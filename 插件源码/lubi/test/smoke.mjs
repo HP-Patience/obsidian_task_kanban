@@ -46,6 +46,12 @@ console.log("notices:", O.notices.slice(-3));
 const view = await plugin.activateView("today", "2026-09-24");
 await tick();
 const root = view.contentEl;
+// Existing timeline-record editor is still tested directly; public creation is tested via TaskModal below.
+root.querySelector('.lubi-block-actions [data-lubi-tip="编辑"]').click();await tick();const legacyModal=O.openModals.at(-1),LegacyTimeForm=legacyModal.constructor;legacyModal.close();
+const {todayStr:realToday}=await import('./core.mjs');
+const openLegacyTime=(instance=plugin,host=app)=>{const modal=new LegacyTimeForm(host,instance,{date:instance.views()[0]?.activeDate()||realToday(),onSaved:()=>instance.refreshViews()});modal.open();return modal};
+const fillActual=(modal,minutes,start)=>{for(const [key,value,type]of [['minutes',String(minutes),'input'],['start',start,'change']]){const input=modal.contentEl.querySelector('[data-actual='+key+']');input.value=value;input.dispatchEvent(new window.Event(type,{bubbles:true}))}};
+
 const beforeSimplifiedRender = JSON.stringify([...app.vault.files]);
 const initialHourLabels = [...root.querySelectorAll(".lubi-hour-label")];
 check(initialHourLabels.length === 25 && initialHourLabels[0]?.textContent === "00:00" && initialHourLabels[24]?.textContent === "24:00", "ruler: labels every hour from 00:00 through 24:00");
@@ -119,7 +125,7 @@ check(!root.querySelector(".lubi-error"), "no render errors");
 
 // 记一条：通过模态保存
 view.show("today"); await tick();
-plugin.quickLog();
+openLegacyTime();
 const rm = O.openModals.at(-1);
 const q = (s) => rm.contentEl.querySelector(s);
 q('input[type="text"]').value = "写测试"; q('input[type="text"]').dispatchEvent(new window.Event("input"));
@@ -249,10 +255,10 @@ view.show("today"); await tick();
   const D = "2026-09-24";
   const settle = async () => { for (let i = 0; i < 4; i++) await tick(); };
   view.show("today", D); await tick();
-  plugin.quickLog();
+  openLegacyTime();
   const m = O.openModals.at(-1);
   const newModes = [...m.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].map((x) => x.textContent || "");
-  check(m.constructor.name === "RecordModal" && newModes.length === 3 && newModes.some((x) => x.includes("记录时间")) && newModes.some((x) => x.includes("记录支出")) && newModes.some((x) => x.includes("规划任务")), "new: daily page opens the unified mode dialog");
+  check(m.constructor.name === "RecordModal" && newModes.length === 0, "record editor: existing timeline editor has no independent creation-mode tabs");
   check(![...m.contentEl.querySelectorAll(".lubi-ghost-btn")].some((b) => b.textContent.includes("关联")), "new: the manual 关联待办 field is gone");
   const tt = m.contentEl.querySelector('input[type="text"]'); tt.value = "补记午饭后散步"; tt.dispatchEvent(new window.Event("input"));
   const st = m.contentEl.querySelector('input[type="time"]'); st.value = "05:00"; st.dispatchEvent(new window.Event("change"));
@@ -275,17 +281,13 @@ view.show("today"); await tick();
   check(!plugin.tasks.byId(t.id) && !app.vault.files.get(`日记/${D}.md`).includes("补记午饭后散步"), "new: deleting the record also deletes its generated task");
   [...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); await settle();
   check(!!plugin.tasks.byId(t.id) && app.vault.files.get(`日记/${D}.md`).includes(`[任务:: ${t.id}]`), "new: undo restores both record and task");
-  // 切到「任务」：带着内容换成任务表单
-  plugin.quickLog();
-  const m2 = O.openModals.at(-1);
-  const t2 = m2.contentEl.querySelector('input[type="text"]'); t2.value = "明天买菜"; t2.dispatchEvent(new window.Event("input"));
-  [...m2.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].find((x) => x.textContent.includes("规划任务")).click(); await tick();
-  const tm = O.openModals.at(-1);
-  check(!O.openModals.includes(m2) && tm.constructor.name === "TaskModal" && tm.t.title === "明天买菜" && tm.t.date === D, "new: switching to 任务 carries the draft into the task form");
-  [...tm.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].find((x) => x.textContent.includes("记录时间")).click(); await tick();
-  const back = O.openModals.at(-1);
-  check(back.constructor.name === "RecordModal" && back.rec.title === "明天买菜", "new: switching back to 记录 keeps the draft");
-  back.close();
+  plugin.quickLog();await tick();
+  const tm=O.openModals.at(-1);check(tm.constructor.name==='TaskModal'&&tm.contentEl.querySelector('[data-actual=minutes]'),'new: public creation is the task form with actual duration');
+  tm.titleInput.value='明天买菜';tm.titleInput.dispatchEvent(new window.Event('input'));
+  tm.contentEl.querySelector('[data-lubi-focus="seg:money"]').click();await tick();const spending=O.openModals.at(-1);
+  check(spending.constructor.name==='RecordModal'&&spending.rec.title==='明天买菜','new: spending switch keeps the task draft');
+  spending.contentEl.querySelector('[data-lubi-focus="seg:todo"]').click();await tick();const back=O.openModals.at(-1);
+  check(back.constructor.name==='TaskModal'&&back.t.title==='明天买菜','new: returning from spending keeps the draft');back.close();
   await plugin.tasks.remove(t.id);
   await plugin.journal.remove(D, await plugin.journal.findLine(D, { start: "05:00", minutes: 20, category: t.category, title: "补记午饭后散步" }));
   for (const n of [...document.body.children]) if (n.querySelector?.(".lubi-notice-btn")) n.remove();
@@ -463,7 +465,7 @@ b = blocks().find((x) => x.textContent.includes("写测试"));
   await drag(canvas, 10 * 60 * PXM, 11 * 60 * PXM);
   check(O.openModals.length === n + 1, "drag on empty area opens new-record modal");
   const nm = O.openModals.at(-1);
-  check(nm.rec.start === "10:00" && nm.rec.minutes === 60, `prefilled 10:00 / 60min (got ${nm.rec.start} / ${nm.rec.minutes})`);
+  check(nm.constructor.name==="TaskModal"&&nm.actualStart==="10:00"&&nm.actualText==="1h"&&nm.t.estimate===0,"actual entry: drag selection fills actual interval, not estimated planning duration");
   nm.close(); }
 // 8. 键盘微调
 b = blocks().find((x) => x.textContent.includes("写测试"));
@@ -504,7 +506,7 @@ check(root.querySelectorAll(".lubi-chart-legend-item").length >= 1, "chart legen
   check(view.tab === "review" && root.querySelector(".lubi-bars") !== null, "clicking 回顾 returns to review page"); }
 // 10. 周日程 pointer 拖动：跨列 + 改时间
 plugin.settings.scheduleStartHour = 0; view.tasksState.weekAnchor = "2026-09-24"; view.show("tasks", "2026-09-24"); await tick(); // 窗口固定为 9/21–9/27
-{ const cols = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => b.getAttribute("data-lubi-tip")); check(cols.length === 7 && cols[3].includes("2026-09-24"), `week window centred on anchor: ${cols[3]}`); }
+{ const cols = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => document.getElementById(b.getAttribute("aria-labelledby"))?.textContent || ""); check(cols.length === 7 && cols[3].includes("2026-09-24"), `week window centred on anchor: ${cols[3]}`); }
 const wb = root.querySelector(".lubi-wblock");
 const wt = plugin.tasks.all.find((t) => t.title === wb.querySelector(".lubi-wblock-title").textContent);
 const beforeDate = plugin.tasks.forDate("2026-09-25").some((t) => t.id === wt.id) ? "2026-09-25" : null;
@@ -528,7 +530,7 @@ await drag(wb3.querySelector(".lubi-block-handle.is-top"), 300, 300 - 24);
 {
   view.show("tasks", "2026-09-24"); await tick();
   const cols = [...root.querySelectorAll(".lubi-week-col")];
-  const wkDays = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => b.getAttribute("data-lubi-tip").match(/\d{4}-\d{2}-\d{2}/)[0]);
+  const wkDays = [...root.querySelectorAll(".lubi-week-day-button")].map((b) => document.getElementById(b.getAttribute("aria-labelledby")).textContent.match(/\d{4}-\d{2}-\d{2}/)[0]);
   const ci = 2, col = cols[ci], sh = plugin.settings.scheduleStartHour, px = 56 / 60;
   const yAt = (hm) => { const [h, m] = hm.split(":").map(Number); return ((h - sh) * 60 + m) * px + 1; };
   const before = O.openModals.length;
@@ -588,7 +590,7 @@ check(root.dataset.tab === "review", "non-day tab exposes context for hiding day
 view.show("today"); await tick(); await tick();
 check(view.date === "2026-09-13" && root.querySelector(".lubi-timeline-scroll")?.scrollTop === 320, "tab switch restores date and timeline scroll");
 view.show("today", "2026-09-24"); await tick();
-plugin.quickLog();
+openLegacyTime();
 const keyboardRecord = O.openModals.at(-1);
 const recordTitle = keyboardRecord.contentEl.querySelector('input[type="text"]');
 const recordDuration = keyboardRecord.contentEl.querySelector('input[type="number"]');
@@ -605,7 +607,7 @@ recordDuration.value = "15"; recordDuration.dispatchEvent(new window.Event("inpu
 recordTitle.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
 await tick(); await tick();
 check(!O.openModals.includes(keyboardRecord) && app.vault.files.get("日记/2026-09-24.md").includes("键盘记录"), "Enter on valid title saves record");
-plugin.quickLog();
+openLegacyTime();
 const invalidRecord = O.openModals.at(-1);
 const invalidTitle = invalidRecord.contentEl.querySelector('input[type="text"]');
 invalidTitle.value = "超出上限"; invalidTitle.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -802,7 +804,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   const scan = (where, host) => dupes.push(...[...host.querySelectorAll("[title], button[aria-label], [data-lubi-tip][aria-label], input[type=checkbox][aria-label]")].map((e) => `${where}:${e.tagName.toLowerCase()}.${e.className}`));
   for (const tab of ["today", "review", "tasks"]) { view.show(tab, "2026-09-24"); await tick(); await tick(); scan(tab, view.containerEl); }
   view.show("tasks", "2026-09-24"); await tick(); scan("tasks+parent-groups", view.containerEl);
-  plugin.quickLog(); await tick(); scan("record-modal", O.openModals.at(-1).modalEl); O.openModals.at(-1).close();
+  openLegacyTime(); await tick(); scan("record-modal", O.openModals.at(-1).modalEl); O.openModals.at(-1).close();
   const anyTask = [...root.querySelectorAll(".lubi-task-title-button")][0];
   if (anyTask) { anyTask.click(); await tick(); scan("task-modal", O.openModals.at(-1).modalEl); O.openModals.at(-1).close(); }
   check(dupes.length === 0, `tooltip: no element uses a native title tooltip (${dupes.length}${dupes.length ? ": " + dupes.slice(0, 6).join(", ") : ""})`);
@@ -903,7 +905,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   check(canvas.querySelector('.lubi-block-ghost.is-on')?.dataset.area === 'record', 'regions: left-origin selection does not switch area while crossing the divider');
   pe(window,'pointerup',15*60*PXM,330); await tick();
   modal = O.openModals.at(-1);
-  check(modal?.constructor.name === 'RecordModal' && modal.rec.date === D && modal.rec.start === '14:00' && modal.rec.minutes === 60, 'regions: left-origin drag still opens an actual record');
+  check(modal?.constructor.name === 'TaskModal' && modal.actualDate === D && modal.actualStart === '14:00' && modal.actualText === '1h', 'regions: left-origin drag still opens an actual record');
   modal.close();
   const count = O.openModals.length;
   pe(canvas,'pointerdown',16*60*PXM,330); pe(window,'pointermove',17*60*PXM,330);
@@ -934,7 +936,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   check(canvas.querySelector('.lubi-tl-hover').dataset.area === 'record', 'regions: full-width hover remains record mode without a plan lane');
   await drag(canvas,8*60*PXM,9*60*PXM,390,390);
   modal = O.openModals.at(-1);
-  check(modal?.constructor.name === 'RecordModal' && modal.rec.start === '08:00', 'regions: full-width blank selection remains recording without scheduled plans');
+  check(modal?.constructor.name === 'TaskModal' && modal.actualStart === '08:00', 'regions: full-width blank selection remains recording without scheduled plans');
   modal.close();
   view.show(previousTab,previousDate); await settle();
 }
@@ -978,7 +980,8 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   const taskRow = [...root.querySelectorAll(".lubi-plan-card .lubi-task")].find(row => row.querySelector(".lubi-task-title-text")?.textContent === "计划层测试");
   taskRow.querySelector(".lubi-task-start").click(); await tick();
   const recorder = O.openModals.at(-1);
-  check(recorder?.constructor.name === "RecordModal" && recorder.rec.task === ID && recorder.rec.start === "15:00" && recorder.rec.minutes === 65, "plan: task Start still pre-fills a linked actual record with the latest plan");
+  check(recorder?.constructor.name === "TaskModal" && recorder.t.id === ID && recorder.t.start === "15:00" && recorder.t.estimate === 65 && recorder.actualText === "", "plan: task Start still pre-fills a linked actual record with the latest plan");
+  fillActual(recorder,65,"15:00");
   recorder.contentEl.querySelector(".lubi-modal-actions .mod-cta").click(); await settle();
   check(plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D) && plugin.tasks.byId(ID).doneLogs?.[D]?.start === "15:00", "plan: saving the record completes the task");
   check(!(app.vault.files.get(`日记/${D}.md`) || "").includes("[待确认::"), "plan: a record confirmed in the form is not pending");
@@ -1001,7 +1004,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   view.show("tasks", D); await settle();
   check(root.querySelector(".lubi-topbar-cta")?.textContent.includes("新建任务"), "cta: task page button reads 新建任务");
   view.show("today", D); await settle();
-  check(root.querySelector(".lubi-topbar-cta")?.textContent.includes("记一条"), "cta: daily page button reads 记一条");
+  check(root.querySelector(".lubi-topbar-cta")?.textContent.includes("新建任务"), "cta: daily page uses the same unified task entry");
   check(!root.querySelector(".lubi-error"), "no render errors after plan / pending flows");
 }
 
@@ -1016,7 +1019,8 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
     view.show("tasks", D); await settle();
     row(task.title).querySelector(".lubi-task-start").click(); await tick();
     const modal = O.openModals.at(-1);
-    check(modal?.constructor.name === "RecordModal" && modal.rec.task === task.id, "start: triangle opens a record linked to the task");
+    check(modal?.constructor.name === "TaskModal" && modal.t.id === task.id && modal.actualText === "", "start: triangle opens actual time on the same task, without inventing duration");
+    fillActual(modal,task.estimate||30,task.start||"09:00");
     return modal;
   };
   const linked = async (id) => (await plugin.journal.read(D)).filter((entry) => entry.rec.task === id);
@@ -1038,20 +1042,20 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
     if (repeating) { task.doneDates = [previous]; await plugin.tasks.upsert(task); }
     const modal = await openStart(task);
     check(!plugin.tasks.isDoneOn(plugin.tasks.byId(task.id), D), "start: opening the record does not complete the task");
-    modal.rec.title = "实际记录标题";
+    modal.t.title = "实际记录标题";
     modal.contentEl.querySelector(".lubi-modal-actions .mod-cta").click(); await settle();
     const current = plugin.tasks.byId(task.id);
     const records = await linked(task.id);
     check(records.length === 1 && records[0].rec.title === "实际记录标题", "start: saving writes exactly one actual record");
     check(plugin.tasks.isDoneOn(current, D), `start: saving completes the ${repeating ? "repeating" : "one-off"} task`);
     check(current.doneLogs?.[D]?.title === "实际记录标题" && current.doneLogs?.[D]?.start === "10:00", "start: completion registers the saved record, not the original draft");
-    check(row(task.title)?.querySelector('input[type="checkbox"]')?.checked && !row(task.title)?.querySelector(".lubi-task-start"), "start: the task row shows completed and hides the start button");
+    check(row(plugin.tasks.byId(task.id).title)?.querySelector('input[type="checkbox"]')?.checked && !row(plugin.tasks.byId(task.id).title)?.querySelector(".lubi-task-start"), "start: the task row shows completed and hides the start button");
     check(root.querySelector(".lubi-list-card .lubi-panel-head .lubi-muted")?.textContent === "1/1", "start: task completion count refreshes");
     const persisted = JSON.parse(app.vault.files.get("任务/任务数据.json")).tasks.find((item) => item.id === task.id);
     check(repeating ? persisted.doneDates.includes(D) : persisted.status === "done", "start: completed state is persisted to the task file");
     if (repeating) check(plugin.tasks.isDoneOn(current, D) && current.doneDates.includes(previous) && !plugin.tasks.isDoneOn(current, shiftDate(D, 1)), "start: a repeating task completes only this occurrence and preserves other days");
     if (plugin.tasks.isDoneOn(current, D)) {
-      row(task.title).querySelector('input[type="checkbox"]').click(); await settle();
+      row(plugin.tasks.byId(task.id).title).querySelector('input[type="checkbox"]').click(); await settle();
       check(!plugin.tasks.isDoneOn(plugin.tasks.byId(task.id), D) && (await linked(task.id)).length === 0, "start: unchecking completion removes the registered record without duplicates");
     }
     await clean(task.id);
@@ -1097,19 +1101,12 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
     taskRow(task.title).querySelector(".lubi-task-start").click(); await tick();
     return O.openModals.at(-1);
   };
-  const save = async (modal) => { modal.contentEl.querySelector(".lubi-modal-actions .mod-cta").click(); await settle(); };
+  const save = async (modal) => { if(modal.constructor.name==="TaskModal"&&!modal.actualText.trim())fillActual(modal,modal.t.estimate||30,modal.t.start||"09:00"); modal.contentEl.querySelector(".lubi-modal-actions .mod-cta").click(); await settle(); };
   const task = await make("estimate-snapshot", 45);
   let modal = await openStart(task);
-  check(modal.rec.estimatedMinutes === 45 && modal.contentEl.querySelector(".lubi-estimate-values")?.textContent.includes("与预计一致"), "estimate UI: task start captures and displays the forecast");
-  check(modal.contentEl.querySelector(".lubi-estimate-note")?.textContent.includes("核对实际用时"), "estimate UI: prefilled duration is explicitly explained as needing confirmation");
-  const duration = modal.contentEl.querySelector('.lubi-timebar-dur input[type="number"]');
-  duration.value = "60"; duration.dispatchEvent(new window.Event("input", { bubbles: true }));
-  check(modal.contentEl.querySelector(".lubi-estimate-values")?.textContent === "预计 45min · 实际 1h · 超出 15min", "estimate UI: typing actual duration updates the comparison immediately");
-  [...modal.contentEl.querySelectorAll(".lubi-quick-chip")].find(el => el.textContent === "30min").click();
-  check(modal.contentEl.querySelector(".lubi-estimate-values")?.textContent.includes("少于 15min"), "estimate UI: duration shortcuts update the comparison");
-  const end = modal.contentEl.querySelector('.lubi-timebar-cell:last-child input[type="time"]');
-  end.value = "10:00"; end.dispatchEvent(new window.Event("change", { bubbles: true }));
-  check(modal.contentEl.querySelector(".lubi-estimate-values")?.textContent.includes("实际 1h"), "estimate UI: changing the end time updates the comparison");
+  check(modal.t.estimate===45&&modal.actualText==='','estimate UI: task start keeps forecast separate and actual duration blank');
+  fillActual(modal,60,'09:00');
+  check(modal.contentEl.querySelector('.lubi-actual-hint')?.textContent==='预计 45min · 实际 1h · 超出 15min','estimate UI: actual input compares with the forecast without another dialog');
   await plugin.tasks.upsert({ ...plugin.tasks.byId(task.id), estimate: 90 });
   await save(modal);
   let saved = (await linked(task.id))[0];
@@ -1133,7 +1130,8 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
 
   const noEstimate = await make("estimate-unset", 0);
   modal = await openStart(noEstimate);
-  check(modal.rec.estimatedMinutes === undefined && !modal.contentEl.querySelector(".lubi-estimate-values"), "estimate UI: a default 30-minute recording is not an invented task forecast");
+  check(modal.t.estimate===0&&modal.actualText==="", "estimate UI: no forecast and no invented actual duration");
+  fillActual(modal,30,"12:00");
   await plugin.tasks.upsert({ ...plugin.tasks.byId(noEstimate.id), estimate: 90 });
   await save(modal);
   check((await linked(noEstimate.id))[0].rec.estimatedMinutes === undefined, "estimate UI: tasks without forecasts save only actual duration");
@@ -1378,7 +1376,7 @@ console.log("data file now:", app.vault.files.get("任务/任务数据.json").sl
   await np.tasks.upsert(blankTask({id:"name-en",title:"Read Book",category:"学习",created:"2025-01-01T00:00:00Z"}));
   const initial = await np.nameCandidates("学习");
   check(initial.length === 9 && initial[0] === "打游戏7" && initial.filter(n => n === "历史打游戏").length === 1 && !initial.includes("打篮球"), "names: full history + tasks, dedup, recent first, same category");
-  np.quickLog(); await tick();
+  openLegacyTime(np,na); await tick();
   let modal = O.openModals.at(-1);
   const RecordForm = modal.constructor;
   const names = () => [...modal.contentEl.querySelectorAll(".lubi-name-option")].map(n => n.textContent);
@@ -1420,7 +1418,6 @@ console.log("data file now:", app.vault.files.get("任务/任务数据.json").sl
   check(JSON.stringify(np.settings.nameUses) === beforeEdit && O.openModals.includes(modal), "names: failed record save does not persist name usage");
   np.journal.add = add; modal.close();
   np.quickLog(); await tick(); modal = O.openModals.at(-1);
-  [...modal.contentEl.querySelectorAll(".lubi-kind-seg .lubi-seg-item")].find(b => b.textContent.includes("规划任务")).click(); await tick();
   modal = O.openModals.at(-1); const TaskForm = modal.constructor;
   input = modal.titleInput; type("打"); input.click(); await tick();
   check(names().length === 8 && input.getAttribute("role") === "combobox", "names: task form shares record candidates");
@@ -1463,7 +1460,9 @@ console.log("data file now:", app.vault.files.get("任务/任务数据.json").sl
   check(rows[0].querySelector(".lubi-top-count").textContent==="2 次" && rows[0].querySelector(".lubi-legend-val").textContent==="2h", "review Top5: retain secondary count and duration");
   check(rows.every(r=>r.querySelector(".lubi-row-bar-head") && r.querySelector(".lubi-track > .lubi-fill")) && !top.querySelector(".lubi-legend-bar") && parseFloat(rows[0].querySelector(".lubi-fill").style.width)===100 && Math.abs(parseFloat(rows[1].querySelector(".lubi-fill").style.width)-70/120*100)<.01, "review Top5: shared category tracks with unchanged relative scaling");
   const breakdown=rv.contentEl.querySelector(".lubi-review-breakdown");
-  check(breakdown.textContent.includes("按分类") && breakdown.querySelectorAll(".lubi-review-grid > .lubi-section").length===2, "review Top5: category section unaffected");
+  const categoryRows=[...breakdown.querySelectorAll(".lubi-review-grid > .lubi-section:first-child .lubi-row-bar")];
+  check(categoryRows.length===2&&JSON.stringify(Object.fromEntries(categoryRows.map(row=>[row.querySelector(".lubi-legend-name").textContent,row.querySelector(".lubi-legend-val").textContent])))===JSON.stringify({学习:"2.7h",运动:"3.7h"}), "review Top5: existing category totals remain unaffected");
+  check(breakdown.querySelectorAll(".lubi-review-grid > .lubi-section").length===3&&breakdown.querySelector(".lubi-review-grid > .lubi-section:last-child").textContent.includes("暂无支出记录"), "review details: empty spending keeps its section without invented rows");
   // Fewer than five items are not padded with invented rows.
   rv.review.period="month";rv.review.anchor="2026-08-01";
   await rp.journal.add({date:"2026-08-01",start:"09:00",minutes:10,category:"学习",title:"唯一事项",extra:{}});

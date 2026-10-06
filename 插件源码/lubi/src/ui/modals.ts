@@ -1,13 +1,14 @@
 import { App, Modal, Notice } from "obsidian";
 import type LubiPlugin from "../main";
 import { nameSuggestions } from "./nameSuggestions";
-import { confirmed, formatEstimateComparison, normalizeEstimatedMinutes, PENDING_KEY, Rec } from "../core/records";
+import { confirmed, formatEstimateComparison, isPending, normalizeEstimatedMinutes, PENDING_KEY, Rec } from "../core/records";
 import { Task, blankTask, RepeatKind } from "../core/tasks";
 import { hmToMin, minToHM, nowHM, todayStr, fmtDuration, shortDate, weekdayZh } from "../core/time";
 import { categoryOf } from "../settings";
 import { parseEstimate, parseQuick, QuickParse } from "../core/quickparse";
 import { button, icon, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
 import { addRecordAsDone, afterDone, afterUndone, deleteRecord, syncLinkedTask } from "./taskList";
+import { saveTaskActual, taskActualRows } from "./taskActual";
 
 let fieldId = 0;
 function associate(label: HTMLLabelElement, control: HTMLElement): void {
@@ -123,7 +124,7 @@ export class DeleteTaskModal extends Modal {
 // ---------------- 快捷键速查 ----------------
 
 export const SHORTCUTS: [string, string][] = [
-  ["N", "新建（每日 / 回顾页：记一条；任务页：加任务）"],
+  ["N", "新建任务 / 支出；实际用时在任务内填写"],
   ["1 / 2 / 3", "切换 每日 · 计划 · 回顾"],
   ["T", "回到今天（每日 / 任务页）"],
   ["← / →", "前一天 / 后一天（每日 / 任务页）"],
@@ -155,22 +156,21 @@ export class ShortcutsModal extends Modal {
 
 // ---------------- 新建：记录 / 任务 共用一个入口 ----------------
 
-/** done = 记录时间；money = 记录支出；todo = 规划任务 */
+/** done 仅用于内部记录编辑；新建入口只显示任务与支出。 */
 export type NewKind = "done" | "money" | "todo";
 
 /**
- * 新建窗口顶部的单一模式切换：记录时间 / 记录支出 / 规划任务。
+ * 新建窗口顶部只切换统一任务表单与支出表单。
  */
 function kindSwitch(host: HTMLElement, current: NewKind, onPick: (kind: NewKind) => void): void {
   const items: { id: NewKind; label: string; icon: string }[] = [
-    { id: "done", label: "记录时间", icon: "clock" },
-    { id: "money", label: "记录支出", icon: "wallet" },
     { id: "todo", label: "规划任务", icon: "list-todo" },
+    { id: "money", label: "记录支出", icon: "wallet" },
   ];
   const seg = segmented<NewKind>(host, items, current, (kind) => { if (kind !== current) onPick(kind); });
   seg.addClass("lubi-mode-seg", "lubi-kind-seg");
   seg.setAttribute("aria-label", "新建类型");
-  seg.querySelectorAll<HTMLElement>(".lubi-seg-item").forEach((b, i) => tip(b, ["记录时间：已经做了的事，写进当天日记", "记录支出：记一笔花费，写进当天日记", "规划任务：还没做的事，写进任务清单"][i]));
+  seg.querySelectorAll<HTMLElement>(".lubi-seg-item").forEach((b, i) => tip(b, ["规划任务：填写预计，完成时填写实际用时", "记录支出：记一笔花费"][i]));
 }
 
 // ---------------- 记录（已完成 / 支出） ----------------
@@ -180,6 +180,7 @@ export interface RecordModalOptions {
   rec?: Rec;
   line?: number;
   defaults?: Partial<Rec>;
+  taskDraft?: TaskModalOptions;
   /** 保存后回调；新增 / 修改时带上保存的记录，删除时不带 */
   onSaved?: (rec?: Rec) => void;
 }
@@ -244,7 +245,7 @@ export class RecordModal extends Modal {
     const moneyCats = s.categories.filter((c) => c.kind === "money");
     // 三种新建模式只保留一个互斥选择
     const modeRow = contentEl.createDiv({ cls: "lubi-mode-row" });
-    if (!this.editing) kindSwitch(modeRow, isMoney ? "money" : "done", (kind) => {
+    if (!this.editing && isMoney) kindSwitch(modeRow, "money", (kind) => {
       if (kind === "todo") { this.switchToTask(); return; }
       if (kind === "money") {
         this.lastTimeCat = this.rec.category;
@@ -514,7 +515,8 @@ export class RecordModal extends Modal {
     const start = this.parsed?.start || this.opts.defaults?.start || "";
     const estimate = this.rec.minutes > 0 ? this.rec.minutes : 0;
     this.close();
-    new TaskModal(this.app, this.plugin, { defaults: { title, category, date: this.rec.date, start, estimate }, onSaved: () => this.opts.onSaved?.() }).open();
+    const draft = this.opts.taskDraft;
+    new TaskModal(this.app, this.plugin, { ...draft, defaults: { ...(draft?.defaults || { category, date: this.rec.date, start, estimate }), title }, recordDate: draft?.recordDate || this.rec.date, onSaved: () => this.opts.onSaved?.() }).open();
   }
 
   private async save(): Promise<void> {
@@ -565,6 +567,11 @@ export class RecordModal extends Modal {
 export interface TaskModalOptions {
   task?: Task;
   focusDate?: boolean;
+  recordDate?: string;
+  actualDefaults?: { minutes?: number; start?: string };
+  actualRequired?: boolean;
+  quickActual?: boolean;
+  onActualSaved?: (rec: Rec) => void | Promise<void>;
   defaults?: Partial<Task>;
   onSaved?: (t: Task) => void;
 }
@@ -578,6 +585,18 @@ export class TaskModal extends Modal {
   private dateInput?: HTMLInputElement;
   private estimateInput?: HTMLInputElement;
   private estimateInvalid = false;
+  private actualText = "";
+  private actualStart = "";
+  private actualDate: string;
+  private actualEdited = false;
+  private actualExisting: Rec | null = null;
+  private actualReadOnly = false;
+  private actualSummary = "";
+  private actualLoading?: Promise<void>;
+  private actualLoadError = "";
+  private actualClosed = false;
+  private actualInput?: HTMLInputElement;
+  private actualRefresh?: () => void;
   private readonly initial: string;
 
   constructor(app: App, private plugin: LubiPlugin, private opts: TaskModalOptions) {
@@ -585,12 +604,16 @@ export class TaskModal extends Modal {
     this.editing = !!opts.task;
     this.t = opts.task ? { ...opts.task, repeat: { ...opts.task.repeat, days: [...opts.task.repeat.days] }, doneDates: [...opts.task.doneDates] } : blankTask(opts.defaults);
     if (!this.t.category) this.t.category = plugin.settings.categories.find((c) => c.kind === "time")?.name || "";
+    this.actualDate = opts.recordDate || this.t.date || todayStr();
+    this.actualText = opts.actualDefaults?.minutes ? fmtDuration(opts.actualDefaults.minutes) : "";
+    this.actualStart = opts.actualDefaults?.start || "";
+    this.actualEdited = !!this.actualText;
     this.initial = JSON.stringify(this.t);
   }
 
   /** 有未保存修改时，标题旁显示「● 未保存」 */
   private syncDirty(): void {
-    const dirty = this.editing && JSON.stringify(this.t) !== this.initial;
+    const dirty = this.editing && (JSON.stringify(this.t) !== this.initial || this.actualEdited);
     this.titleEl.querySelector(".lubi-dirty")?.toggleClass("is-on", dirty);
   }
 
@@ -602,6 +625,38 @@ export class TaskModal extends Modal {
     this.render(!!this.opts.focusDate);
     this.titleEl.tabIndex = 0;
     if (!this.opts.focusDate) this.titleEl.focus({ preventScroll: true });
+    this.actualLoading = this.loadActual();
+  }
+
+  onClose(): void { this.actualClosed = true; }
+
+  private async loadActual(): Promise<void> {
+    if (!this.editing) return;
+    try {
+      const found = await taskActualRows(this.plugin, this.t.id, this.actualDate);
+      if (this.actualClosed) return;
+      this.actualReadOnly = found.split || found.rows.length > 1;
+      this.actualSummary = this.actualReadOnly ? `已有 ${found.rows.length} 段或跨日记录，请在时间轴分别编辑` : "";
+      this.actualExisting = found.rows[0]?.rec || null;
+      if (this.actualReadOnly) this.actualText = "";
+      if (!this.actualEdited && this.actualExisting && !this.actualReadOnly) {
+        const r = this.actualExisting;
+        this.actualText = !isPending(r) || r.extra[PENDING_KEY] === "实际开始未核对" ? fmtDuration(r.minutes) : "";
+        this.actualStart = isPending(r) ? "" : r.start;
+        if (isPending(r)) this.actualSummary ||= "已有待确认记录，填写实际用时会更新原记录";
+      }
+      if (this.actualInput?.isConnected) {
+        this.actualInput.value = this.actualText; this.actualInput.disabled = this.actualReadOnly;
+        const start = this.contentEl.querySelector<HTMLInputElement>('[data-actual="start"]');
+        if (start) { start.value = this.actualStart; start.disabled = this.actualReadOnly; }
+        const details = this.contentEl.querySelector<HTMLDetailsElement>(".lubi-actual-details");
+        if (details && this.actualStart && !this.actualEdited) details.open = true;
+        this.actualRefresh?.();
+      }
+    } catch (e) {
+      this.actualLoadError = (e as Error).message;
+      if (!this.actualClosed) formError(this.contentEl, `无法读取实际记录：${this.actualLoadError}`);
+    }
   }
 
   private render(focusTitle = false): void {
@@ -617,7 +672,7 @@ export class TaskModal extends Modal {
     if (parent) titleEl.createSpan({ cls: "lubi-modal-ctx", text: this.plugin.tasks.pathOf(parent).map((p) => p.title).join(" / ") });
     titleEl.createSpan({ cls: "lubi-dirty", text: "● 未保存", attr: { "aria-live": "polite" } });
     this.syncDirty();
-    if (!this.editing && !parent) kindSwitch(contentEl, "todo", (kind) => { if (kind === "done" || kind === "money") this.switchToRecord(kind); });
+    if (!this.editing && !parent) kindSwitch(contentEl, "todo", (kind) => { if (kind === "money") this.switchToRecord(kind); });
 
     // 分类
     const cats = contentEl.createDiv({ cls: "lubi-cat-picker" });
@@ -677,12 +732,13 @@ export class TaskModal extends Modal {
       date.addEventListener("change", () => (this.t.date = date.value));
     }
     const startF = grid.createDiv({ cls: "lubi-field" });
-    const startLabel = startF.createEl("label", { text: "开始时间" });
+    startF.addClass("lubi-plan-start-field");
+    const startLabel = startF.createEl("label", { text: "计划开始" });
     const start = startF.createEl("input", { type: "time", value: this.t.start });
     associate(startLabel, start);
     start.addEventListener("change", () => (this.t.start = start.value));
     const estF = grid.createDiv({ cls: "lubi-field" });
-    const estLabel = estF.createEl("label", { text: "预计" });
+    const estLabel = estF.createEl("label", { text: "预计用时" });
     const estWrap = estF.createDiv({ cls: "lubi-timebar-dur lubi-timebar-dur-block" });
     const est = estWrap.createEl("input", { type: "text", value: this.t.estimate ? fmtDuration(this.t.estimate) : "", attr: { inputmode: "decimal", placeholder: "如 45min / 2.5h", autocomplete: "off" } });
     associate(estLabel, est);
@@ -697,6 +753,32 @@ export class TaskModal extends Modal {
     syncEst();
     est.addEventListener("input", () => { clearFieldError(est); syncEst(); });
     est.addEventListener("blur", () => { if (!this.estimateInvalid && this.t.estimate) est.value = fmtDuration(this.t.estimate); });
+
+    const actualF = grid.createDiv({ cls: "lubi-field lubi-actual-field" });
+    const actualLabel = actualF.createEl("label", { text: "实际用时" });
+    const actual = actualF.createEl("input", { type: "text", value: this.actualText, attr: { placeholder: "完成后填写，如 60min", inputmode: "decimal", "data-actual": "minutes" } });
+    associate(actualLabel, actual); this.actualInput = actual; actual.disabled = this.actualReadOnly;
+    const actualHint = contentEl.createDiv({ cls: "lubi-muted lubi-actual-hint", attr: { role: "status" } });
+    const actualDetails = contentEl.createEl("details", { cls: "lubi-actual-details" });
+    actualDetails.createEl("summary", { text: "实际发生时间" });
+    const actualGrid = actualDetails.createDiv({ cls: "lubi-grid" });
+    const actualDayF = actualGrid.createDiv({ cls: "lubi-field" }), actualDayL = actualDayF.createEl("label", { text: "实际开始日期" });
+    const actualDay = actualDayF.createEl("input", { type: "date", value: this.actualDate, attr: { "data-actual": "date" } });
+    associate(actualDayL, actualDay); actualDay.disabled = this.editing;
+    actualDay.addEventListener("change", () => { this.actualDate = actualDay.value; this.actualEdited = true; });
+    const actualStartF = actualGrid.createDiv({ cls: "lubi-field" }), actualStartL = actualStartF.createEl("label", { text: "实际开始（可留空）" });
+    const actualStart = actualStartF.createEl("input", { type: "time", value: this.actualStart, attr: { "data-actual": "start" } });
+    associate(actualStartL, actualStart); actualStart.disabled = this.actualReadOnly;
+    actualStart.addEventListener("change", () => { this.actualStart = actualStart.value; this.actualEdited = true; syncActual(); });
+    actualDetails.open = !!this.actualStart;
+    const syncActual = () => {
+      const minutes = parseEstimate(this.actualText);
+      actualHint.setText(this.actualReadOnly ? this.actualSummary : minutes ? (formatEstimateComparison({ date: this.actualDate, start: this.actualStart || "00:00", minutes, estimatedMinutes: normalizeEstimatedMinutes(this.t.estimate), category: this.t.category, title: this.t.title, extra: {} }) || `实际 ${fmtDuration(minutes)}`) + (this.actualStart ? "" : " · 实际开始待核对") : this.actualSummary || "留空保存计划；填写实际用时后保存并完成任务");
+      actualDetails.hidden = !this.actualText.trim() || this.actualReadOnly;
+    };
+    actual.addEventListener("input", () => { this.actualText = actual.value; this.actualEdited = true; clearFieldError(actual); syncActual(); });
+    this.actualRefresh = syncActual;
+    est.addEventListener("input", syncActual); syncActual();
 
     if (this.t.repeat.kind === "weekly") {
       const days = contentEl.createDiv({ cls: "lubi-days" });
@@ -824,7 +906,7 @@ export class TaskModal extends Modal {
       });
     }
     button(actions, "取消", () => this.close(), { cls: "lubi-btn-ghost" });
-    const ok = button(actions, this.editing ? "保存" : "创建", () => void this.save(), { primary: true });
+    const ok = button(actions, "保存", () => void this.save(), { primary: true });
     ok.createSpan({ cls: "lubi-kbd", text: "⏎" });
     contentEl.onkeydown = (e) => {
       if (e.key === "Enter" && e.target === titleInput && !e.isComposing) {
@@ -838,16 +920,44 @@ export class TaskModal extends Modal {
   private switchToRecord(kind: NewKind): void {
     const s = this.plugin.settings;
     const money = s.categories.find((c) => c.kind === "money")?.name;
-    const date = this.t.date || todayStr();
+    if (kind === "money" && !money) { new Notice("请先在设置中添加金钱分类"); return; }
+    const date = this.t.date || this.actualDate;
     const defaults: Partial<Rec> = kind === "money" && money
       ? { title: this.t.title, category: money, minutes: 0 }
       : { title: this.t.title, category: this.t.category || undefined, start: this.t.start || undefined, minutes: this.t.estimate || 30 };
     this.close();
-    new RecordModal(this.app, this.plugin, { date, defaults, onSaved: () => this.opts.onSaved?.(this.t) }).open();
+    new RecordModal(this.app, this.plugin, { date, defaults, taskDraft: { ...this.opts, defaults: { ...this.t }, actualDefaults: { minutes: parseEstimate(this.actualText) || undefined, start: this.actualStart }, recordDate: this.actualDate }, onSaved: () => this.opts.onSaved?.(this.t) }).open();
+  }
+
+  /** Merge untouched planning fields with the latest task; never overwrite a concurrent edit. */
+  private currentDraft(): Task {
+    if (!this.editing) return this.t;
+    const latest = this.plugin.tasks.byId(this.t.id);
+    if (!latest) throw new Error("任务已被删除，请重新打开");
+    const original = JSON.parse(this.initial) as Record<string, unknown>;
+    const current = latest as unknown as Record<string, unknown>;
+    const merged = { ...current };
+    for (const [key, value] of Object.entries(this.t)) {
+      if (key === "updated" || JSON.stringify(value) === JSON.stringify(original[key])) continue;
+      if (JSON.stringify(current[key]) !== JSON.stringify(original[key]) && JSON.stringify(current[key]) !== JSON.stringify(value)) throw new Error("任务已被其他操作修改，请重新打开后核对");
+      merged[key] = value;
+    }
+    return merged as unknown as Task;
   }
 
   private async save(): Promise<void> {
     if (this.saving) return;
+    if (!this.editing && this.opts.quickActual) {
+      const parsed = parseQuick(this.t.title, this.plugin.settings.categories.filter(c => c.kind === "time").map(c => c.name));
+      if (parsed?.start && parsed.minutes === undefined && !this.actualText.trim()) { fieldError(this.actualInput, "已填写开始时间，请补填实际用时"); return; }
+      if (parsed && (parsed.minutes || this.actualText.trim())) {
+        this.t.title = parsed.title;
+        if (parsed.category) this.t.category = parsed.category;
+        if (!this.actualText.trim() && parsed.minutes) this.actualText = fmtDuration(parsed.minutes);
+        if (!this.actualStart && parsed.start) this.actualStart = parsed.start;
+        this.actualEdited = true;
+      }
+    }
     if (!this.t.title.trim()) {
       fieldError(this.titleInput, "任务名不能为空");
       return;
@@ -855,6 +965,12 @@ export class TaskModal extends Modal {
     if (this.estimateInvalid) {
       fieldError(this.estimateInput, "预计时长写成 45min、2.5h 或 90 这样的格式");
       return;
+    }
+    if (this.actualLoadError) { formError(this.contentEl, "无法核对实际记录，请重新打开：" + this.actualLoadError); return; }
+    const actualMinutes = parseEstimate(this.actualText);
+    const writeActual = !this.actualReadOnly && !!this.actualText.trim() && (this.actualEdited || !this.actualExisting);
+    if ((this.opts.actualRequired && !this.actualText.trim()) || (this.actualEdited && this.actualExisting && !this.actualText.trim()) || (writeActual && (actualMinutes === null || actualMinutes <= 0 || actualMinutes > 1440))) {
+      fieldError(this.actualInput, "实际用时须为 1–1440 分钟；已有记录请从时间轴删除"); return;
     }
     if (this.t.repeat.kind !== "none" && this.t.repeat.kind !== "daily" && !this.t.repeat.days.length) {
       fieldError(this.repeatSelect, "选一下重复的日子");
@@ -864,15 +980,26 @@ export class TaskModal extends Modal {
     if (this.t.status !== "done") this.t.doneAt = "";
     // 与勾选保持一致：非重复任务在这里被标为完成 / 取消完成时，同样弹出记录框 / 撤掉勾选时记下的记录
     const before = this.editing ? this.plugin.tasks.byId(this.t.id) : undefined;
-    const wasDone = !!before && before.repeat.kind === "none" && before.status === "done";
+    const originalStatus = this.editing ? JSON.parse(this.initial) as Task : undefined;
+    const wasDone = !!originalStatus && originalStatus.repeat.kind === "none" && originalStatus.status === "done";
     const becomesDone = this.t.repeat.kind === "none" && this.t.status === "done" && !wasDone;
     const becomesUndone = wasDone && !(this.t.repeat.kind === "none" && this.t.status === "done");
-    if (becomesDone && !this.t.date) this.t.date = todayStr();
+    if (becomesDone && !this.t.date && !writeActual) this.t.date = todayStr();
     const undoneDate = before?.date || "";
     this.saving = true;
     try {
+      await this.actualLoading;
+      if (this.actualLoadError) throw new Error(this.actualLoadError);
+      if (this.editing && !this.plugin.tasks.byId(this.t.id)) throw new Error("任务已被删除，请重新打开");
+      if (writeActual) {
+        const result = await saveTaskActual(this.plugin, this.currentDraft(), this.actualDate, actualMinutes!, this.actualStart, this.actualExisting, normalizeEstimatedMinutes(this.t.estimate));
+        try { await this.plugin.rememberName(result.task.category, result.task.title); } catch { new Notice("任务与实际记录已保存，但历史名称排序未更新"); }
+        this.close(); this.opts.onSaved?.(result.task);
+        try { await this.opts.onActualSaved?.(result.rec); } catch { new Notice("记录已保存，但后续刷新失败，请重新打开面板"); }
+        return;
+      }
       const nameChanged = !this.editing || before?.title.trim() !== this.t.title.trim() || before?.category !== this.t.category;
-      const saved = await this.plugin.tasks.upsert(this.t);
+      const saved = await this.plugin.tasks.upsert(this.currentDraft());
       if (nameChanged) await this.plugin.rememberName(saved.category, saved.title);
       this.close();
       this.opts.onSaved?.(saved);
@@ -891,4 +1018,18 @@ export class TaskModal extends Modal {
       this.saving = false;
     }
   }
+}
+
+/** Public time-entry routes share the task form; the record editor remains for existing timeline records. */
+export function openUnifiedRecord(plugin: LubiPlugin, date: string, defaults: Partial<Rec> = {}, onSaved?: (rec?: Rec) => void | Promise<void>): void {
+  if ((defaults.category && categoryOf(plugin.settings, defaults.category).kind === 'money') || defaults.amount !== undefined) {
+    new RecordModal(plugin.app, plugin, { date, defaults, onSaved }).open(); return;
+  }
+  const task = defaults.task ? plugin.tasks.byId(defaults.task) : undefined;
+  new TaskModal(plugin.app, plugin, {
+    task, defaults: task ? undefined : { title: defaults.title || '', category: defaults.category || '', notes: defaults.notes || '', date },
+    recordDate: date, actualRequired: true, quickActual: true,
+    actualDefaults: task ? undefined : { minutes: defaults.minutes, start: defaults.start },
+    onActualSaved: async rec => { await onSaved?.(rec); },
+  }).open();
 }

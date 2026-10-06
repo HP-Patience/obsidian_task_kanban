@@ -5,13 +5,13 @@ import { hideTip } from "./tooltips";
 import { positionDragReadout } from "./dragReadout";
 import { Notice } from "obsidian";
 import type LubiPlugin from "../main";
-import { formatEstimateComparison, confirmed, isPending, ParsedLine, Rec } from "../core/records";
+import { formatEstimateComparison, confirmed, isPending, PENDING_KEY, ParsedLine, Rec } from "../core/records";
 import { fmtDuration, fmtHours, hmToMin, minToHM, nowHM, shiftDate, shortDate, todayStr } from "../core/time";
 import { dayTimeStats, invalidTimedSpan } from "../core/metrics";
 import { categoryOf } from "../settings";
 import { button, catDot, donut, el, HOUR_PX, infoTip, icon, iconButton, stopAll, tip, undoNotice } from "./components";
 import { minuteAt, startDrag } from "./drag";
-import { RecordModal, TaskModal } from "./modals";
+import { RecordModal, TaskModal, openUnifiedRecord } from "./modals";
 import { dayTasks, deleteRecord, OpenRecord, renderDayTaskList, syncLinkedTask } from "./taskList";
 import type { Task } from "../core/tasks";
 import { updateScheduleWithUndo } from "./tasks";
@@ -37,7 +37,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const stats = dayTimeStats(timed.map((row) => row.rec));
   const invalidRows = timed.filter((row) => invalidTimedSpan(row.rec));
 
-  const openNew: OpenRecord = (defaults = {}, onRec) => new RecordModal(plugin.app, plugin, { date, defaults, onSaved: async (rec) => { if (rec && onRec) await onRec(rec); rerender(); } }).open();
+  const openNew: OpenRecord = (defaults = {}, onRec) => openUnifiedRecord(plugin, date, defaults, async (rec) => { if (rec && onRec) await onRec(rec); rerender(); });
   const openEdit = (row: ParsedLine) => new RecordModal(plugin.app, plugin, { date, rec: row.rec, line: row.line, onSaved: rerender }).open();
 
   // ---------- 左：时间轴 ----------
@@ -45,7 +45,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const top = host.createDiv({ cls: "lubi-today-top" });
   if (!plugin.settings.onboardingDone && plugin.journal.dates().length === 0) {
     const hint = top.createDiv({ cls: "lubi-first-record" });
-    hint.createSpan({ cls: "lubi-muted", text: "点击右上方「记一条」，开始记录。" });
+    hint.createSpan({ cls: "lubi-muted", text: "点击右上方「新建任务」，完成时填写实际用时。" });
     iconButton(hint, "x", "不再显示入门提示", async () => {
       const previous = plugin.settings.onboardingDone;
       plugin.settings.onboardingDone = true;
@@ -62,7 +62,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
     if (hint) tip(item, hint);
   };
   summaryItem("记录投入", timed.length ? fmtHours(stats.recordedMinutes) : "—", "所有时间记录之和，并行记录会重复计入。");
-  summaryItem("实际覆盖", timed.length ? fmtHours(stats.coveredMinutes) : "—", "把重叠区间合并后的实际覆盖时间。");
+  summaryItem("实际覆盖", timed.some(row => row.rec.extra[PENDING_KEY] === "实际开始未核对") ? "—" : timed.length ? fmtHours(stats.coveredMinutes) : "—", "把重叠区间合并后的实际覆盖时间。");
   if (stats.overlapMinutes) summaryItem("并行重叠", fmtDuration(stats.overlapMinutes), "并行记录造成的重复时长。");
   const pendingCount = timed.filter((row) => isPending(row.rec)).length;
   if (pendingCount) summaryItem("待确认", `${pendingCount} 条`, "按计划自动生成、尚未核对为实际时间的记录。");
@@ -210,7 +210,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   const openPlans = planned.filter((t) => !plugin.tasks.isDoneOn(t, date) && !loggedTasks.has(t.id));
   const timedPlans = openPlans.filter((t) => t.start);
   canvas.toggleClass("has-plans", timedPlans.length > 0);
-  const editPlan = (t: Task) => new TaskModal(plugin.app, plugin, { task: plugin.tasks.byId(t.id) || t, onSaved: rerender }).open();
+  const editPlan = (t: Task) => new TaskModal(plugin.app, plugin, { task: plugin.tasks.byId(t.id) || t, recordDate: date, onSaved: rerender }).open();
   if (timedPlans.length) {
     const lane = canvas.createDiv({ cls: "lubi-plan-lane", attr: { "aria-label": "当天计划" } });
     lane.style.top = `${-DAY_START_GUTTER_PX}px`;
@@ -592,7 +592,7 @@ function renderPlanCard(plugin: LubiPlugin, side: HTMLElement, date: string, pla
   const details = card.createEl("details", { cls: "lubi-fold lubi-plan-task-details" });
   details.createEl("summary", { text: "任务清单", attr: { "data-lubi-focus": "plan-task-details" } });
   const list = details.createDiv({ cls: "lubi-task-list lubi-plan-task-list" });
-  renderDayTaskList(plugin, list, date, rerender, openNew, (task) => new TaskModal(plugin.app, plugin, { task, onSaved: rerender }).open(), undefined, true);
+  renderDayTaskList(plugin, list, date, rerender, openNew, (task) => new TaskModal(plugin.app, plugin, { task, recordDate: date, onSaved: rerender }).open(), undefined, true);
 }
 
 /** 空白时段：最长的几段，点一下滚到那里 / 直接补记 */
@@ -684,23 +684,20 @@ function renderSummary(plugin: LubiPlugin, side: HTMLElement, recs: Rec[], date:
     byCat.set(r.category, (byCat.get(r.category) || 0) + r.minutes);
     total += r.minutes;
   }
-  if (!total) {
-    card.createDiv({ cls: "lubi-muted", text: "暂无记录" });
-  } else {
-    const wrap = card.createDiv({ cls: "lubi-donut-wrap" });
-    const slices = [...byCat.entries()].sort((a, b) => b[1] - a[1]).map(([name, v]) => ({ label: name, value: v, color: categoryOf(plugin.settings, name).color }));
-    const covered = dayTimeStats(recs).coveredMinutes;
-    donut(wrap, slices, fmtHours(total), `覆盖 ${Math.round((covered / 1440) * 100)}%`);
-    const list = wrap.createDiv({ cls: "lubi-legend" });
-    for (const s of slices) {
-      const li = list.createDiv({ cls: "lubi-legend-row lubi-legend-bar" });
-      li.style.setProperty("--pct", `${Math.round((s.value / total) * 100)}%`);
-      li.style.setProperty("--dot", s.color);
-      catDot(li, categoryOf(plugin.settings, s.label));
-      li.createSpan({ cls: "lubi-legend-name", text: s.label });
-      li.createSpan({ cls: "lubi-legend-val", text: fmtHours(s.value) });
-      li.createSpan({ cls: "lubi-muted lubi-legend-pct", text: `${Math.round((s.value / total) * 100)}%` });
-    }
+  const wrap = card.createDiv({ cls: "lubi-donut-wrap" });
+  const slices = [...byCat.entries()].sort((a, b) => b[1] - a[1]).map(([name, v]) => ({ label: name, value: v, color: categoryOf(plugin.settings, name).color }));
+  const covered = dayTimeStats(recs).coveredMinutes;
+  donut(wrap, slices, fmtHours(total), recs.some(r => r.extra[PENDING_KEY] === "实际开始未核对") ? "覆盖待核对" : `覆盖 ${Math.round((covered / 1440) * 100)}%`);
+  const list = wrap.createDiv({ cls: "lubi-legend" });
+  if (!slices.length) list.createDiv({ cls: "lubi-muted", text: "暂无记录" });
+  for (const s of slices) {
+    const li = list.createDiv({ cls: "lubi-legend-row lubi-legend-bar" });
+    li.style.setProperty("--pct", `${Math.round((s.value / total) * 100)}%`);
+    li.style.setProperty("--dot", s.color);
+    catDot(li, categoryOf(plugin.settings, s.label));
+    li.createSpan({ cls: "lubi-legend-name", text: s.label });
+    li.createSpan({ cls: "lubi-legend-val", text: fmtHours(s.value) });
+    li.createSpan({ cls: "lubi-muted lubi-legend-pct", text: `${Math.round((s.value / total) * 100)}%` });
   }
   const spend = recs.filter((r) => r.amount !== undefined && !isNaN(r.amount));
   if (spend.length) {

@@ -1,12 +1,12 @@
 // 回顾页：周 / 月 / 年 汇总。柳比歇夫法的核心是"月末算账"。
 
 import type LubiPlugin from "../main";
-import { isPending, Rec } from "../core/records";
+import { isPending, PENDING_KEY, Rec } from "../core/records";
 import { eachDate, fmtDuration, fmtHours, hmToMin, minToHM, monthEnd, monthStart, parseDate, shiftDate, shortDate, weekStart, weekdayZh, todayStr, dateStr } from "../core/time";
 import { categoryOf } from "../settings";
 import { dayTimeStats } from "../core/metrics";
 import type { Task } from "../core/tasks";
-import { button, catDot, el, emptyState, hoverTip, icon, iconButton, segmented, tip } from "./components";
+import { button, catDot, el, hoverTip, icon, iconButton, segmented, tip } from "./components";
 
 export type Period = "week" | "month" | "year";
 
@@ -48,13 +48,11 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   for (const recs of data.values()) all.push(...recs);
   const timed = all.filter((r) => r.minutes > 0);
   const total = timed.reduce((s, r) => s + r.minutes, 0);
+  const unknownStartDates = new Set(timed.filter(r => r.extra[PENDING_KEY] === "实际开始未核对").map(r => r.date));
   const dailyStats = new Map([...data].map(([date, recs]) => [date, dayTimeStats(recs)] as const));
   const invalidDates = [...dailyStats].filter(([, stats]) => stats.invalidCount).map(([date]) => date).sort();
 
-  if (!timed.length && !all.length) {
-    emptyState(host, "calendar-search", "暂无记录", "切换周期，或补记。");
-    return;
-  }
+  const isEmpty = !timed.length && !all.length;
 
   // 上一期（用于环比与趋势说明）
   const previous = range({ period: state.period, anchor: step(state, -1) });
@@ -88,13 +86,16 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   if (pendingRecs.length) {
     const pm = pendingRecs.reduce((sum, r) => sum + r.minutes, 0);
     const note = primary.createDiv({ cls: "lubi-kpi-pending" });
-    note.setText(`其中 ${fmtHours(pm)} 按计划估计 · ${pendingRecs.length} 条待确认`);
-    tip(note, "勾选任务时按计划时间 / 预计时长自动生成的记录。在每日页拖到实际时间或点 ✓ 确认后计入实际。");
+    const startPending = pendingRecs.filter(r => r.extra[PENDING_KEY] === "实际开始未核对");
+    const startMinutes = startPending.reduce((sum, r) => sum + r.minutes, 0);
+    const parts = [pm > startMinutes ? `${fmtHours(pm - startMinutes)} 按计划估计` : "", startMinutes ? `${fmtHours(startMinutes)} 实际开始待核对` : ""].filter(Boolean);
+    note.setText(`其中 ${parts.join("；")} · ${pendingRecs.length} 条待确认`);
+    tip(note, "这些记录的开始或时长仍需核对；在时间轴编辑或确认后解除待确认标记。");
   }
   const secondary = kpis.createDiv({ cls: "lubi-kpi-grid" });
   const coveredTotal = [...dailyStats.values()].reduce((sum2, stats) => sum2 + stats.coveredMinutes, 0);
   const overlapTotal = Math.max(0, total - coveredTotal);
-  kpi(secondary, "实际覆盖", fmtHours(coveredTotal), "每天重叠区间合并后的覆盖时间");
+  kpi(secondary, "实际覆盖", unknownStartDates.size ? "—" : fmtHours(coveredTotal), "每天重叠区间合并后的覆盖时间");
   if (invalidDates.length) {
     const validDays = [...dailyStats].filter(([, st]) => !st.invalidCount && st.recordedMinutes > 0);
     const validAvg = validDays.length ? validDays.reduce((sum2, [, st]) => sum2 + st.recordedMinutes, 0) / validDays.length : 0;
@@ -104,7 +105,7 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   }
   kpi(secondary, "有记录的天数", `${daysLogged} / ${eachDate(from, to).filter((d) => d <= todayStr()).length}`);
   if (overlapTotal) kpi(secondary, "并行重叠", fmtHours(overlapTotal), "并行记录的重复时长");
-  kpi(secondary, "覆盖率", daysLogged ? `${Math.round((coveredTotal / (daysLogged * 1440)) * 100)}%` : "—", "有记录日的区间并集 / 24h");
+  kpi(secondary, "覆盖率", !unknownStartDates.size && daysLogged ? `${Math.round((coveredTotal / (daysLogged * 1440)) * 100)}%` : "—", "有记录日的区间并集 / 24h");
   kpi(secondary, "支出", spend.length ? `¥${spend.reduce((s2, r) => s2 + (r.amount || 0), 0).toFixed(0)}` : "¥0", spend.length ? `${spend.length} 笔` : "本期没有支出");
 
   if (invalidDates.length) {
@@ -136,6 +137,7 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   el(chartHead, "h3", "lubi-panel-title", state.period === "year" ? "每月记录时长" : "每日记录时长");
   segmented<"chart" | "table">(chartHead, [{ id: "chart", label: "图表" }, { id: "table", label: "表格" }], state.display || "chart", (display) => setState({ display })).addClass("lubi-chart-mode");
   const legend = chartHead.createDiv({ cls: "lubi-chart-legend lubi-push-right" });
+  if (isEmpty) legend.createSpan({ cls: "lubi-muted lubi-review-empty-note", text: "本期暂无记录" });
   for (const c of cats) {
     const li = legend.createSpan({ cls: "lubi-chart-legend-item" });
     catDot(li, categoryOf(plugin.settings, c));
@@ -247,7 +249,7 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
     const open = day.createEl("button", { cls: "lubi-table-link", text: bucket.label, attr: { type: "button" } });
     open.addEventListener("click", () => state.period === "year" ? setState({ period: "month", anchor: bucket.dates[0] }) : plugin.openDate(bucket.dates[0]));
     row.createEl("td", { text: fmtHours(bucketTotals[i]) });
-    row.createEl("td", { text: fmtHours(bucketStats[i].covered) });
+    row.createEl("td", { text: bucket.dates.some(d => unknownStartDates.has(d)) ? "—" : fmtHours(bucketStats[i].covered) });
     const recs = bucket.dates.flatMap((d) => data.get(d) || []).filter((r) => r.minutes > 0);
     for (const cat of cats) row.createEl("td", { text: sum(recs, cat) ? fmtHours(sum(recs, cat)) : "—" });
     const issues = row.createEl("td");
@@ -259,7 +261,7 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
     }
   });
 
-  if (isYear) renderHeatmap(plugin, host, from, to, dailyStats);
+  if (isYear) renderHeatmap(plugin, host, from, to, dailyStats, unknownStartDates);
 
   // 分类明细 + 事项 Top
   const extras = host.createDiv({ cls: "lubi-card lubi-review-extras" });
@@ -268,6 +270,7 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   const grid = detail.createDiv({ cls: "lubi-review-grid" });
   const byCat = grid.createDiv({ cls: "lubi-section" });
   el(byCat, "h3", "lubi-panel-title", "按分类");
+  if (!cats.length) byCat.createDiv({ cls: "lubi-muted lubi-review-empty-detail", text: "暂无分类记录" });
   for (const c of cats) {
     const v = sum(timed, c);
     const row = byCat.createDiv({ cls: "lubi-row-bar" });
@@ -294,6 +297,7 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
   }
   const ranked = [...byTitle.entries()].sort((a, b) => b[1].min - a[1].min).slice(0, 5);
   const topMax = ranked.length ? ranked[0][1].min : 1;
+  if (!ranked.length) top.createDiv({ cls: "lubi-muted lubi-review-empty-detail", text: "暂无事项记录" });
   for (const [k, v] of ranked) {
     const row = top.createDiv({ cls: "lubi-row-bar" });
     const head = row.createDiv({ cls: "lubi-row-bar-head" });
@@ -308,9 +312,9 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
     fill.style.background = cat.color;
   }
 
+  const sp = grid.createDiv({ cls: "lubi-section" });
+  el(sp, "h3", "lubi-panel-title", "支出");
   if (spend.length) {
-    const sp = grid.createDiv({ cls: "lubi-section" });
-    el(sp, "h3", "lubi-panel-title", "支出");
     const byType = new Map<string, number>();
     for (const r of spend) byType.set(r.expenseType || "其他", (byType.get(r.expenseType || "其他") || 0) + (r.amount || 0));
     const totalSpend = [...byType.values()].reduce((s, v) => s + v, 0);
@@ -332,6 +336,8 @@ export async function renderReview(plugin: LubiPlugin, host: HTMLElement, state:
       row.createSpan({ cls: "lubi-muted", text: r.expenseType || "" });
       row.createSpan({ cls: "lubi-legend-val", text: `¥${(r.amount || 0).toFixed(2)}` });
     }
+  } else {
+    sp.createDiv({ cls: "lubi-muted lubi-review-empty-detail", text: "暂无支出记录" });
   }
   renderReviewInsights(extras, plugin, from, to, data, timed, total);
 }
@@ -423,7 +429,7 @@ function kpi(parent: HTMLElement, label: string, value: string, sub?: string, cl
 }
 
 /** 年视图：GitHub 式覆盖热力图（颜色 = 当天覆盖率），点击某天跳到每日页 */
-function renderHeatmap(plugin: LubiPlugin, host: HTMLElement, from: string, to: string, dailyStats: Map<string, { coveredMinutes: number; invalidCount: number }>): void {
+function renderHeatmap(plugin: LubiPlugin, host: HTMLElement, from: string, to: string, dailyStats: Map<string, { coveredMinutes: number; invalidCount: number }>, unknownStartDates: ReadonlySet<string> = new Set()): void {
   const card = host.createDiv({ cls: "lubi-card lubi-heat-card" });
   const head = card.createDiv({ cls: "lubi-panel-head" });
   el(head, "h3", "lubi-panel-title", "全年覆盖");
@@ -456,7 +462,7 @@ function renderHeatmap(plugin: LubiPlugin, host: HTMLElement, from: string, to: 
     cell.style.gridColumn = String(Math.floor(i / 7) + 2);
     cell.style.gridRow = String((i % 7) + 2);
     if (d < from || d > to) { cell.addClass("is-out"); return; }
-    const st = dailyStats.get(d);
+    const st = unknownStartDates.has(d) ? undefined : dailyStats.get(d);
     const ratio = st ? st.coveredMinutes / 1440 : 0;
     const lv = !st ? 0 : ratio < 0.25 ? 1 : ratio < 0.5 ? 2 : ratio < 0.75 ? 3 : 4;
     cell.addClass(`lv-${lv}`);
@@ -464,7 +470,7 @@ function renderHeatmap(plugin: LubiPlugin, host: HTMLElement, from: string, to: 
     if (d === today) cell.addClass("is-today");
     if (d > today) cell.addClass("is-future");
     cell.dataset.date = d;
-    tip(cell, `${d} 周${weekdayZh(d)} · ${st ? `覆盖 ${Math.round(ratio * 100)}%` : "没有记录"}${st?.invalidCount ? " · 待校对" : ""}`);
+    tip(cell, `${d} 周${weekdayZh(d)} · ${unknownStartDates.has(d) ? "实际开始待核对，覆盖率未知" : st ? `覆盖 ${Math.round(ratio * 100)}%` : "没有记录"}${st?.invalidCount ? " · 待校对" : ""}`);
   });
   grid.addEventListener("click", (e) => {
     const d = (e.target as HTMLElement).closest<HTMLElement>(".lubi-heat-cell")?.dataset.date;

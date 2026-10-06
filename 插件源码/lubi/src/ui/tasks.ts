@@ -6,7 +6,7 @@ import { Task, blankTask } from "../core/tasks";
 import { daysBetween, fmtDuration, hmToMin, minToHM, nowHM, shiftDate, shortDate, todayStr, weekdayZh } from "../core/time";
 import { categoryOf } from "../settings";
 import { button, catDot, el, emptyState, HOUR_PX, hoverTip, infoTip, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
-import { TaskModal, RecordModal } from "./modals";
+import { TaskModal, RecordModal, openUnifiedRecord } from "./modals";
 import { dayTasks, groupedRows, OpenRecord, renderDayTaskList, taskRow } from "./taskList";
 import { startDrag } from "./drag";
 import { Rec } from "../core/records";
@@ -15,6 +15,7 @@ import { renderGantt } from "./gantt";
 import { renderDailyGantt } from "./dailyGantt";
 
 const SNAP = 15;
+let weekDayLabelId = 0;
 
 export interface TasksState {
   weekAnchor: string;
@@ -85,8 +86,8 @@ export function renderTasks(plugin: LubiPlugin, host: HTMLElement, date: string,
   host.empty();
   host.addClass("lubi-tasks");
   host.toggleClass("is-gantt", state.scheduleView === "gantt");
-  const openNew: OpenRecord = (d, onRec) => new RecordModal(plugin.app, plugin, { date, defaults: d, onSaved: async (rec) => { if (rec && onRec) await onRec(rec); rerender(); } }).open();
-  const edit = (t: Task) => new TaskModal(plugin.app, plugin, { task: t, onSaved: rerender }).open();
+  const openNew: OpenRecord = (d, onRec) => openUnifiedRecord(plugin, date, d, async (rec) => { if (rec && onRec) await onRec(rec); rerender(); });
+  const edit = (t: Task) => new TaskModal(plugin.app, plugin, { task: t, recordDate: date, onSaved: rerender }).open();
   const create = (defaults: Partial<Task> = {}) => new TaskModal(plugin.app, plugin, { defaults, onSaved: rerender }).open();
 
   const top = host.createDiv({ cls: "lubi-tasks-top" });
@@ -285,7 +286,7 @@ function renderAgenda(plugin: LubiPlugin, host: HTMLElement, state: TasksState, 
     const tasks = plugin.tasks.forDate(d).filter((t) => !plugin.tasks.children(t.id).length);
     if (!tasks.length) list.createDiv({ cls: "lubi-muted lubi-pad-sm", text: "没有安排" });
     else for (const task of tasks) {
-      taskRow(plugin, list, task, d, rerender, (defaults, onRec) => new RecordModal(plugin.app, plugin, { date: d, defaults, onSaved: async (rec) => { if (rec && onRec) await onRec(rec); rerender(); } }).open(), () => edit(task));
+      taskRow(plugin, list, task, d, rerender, (defaults, onRec) => openUnifiedRecord(plugin, d, defaults, async (rec) => { if (rec && onRec) await onRec(rec); rerender(); }), () => edit(task));
     }
     button(section, `在 ${shortDate(d)} 新建任务`, () => new TaskModal(plugin.app, plugin, { defaults: { date: d }, onSaved: rerender }).open(), { cls: "lubi-btn-ghost lubi-btn-sm lubi-agenda-add" });
   }
@@ -352,7 +353,9 @@ function renderWeek(plugin: LubiPlugin, host: HTMLElement, date: string, state: 
   for (const d of days) {
     const h = grid.createDiv({ cls: `lubi-week-day ${d === todayStr() ? "is-today" : ""} ${d === date ? "is-selected" : ""}`.trim() });
     heads.push(h);
-    const dayButton = h.createEl("button", { cls: "lubi-week-day-button", attr: { type: "button", "aria-label": `查看 ${d} 周${weekdayZh(d)} 的任务`, "aria-current": d === date ? "date" : "false" } });
+    const dayButton = h.createEl("button", { cls: "lubi-week-day-button", attr: { type: "button", "aria-current": d === date ? "date" : "false" } });
+    const dayLabel = dayButton.createSpan({ cls: "lubi-sr-only", text: `查看 ${d} 周${weekdayZh(d)} 的任务`, attr: { id: `lubi-week-day-label-${++weekDayLabelId}` } });
+    dayButton.setAttribute("aria-labelledby", dayLabel.id);
     dayButton.createSpan({ cls: "lubi-week-dow", text: `周${weekdayZh(d)}` });
     dayButton.createSpan({ cls: "lubi-week-date", text: String(Number(d.slice(8, 10))) });
     dayButton.addEventListener("click", () => plugin.openDate(d, "tasks"));

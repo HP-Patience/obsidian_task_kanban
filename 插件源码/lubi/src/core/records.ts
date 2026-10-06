@@ -155,10 +155,10 @@ export function formatEstimateComparison(r: Rec): string {
   const estimate = normalizeEstimatedMinutes(r.estimatedMinutes);
   if (estimate === undefined || !Number.isFinite(r.minutes) || r.minutes < 0) return "";
   const planned = `预计 ${fmtDuration(estimate)}`;
-  if (isPending(r)) return `${planned} · 记录 ${fmtDuration(r.minutes)}（待确认） · 核对后再比较`;
+  if (isPending(r) && r.extra[PENDING_KEY] !== "实际开始未核对") return `${planned} · 记录 ${fmtDuration(r.minutes)}（待确认） · 核对后再比较`;
   const delta = r.minutes - estimate;
   const difference = delta === 0 ? "与预计一致" : `${delta > 0 ? "超出" : "少于"} ${fmtDuration(Math.abs(delta))}`;
-  return `${planned} · 实际 ${fmtDuration(r.minutes)} · ${difference}`;
+  return `${planned} · 实际 ${fmtDuration(r.minutes)} · ${difference}${isPending(r) ? " · 实际开始待核对" : ""}`;
 }
 
 export function endMin(r: Rec): number {

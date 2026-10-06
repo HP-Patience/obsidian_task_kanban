@@ -38,10 +38,28 @@ if (!browser) {
   const gen = spawnSync(process.execPath, [join(project, "test", "preview.mjs")], { cwd: project, encoding: "utf8", timeout: 60000, env: { ...process.env, LUBI_TEST_DAY_START_PLAN: "1" } });
   assert.equal(gen.status, 0, `preview generation failed: ${gen.stderr?.slice(-800)}`);
 
-  const probe = `<script>${cueBundle.stdout}</script>` + String.raw`<pre id="lubi-result"></pre><script>
+  const probe = `<script>${cueBundle.stdout}</script><script>addEventListener("error",event=>{const value={browserError:event.message,browserStack:event.error?.stack};const el=document.getElementById("lubi-result");if(el)el.textContent="LUBI_TOPBAR:"+encodeURIComponent(JSON.stringify(value)).replace(/[!'()*]/g,c=>'%'+c.charCodeAt(0).toString(16));if(parent!==window)parent.postMessage({type:"lubi-geometry",value},"*");});</script>` + String.raw`<pre id="lubi-result"></pre><script>
   (() => {
     const out = { viewportWidth: innerWidth };
     const r = (el) => el ? el.getBoundingClientRect() : null;
+    const chartHead=document.querySelector('.lubi-chart-card > .lubi-panel-head');
+    if(chartHead){
+      const title=chartHead.querySelector('.lubi-panel-title'),mode=chartHead.querySelector('.lubi-chart-mode');
+      out.reviewHeader={gap:r(mode).left-r(title).right,sameRow:Math.abs((r(mode).top+r(mode).height/2)-(r(title).top+r(title).height/2))<=1};
+      const checkBarState=selector=>{
+        const col=document.querySelector(selector);if(!col)return null;
+        const saved=col.className;col.classList.add('is-today');col.classList.remove('is-future');
+        const stack=col.querySelector('.lubi-bar-stack'),label=col.querySelector('.lubi-bar-label'),style=getComputedStyle(stack),color=getComputedStyle(label).backgroundColor;
+        const value={height:r(stack).height,outline:style.outlineStyle!=='none'&&parseFloat(style.outlineWidth)>0,badge:color!=='transparent'&&color!=='rgba(0, 0, 0, 0)'};
+        col.className=saved;return value;
+      };
+      out.reviewBarStates={zero:checkBarState('.lubi-bar-col.is-empty'),filled:checkBarState('.lubi-bar-col:not(.is-empty)')};
+    }
+    const emptyReview=document.querySelector('.lubi-review-empty-note');
+    if(emptyReview){
+      const chart=document.querySelector('.lubi-chart'),grid=document.querySelector('.lubi-chart-grid'),bars=[...document.querySelectorAll('.lubi-bar-col')];
+      out.emptyReview={metrics:!!document.querySelector('.lubi-kpis'),details:!!document.querySelector('.lubi-review-extras'),chartHeight:r(chart)?.height||0,gridHeight:r(grid)?.height||0,buckets:bars.length,zeroBars:bars.every(el=>el.classList.contains('is-empty')&&!el.querySelector('.lubi-bar-seg')),invalid:/NaN|Infinity/.test(document.querySelector('.lubi-review').textContent),bodyOverflow:document.body.scrollWidth-innerWidth};
+    }
     const bar = document.querySelector('.lubi-topbar');
     const tabs = document.querySelector('.lubi-topbar-tabs');
     const left = document.querySelector('.lubi-topbar-left');
@@ -111,8 +129,18 @@ if (!browser) {
     // 精简界面仍保留主操作、所有折叠内容和键盘辅助入口。
     out.primaryActions = document.querySelectorAll(".lubi-root .mod-cta").length;
     out.simplifyErrors = [];
+    const unifiedModal=document.querySelector('.lubi-task-modal');
+    if(unifiedModal&&unifiedModal.querySelector('[data-actual=minutes]')) {
+      const box=r(unifiedModal),hint=unifiedModal.querySelector('.lubi-actual-hint');
+      out.unifiedActual={modes:[...unifiedModal.querySelectorAll('.lubi-kind-seg button')].map(button=>button.dataset.lubiFocus),duration:unifiedModal.querySelector('[data-actual=minutes]').value,comparison:hint?.textContent,inputsFit:[...unifiedModal.querySelectorAll('input')].every(input=>r(input).width>0&&r(input).left>=box.left&&r(input).right<=box.right),overflow:document.documentElement.scrollWidth-innerWidth};
+    }
     const sidebar = document.querySelector(".lubi-today-side");
     if (sidebar && (sidebar.classList.contains("lubi-card") || sidebar.querySelector(".lubi-card .lubi-card"))) out.simplifyErrors.push("nested daily cards");
+    const emptyRing=sidebar?.querySelector('.lubi-distribution .lubi-donut');
+    if(emptyRing&&emptyRing.querySelector('.lubi-donut-center')?.textContent==='0h'){
+      const card=emptyRing.closest('.lubi-distribution'),box=r(emptyRing),center=emptyRing.querySelector('.lubi-donut-center'),sub=emptyRing.querySelector('.lubi-donut-sub'),base=emptyRing.querySelector('circle');
+      out.emptyDonut={width:box.width,height:box.height,contained:box.left>=r(card).left&&box.right<=r(card).right&&box.top>=r(card).top&&box.bottom<=r(card).bottom,center:center.textContent,sub:sub.textContent,circles:emptyRing.querySelectorAll('circle').length,slices:emptyRing.querySelectorAll('circle[stroke-dasharray]').length,baseVisible:!!base&&getComputedStyle(base).stroke!=='none'&&parseFloat(getComputedStyle(base).strokeWidth)>0,cardOverflow:card.scrollWidth-card.clientWidth};
+    }
     const planCard = sidebar?.querySelector(".lubi-plan-card");
     if (planCard && (!planCard.classList.contains("lubi-card") || !planCard.previousElementSibling?.classList.contains("lubi-distribution") || !planCard.querySelector(".lubi-plan-progress") || !planCard.querySelector(".lubi-plan-task-details > summary"))) out.simplifyErrors.push("plan card not separated or progress missing");
     if (planCard && r(planCard).top < r(sidebar.querySelector(".lubi-distribution")).bottom + 1) out.simplifyErrors.push("plan card overlaps distribution");
@@ -202,6 +230,7 @@ if (!browser) {
     }
     // Keep the weekly grid end marker visible after scrolling to the configured last hour.
     out.weekEndClipped = [];
+    out.weekSchedule = null;
     {
       const sc = document.querySelector(".lubi-week-body");
       if (sc && getComputedStyle(sc).display !== "none") {
@@ -211,6 +240,13 @@ if (!browser) {
         const columns = [...sc.querySelectorAll(".lubi-week-col")];
         const endLines = [...sc.querySelectorAll(".lubi-week-line.is-day-end")];
         if (!end || end.textContent.trim() !== "24:00" || !box || getComputedStyle(end).visibility === "hidden" || box.top < visibleTop - 0.5 || box.bottom > visibleBottom + 0.5 || endLines.length !== columns.length || endLines.some((line, i) => line.style.top !== columns[i]?.style.height)) out.weekEndClipped.push("24:00");
+        if(frame.width>0){
+          const card=sc.closest('.lubi-week-card'),panelCss=getComputedStyle(sc).getPropertyValue('--lubi-panel-height').trim();
+          const panel=panelCss.endsWith('vh')?parseFloat(panelCss)*innerHeight/100:(parseFloat(panelCss)||840);
+          const hours=sc.querySelector('.lubi-week-hours'),firstColumn=sc.querySelector('.lubi-week-col');
+          const hourLines=[...firstColumn.querySelectorAll('.lubi-week-line:not(.is-half):not(.is-day-end)')];
+          out.weekSchedule={viewport:sc.clientHeight,expectedViewport:Math.min(Math.max(320,panel-270),parseFloat(hours.style.height)),footerGap:r(card).bottom-frame.bottom,endLabelGap:r(card).bottom-box.bottom,hourStep:r(hourLines[1]).top-r(hourLines[0]).top};
+        }
         sc.scrollTop = 0;
       }
     }
@@ -317,7 +353,7 @@ if (!browser) {
     out.shortHint = { compact: labelStyle.paddingTop === '6px' && labelStyle.paddingLeft === '10px', surface: parse(labelStyle.backgroundColor).slice(0,3) };
     label.remove();
     const options = document.querySelector('.lubi-name-options');
-    if (options) {
+    if (options && !options.hidden && options.querySelector(".lubi-name-option")) {
       const input = document.querySelector('[role="combobox"]');
       const rows = [...options.children];
       const rect = r(options), ir = r(input);
@@ -373,7 +409,7 @@ if (!browser) {
       writeFileSync(child, html, "utf8");
       const file = join(tmp, `${theme}-${page}-${width}.html`);
       // New headless Chrome may enforce a minimum outer-window width. An exact-size frame gives a verified CSS viewport.
-      writeFileSync(file, `<!doctype html><html><head><style>html,body{margin:0;padding:0}iframe{display:block;border:0;width:${width}px;height:900px}</style><script>addEventListener('message',e=>{if(e.data?.type==='lubi-geometry')document.getElementById('lubi-outer-result').textContent='LUBI_TOPBAR:'+encodeURIComponent(JSON.stringify(e.data.value));});</script></head><body><pre id="lubi-outer-result" style="display:none"></pre><iframe src="${pathToFileURL(child).href}"></iframe></body></html>`, "utf8");
+      writeFileSync(file, `<!doctype html><html><head><style>html,body{margin:0;padding:0}iframe{display:block;border:0;width:${width}px;height:900px}</style><script>addEventListener('message',e=>{if(e.data?.type==='lubi-geometry')document.getElementById('lubi-outer-result').textContent='LUBI_TOPBAR:'+encodeURIComponent(JSON.stringify(e.data.value)).replace(/[!'()*]/g,c=>'%'+c.charCodeAt(0).toString(16));});</script></head><body><pre id="lubi-outer-result" style="display:none"></pre><iframe src="${pathToFileURL(child).href}"></iframe></body></html>`, "utf8");
       const result = spawnSync(browser, [
         "--headless=new", "--disable-gpu", "--disable-extensions", "--no-first-run",
         "--no-default-browser-check", "--disable-background-networking", "--hide-scrollbars",
@@ -384,6 +420,7 @@ if (!browser) {
       const matches = [...result.stdout.matchAll(/LUBI_TOPBAR:([A-Za-z0-9%._~-]+)/g)];
       assert(matches.length > 0, `browser did not return geometry for ${page}`);
       const geometry = JSON.parse(decodeURIComponent(matches[matches.length - 1][1]));
+      assert(!geometry.browserError, `browser probe error for ${page}: ${geometry.browserError} ${geometry.browserStack || ""}`);
       assert.equal(geometry.viewportWidth, width, `browser CSS viewport must really be ${width}px`);
       if (geometry.tabOrder !== null) assert.equal(geometry.tabOrder,"seg:today|seg:tasks|seg:review", "all pages share the new top tab order");
       if (geometry.ganttAppearance) assert(Object.values(geometry.ganttAppearance.layout).every(Boolean), `${theme} ${page} ${width}px: shared compact name column with full-width normal layout ${JSON.stringify(geometry.ganttAppearance.layout)}`);
@@ -404,6 +441,11 @@ if (!browser) {
             assert.deepEqual(expanded.lowContrast, [], `${theme} ${page} expanded ${width}px: text contrast below 4.5:1 ${expanded.lowContrast.join("; ")}`);
             assert(expanded.minFont >= 11, `${theme} ${page} expanded: minimum font size`);
           }
+          if(page==='review') {
+            assert(g.reviewHeader?.sameRow&&g.reviewHeader.gap>=0&&g.reviewHeader.gap<=16,theme+' '+width+'px: chart/table switch must stay next to its title '+JSON.stringify(g.reviewHeader));
+            if(g.reviewBarStates.zero)assert(!g.reviewBarStates.zero.outline&&g.reviewBarStates.zero.height<=.5&&g.reviewBarStates.zero.badge,'zero today keeps the date badge but no false bar outline');
+            if(g.reviewBarStates.filled)assert(g.reviewBarStates.filled.outline&&g.reviewBarStates.filled.height>0&&g.reviewBarStates.filled.badge,'nonzero today retains its existing highlight');
+          }
           assert(g.barOverflow <= 1, `${theme} ${page} ${width}px: top bar overflows by ${g.barOverflow}px`);
           assert(!g.zoneOverlap, `${theme} ${page} ${width}px: top bar zones overlap ${JSON.stringify(g)}`);
           assert(g.referenceControls.every(c => c.stable && c.selected && Math.max(...c.heights) - Math.min(...c.heights) <= .5), `${theme} ${page} ${width}px: shared segments jump or have duplicate emphasis`);
@@ -417,6 +459,10 @@ if (!browser) {
           assert.deepEqual(g.tipBackground, theme === "light" ? [255,255,255] : [30,30,34], `${theme}: tooltip should use the theme panel surface`);
           assert(g.minFont >= 11, `${theme} ${page} ${width}px: text below 11px (${g.minFont}px at ${g.minAt})`);
           assert.deepEqual(g.lowContrast, [], `${theme} ${page} ${width}px: text contrast below 4.5:1: ${g.lowContrast.join("; ")}`);
+          if(g.weekSchedule){
+            const w=g.weekSchedule;
+            assert(Math.abs(w.viewport-w.expectedViewport)<=1&&w.footerGap>=12&&w.endLabelGap>=12&&Math.abs(w.hourStep-56)<=.5,theme+' '+width+'px: week schedule bottom extension must preserve its hour scale and 24:00 '+JSON.stringify(w));
+          }
           assert.deepEqual(g.weekEndClipped, [], `${theme} ${page} ${width}px: clipped weekly 24:00 boundary ${g.weekEndClipped.join(", ")}`);
           if (page === "today") {
             assert.deepEqual(g.planHandleErrors, [], `${theme} ${width}px: plan resize handles are misaligned: ${g.planHandleErrors.join("; ")}`);
@@ -469,6 +515,27 @@ if (!browser) {
       assert(n && !n.hidden && n.count>=8 && n.height===180 && n.rows.every(h=>Math.abs(h-36)<.5) && n.firstVisible===5 && n.scroll>0 && n.lastVisible && n.widthAligned && n.belowInput && n.viewportFits && n.overflow==="auto", `${theme} ${kind} ${width}px: five-row internal scrolling history list ${JSON.stringify(n)}`);
       assert(g.minFont>=11 && g.lowContrast.length===0, `${theme} ${kind}: readable history candidates`);
       console.log(`ok   history list ${theme} ${kind} ${width}px: five visible rows, internal scrolling, aligned and unclipped`);
+    }
+    for(const theme of ['light','dark']) for(const width of [1000,600,390]) {
+      const g=run(theme,'modal-actual',width),a=g.unifiedActual;
+      assert(a&&a.modes.join('|')==='seg:todo|seg:money'&&a.duration==='60'&&a.comparison.includes('预计 45min · 实际 1h · 超出 15min')&&a.inputsFit&&a.overflow<=1,theme+' '+width+'px: unified actual form layout '+JSON.stringify(a));
+      assert(g.minFont>=11&&g.lowContrast.length===0,theme+' '+width+'px: unified actual form readability');
+      console.log('ok   unified actual form '+theme+' '+width+'px: two modes, actual/estimate comparison, visible controls');
+    }
+    for(const theme of ['light','dark']) for(const width of [1400,390]) {
+      const g=run(theme,'today-empty',width),d=g.emptyDonut;
+      assert(d?.width===120&&d.height===120&&d.contained&&d.center==='0h'&&d.sub==='覆盖 0%'&&d.circles===1&&d.slices===0&&d.baseVisible&&d.cardOverflow<=1,theme+' '+width+'px: empty distribution ring missing, clipped or filled with fake slices '+JSON.stringify(d));
+      assert(g.minFont>=11&&g.lowContrast.length===0&&g.simplifyErrors.length===0,theme+' '+width+'px: empty donut readability and sidebar structure');
+      console.log('ok   empty donut '+theme+' '+width+'px: neutral ring, zero center, no slices or clipping');
+    }
+    for(const theme of ['light','dark']) for(const width of [1400,390]) for(const [period,count] of [['week',7],['month',29],['year',12]]) {
+      const g=run(theme,'review-empty-'+period,width),e=g.emptyReview;
+      assert(e?.metrics&&e.details&&e.chartHeight>=180&&e.gridHeight>=180&&e.buckets===count&&e.zeroBars&&!e.invalid&&e.bodyOverflow<=1,theme+' '+period+' '+width+'px: empty review chart and structure '+JSON.stringify(e));
+      assert(g.reviewHeader?.sameRow&&g.reviewHeader.gap>=0&&g.reviewHeader.gap<=16,theme+' '+period+' '+width+'px: empty chart controls shifted away from their title '+JSON.stringify(g.reviewHeader));
+      assert(g.reviewBarStates.zero?.height<=.5&&!g.reviewBarStates.zero.outline&&g.reviewBarStates.zero.badge,'empty today keeps its date badge without drawing a zero-height bar outline');
+      assert(g.minFont>=11&&g.lowContrast.length===0&&g.barOverflow<=1,theme+' '+period+' '+width+'px: empty review readability or overflow');
+      if(period==='year')assert(g.heatCells.length===366&&g.heatCells.every(cell=>cell.width>0&&Math.abs(cell.width-cell.height)<=.75),'empty leap year heatmap remains visible and square');
+      console.log('ok   empty review '+theme+' '+period+' '+width+'px: zero buckets, visible chart, details, no overflow');
     }
     for (const theme of ["light", "dark"]) for (const width of [1560, 1000, 600, 390]) {
       const g = run(theme, "review-year", width);
