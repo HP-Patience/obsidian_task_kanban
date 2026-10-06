@@ -43,10 +43,64 @@ for(const mode of ['calendar','gantt','list'])for(const period of ['day','week',
   const dayRows=rows.filter(row=>row.dataset.date===D);assert(dayRows.findIndex(row=>row.dataset.taskId==='early')<dayRows.findIndex(row=>row.dataset.taskId==='late'));
   assert(root.querySelector('.lubi-plan-list-parent')?.textContent==='parent');
  }
+ if(mode==='calendar'&&period==='day') {
+  const side=root.querySelector('.lubi-task-lists');
+  assert(side.previousElementSibling.classList.contains('lubi-planning-main'),'day timeline precedes right sidebar in reading/tab order');
+  assert.equal(side.querySelectorAll('.lubi-distribution').length,1);
+  assert.equal(side.querySelectorAll('.lubi-plan-card').length,1);
+  assert.equal(side.querySelectorAll('.lubi-list-card').length,1,'only inbox, no duplicate Today list');
+  assert(side.querySelector('.lubi-plan-task-details').open,'day plans expanded by default');
+  assert.equal(side.querySelector('.lubi-donut-center').textContent,'0.3h','distribution uses actual, not planned duration');
+  assert.equal(side.querySelector('.lubi-legend-pct').textContent,'100%');
+  const tasks=[...side.querySelectorAll('.lubi-plan-task-list .lubi-task')];
+  assert(tasks.findIndex(t=>t.dataset.taskId==='early')<tasks.findIndex(t=>t.dataset.taskId==='late'));
+  assert(tasks.findIndex(t=>t.dataset.taskId==='late')<tasks.findIndex(t=>t.dataset.taskId==='all-day'),'untimed after timed');
+  const progress=side.querySelector('[role="progressbar"]');
+  assert.equal(Number(progress.getAttribute('aria-valuemax')),tasks.length);
+  assert.equal(Number(progress.getAttribute('aria-valuenow')),1,'repeat completion is for selected occurrence');
+  assert.deepEqual([...side.children].map(e=>e.classList.contains('lubi-distribution')?'distribution':e.classList.contains('lubi-plan-card')?'plans':'inbox'),['distribution','plans','inbox']);
+ } else assert(!root.querySelector('.lubi-task-lists .lubi-distribution, .lubi-task-lists .lubi-plan-card'),'other presentations retain existing sidebar');
  assert(!root.querySelector('.lubi-planning-main [data-task-id="record"]'));
  assert(!root.querySelector('.lubi-task-lists [data-task-id="span"]')||mode!=='list');
 }
 assert.equal(JSON.stringify([...app.vault.files]),dataBefore,'viewing all nine combinations never writes task or journal data');
+// Shared distribution is identical to daily; refreshing preserves the chosen fold state.
+await press('schedule:calendar');await press('planning-period:day');
+const distribution=()=>root.querySelector('.lubi-distribution').innerHTML.replace(/lubi-tooltip-label-\d+/g,'lubi-tooltip-label');
+const snapshot=distribution();
+view.show('today',D);await settle();assert.equal(distribution(),snapshot);
+view.show('tasks',D);await settle();
+root.querySelector('.lubi-plan-task-details').open=false;view.refresh();await settle();assert(!root.querySelector('.lubi-plan-task-details').open);
+await press('planning:next');assert(root.querySelector('.lubi-plan-task-details').open);
+assert.equal(root.querySelector('.lubi-donut-center').textContent,'0h','date navigation reloads summary');
+view.show('tasks',D);await settle();
+const beforeComplete=journal();
+root.querySelector('.lubi-plan-task-list [data-task-id="early"] input').click();await settle();
+assert.equal(root.querySelector('.lubi-plan-progress').getAttribute('aria-valuenow'),'2');
+assert(root.querySelector('.lubi-plan-task-list [data-task-id="early"]').classList.contains('is-done'));
+root.querySelector('.lubi-plan-task-list [data-task-id="early"] input').click();await settle();
+assert.equal(root.querySelector('.lubi-plan-progress').getAttribute('aria-valuenow'),'1');
+assert.equal(journal(),beforeComplete,'progress rendering does not create records with automatic logging disabled');
+// Linked actuals count once toward the same completed-or-recorded metric as daily.
+await plugin.journal.add({date:D,start:'16:00',minutes:45,category:'学习',title:'linked actual',task:'late',extra:{}});
+view.refresh();await settle();assert.equal(root.querySelector('.lubi-plan-progress').getAttribute('aria-valuenow'),'2');
+assert.equal(root.querySelector('.lubi-donut-center').textContent,'1.1h');
+// Shared summary read errors surface in the existing page error boundary.
+const originalRead=plugin.journal.read;plugin.journal.read=async()=>{throw new Error('synthetic summary read failure')};
+view.refresh();await settle();assert(root.querySelector('.lubi-error'));
+plugin.journal.read=originalRead;view.refresh();await settle();assert(!root.querySelector('.lubi-error'));
+// New day card keeps the existing inbox drop and quick-add paths.
+await plugin.tasks.upsert(task('day-drop'));view.refresh();await settle();
+const card=root.querySelector('.lubi-plan-card');
+const event=new window.Event('drop',{bubbles:true,cancelable:true});
+Object.defineProperty(event,'dataTransfer',{value:{types:['text/lubi-task'],getData:t=>t==='text/lubi-task'?'day-drop':'',dropEffect:''}});
+card.dispatchEvent(event);await settle();
+assert.equal(plugin.tasks.byId('day-drop').date,D);
+assert(root.querySelector('.lubi-plan-task-list [data-task-id="day-drop"]').draggable);
+assert(!root.querySelector('.lubi-list-card [data-task-id="day-drop"]'),'scheduled drop leaves inbox');
+const input=root.querySelector('.lubi-quick-add input');input.value='day quick add';
+input.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await settle();
+assert(plugin.tasks.all.some(t=>t.title==='day quick add'&&t.date===D));
 // Month-end navigation is shared by every presentation.
 for(const mode of ['calendar','gantt','list']) {
  await press(`schedule:${mode}`);await press('planning-period:month');view.show('tasks','2026-01-31');await settle();
@@ -83,6 +137,15 @@ for(const mode of ['calendar','gantt','list'])for(const period of ['day','week',
  const state=emptyView.tasksState;state.scheduleView=mode;state.period=period;emptyView.show('tasks',D);await settle();const host=emptyView.contentEl;
  assert(host.querySelector('.lubi-planning-period-switch'));assert(!host.querySelector('.lubi-error'));
  assert(host.querySelector(mode==='calendar'?(period==='month'?'.lubi-month-calendar':'.lubi-week'):mode==='gantt'?'.lubi-gantt-heading':'.lubi-plan-list-date'));
+ if(mode==='calendar'&&period==='day') {
+  assert(host.querySelector('.lubi-distribution svg circle'),'empty ring retained');
+  assert.equal(host.querySelector('.lubi-donut-center').textContent,'0h');
+  assert(host.querySelector('.lubi-distribution').textContent.includes('暂无记录'));
+  assert(host.querySelector('.lubi-plan-card').textContent.includes('0/0 已做'));
+  assert.equal(host.querySelector('.lubi-plan-progress-fill').style.width,'0%');
+  assert(host.querySelector('.lubi-plan-task-details').open);
+  assert(host.querySelector('.lubi-plan-task-details').textContent.includes('暂无安排'));
+ }
 }
 assert(!root.querySelector('.lubi-error'));emptyPlugin.onunload();plugin.onunload();await view.onClose();await fresh.view.onClose();await emptyView.onClose();
 console.log('PASS planning interactions: nine modes, shared navigation, clean views, date moves, recurrence edit/completion, parent context, empty axes and session defaults');

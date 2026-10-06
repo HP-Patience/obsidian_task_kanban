@@ -276,7 +276,7 @@ export class DashboardView extends ItemView {
           Object.assign(this.review, s);
           void this.render();
         });
-      else renderTasks(this.plugin, host, this.tasksState.selectedDate, this.tasksState, rerender);
+      else await renderTasks(this.plugin, host, this.tasksState.selectedDate, this.tasksState, rerender);
     } catch (e) {
       host.empty();
       const err = host.createDiv({ cls: "lubi-error" });

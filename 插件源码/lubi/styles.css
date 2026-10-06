@@ -1434,6 +1434,10 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-root .lubi-planning-head { flex-wrap: wrap; gap: 8px 12px; margin-bottom: 0; }
 .lubi-planning-head .lubi-seg { flex-shrink: 0; }
 .lubi-root .lubi-planning-top { grid-template-columns: 240px minmax(0, 1fr); }
+/* 日历·日复用每日页两张摘要卡，不嵌套大卡或挤压环形图。 */
+.lubi-root .lubi-planning.is-calendar-day .lubi-planning-top { grid-template-columns: minmax(0, 1fr) 300px; }
+.lubi-root .lubi-planning.is-calendar-day .lubi-task-lists { gap: var(--lubi-gap-3); }
+.lubi-root .lubi-planning.is-calendar-day .lubi-task-lists > .lubi-list-card { margin-top: 0; padding-top: var(--lubi-gap-4); border: 1px solid var(--lubi-line); }
 .lubi-root .lubi-planning .lubi-planning-main,
 .lubi-root .lubi-planning .lubi-week-card { display: block; min-width: 0; }
 .lubi-planning .lubi-task-meta { font-size: 11px; }
@@ -1465,7 +1469,7 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-plan-list-empty { padding: 16px 0; font-size: 12px; }
 .lubi-plan-range-list .lubi-task { padding: 7px 0; }
 @container (max-width: 820px) {
-  .lubi-root .lubi-planning-top { grid-template-columns: minmax(0, 1fr); }
+  .lubi-root .lubi-planning-top, .lubi-root .lubi-planning.is-calendar-day .lubi-planning-top { grid-template-columns: minmax(0, 1fr); }
   .lubi-planning-main { grid-row: 1; }
   .lubi-planning-head .lubi-schedule-range { margin-left: auto; }
   .lubi-planning .lubi-week { min-width: 660px; }
@@ -1474,7 +1478,7 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 }
 @supports not (container-type: inline-size) {
   @media (max-width: 820px) {
-    .lubi-root .lubi-planning-top { grid-template-columns: minmax(0, 1fr); }
+    .lubi-root .lubi-planning-top, .lubi-root .lubi-planning.is-calendar-day .lubi-planning-top { grid-template-columns: minmax(0, 1fr); }
     .lubi-planning-main { grid-row: 1; }
     .lubi-planning .lubi-week-card { overflow-x: auto; }
     .lubi-planning .lubi-week { min-width: 660px; }
