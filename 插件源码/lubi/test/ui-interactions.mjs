@@ -10,18 +10,28 @@ const check=(value,message)=>{console.log((value?'ok  ':'FAIL ')+message);if(!va
 const D='2026-09-24';
 const {blankTask}=await import('./core.mjs');await plugin.tasks.upsert(blankTask({id:'history-candidate',title:'可主动选择的历史任务',category:'学习'}));let Record;
 const view=await plugin.activateView('today',D);await tick();const root=view.contentEl;
-check([...root.querySelectorAll('.lubi-topbar-tabs button')].map(x=>x.dataset.lubiFocus).join('|')==='seg:today|seg:tasks|seg:review','top tabs are daily/plan/review');
+// Header buttons keep accessible names, but never custom or native tooltips.
+for(const button of root.querySelectorAll('.lubi-topbar button, .lubi-planning-head button')) {
+ const target=button.querySelector('svg,span')||button;
+ target.dispatchEvent(new window.MouseEvent('pointermove',{bubbles:true,clientX:200,clientY:30,buttons:0}));await new Promise(r=>setTimeout(r,300));
+ check(!document.querySelector('.lubi-tip'),'header hover remains quiet: '+button.dataset.lubiFocus);
+ button.focus();await tick();check(!document.querySelector('.lubi-tip'),'header focus remains quiet: '+button.dataset.lubiFocus);button.blur();
+ check(!button.hasAttribute('title')&&!button.hasAttribute('aria-label')&&!button.hasAttribute('data-lubi-tip'),'header has no tooltip attributes: '+button.dataset.lubiFocus);
+ const labelled=document.getElementById(button.getAttribute('aria-labelledby'));
+ check(!!labelled?.textContent?.trim()||!!button.textContent.trim(),'header keeps its accessible name: '+button.dataset.lubiFocus);
+}
+check([...root.querySelectorAll('.lubi-topbar-tabs button')].map(x=>x.dataset.lubiFocus).join('|')==='seg:tasks|seg:review','top tabs are plan/review only');
 for(const [i,tab] of [...root.querySelectorAll('.lubi-topbar-tabs button')].entries()) {
-  const label=['每日','计划','回顾'][i];
+  const label=['计划','回顾'][i];
   check(!tab.hasAttribute('data-lubi-tip')&&!tab.hasAttribute('title')&&!tab.hasAttribute('aria-label'),label+' tab has no custom or native hover hint');
   check(document.getElementById(tab.getAttribute('aria-labelledby'))?.textContent===label&&tab.getAttribute('aria-keyshortcuts')===String(i+1),label+' tab retains an explicit accessible name and shortcut');
   tab.dispatchEvent(new window.MouseEvent('pointermove',{bubbles:true,clientX:200,clientY:30,buttons:0}));await new Promise(r=>setTimeout(r,300));
   check(!document.querySelector('.lubi-tip'),label+' tab hover shows no tooltip');
   tab.focus();await tick();check(!document.querySelector('.lubi-tip'),label+' tab focus shows no tooltip');tab.blur();
-  tab.click();await tick();check(view.tab===['today','tasks','review'][i],label+' tab still switches pages');
+  tab.click();await tick();check(view.tab===['tasks','review'][i],label+' tab still switches pages');
 }
 
-view.show('tasks',D);await tick();
+view.tasksState.period='week';view.show('tasks',D);await tick();
 const headerDates=[...root.querySelectorAll('.lubi-week-day-button')].map(button=>document.getElementById(button.getAttribute('aria-labelledby')).textContent.match(/\d{4}-\d{2}-\d{2}/)[0]);
 check(headerDates.length===7,'week schedule keeps seven date headers');
 for(const [i,date] of headerDates.entries()) {
@@ -40,7 +50,7 @@ for(const type of ['dragover','drop']) { const event=new window.Event(type,{bubb
 check(plugin.tasks.byId('quiet-header-drop').date===headerDates[3]&&plugin.tasks.byId('quiet-header-drop').start==='','quiet week header still schedules a dropped task as all-day');
 for(const page of ['today','tasks']){view.show(page,D);await tick();view.openNew();await tick();let modal=O.openModals.at(-1);check(!modal.contentEl.contains(document.activeElement)||!document.activeElement.matches('input[type=text]'),'opening '+page+' does not focus the title');check([...modal.contentEl.querySelectorAll('.lubi-name-options')].every(x=>x.hidden),'opening '+page+' does not open history');if(page==='today'){[...modal.contentEl.querySelectorAll('.lubi-kind-seg button')].find(x=>x.textContent.includes('支出')).click();await tick();modal=O.openModals.at(-1);Record=modal.constructor;check(!document.activeElement.matches('input[type=text]'),'opening expense does not focus title')}if(page==='tasks'){const input=modal.contentEl.querySelector('[role=combobox]');input.focus();await tick();check(!modal.contentEl.querySelector('.lubi-name-options').hidden,'explicit input focus still opens history')}modal.close()}
 const money=plugin.settings.categories.find(c=>c.kind==='money');const expense=new Record(app,plugin,{date:D,defaults:{category:money.name}});expense.open();await tick();check(!document.activeElement.matches('input[type=text]'),'initial expense opening does not focus title');expense.close();
-for(const [key,page] of [['1','today'],['2','tasks'],['3','review']]){root.dispatchEvent(new window.KeyboardEvent('keydown',{key,bubbles:true}));await tick();check(view.tab===page,'shortcut '+key+' follows new tab order')}
+for(const [key,page] of [['1','tasks'],['2','review']]){root.dispatchEvent(new window.KeyboardEvent('keydown',{key,bubbles:true}));await tick();check(view.tab===page,'shortcut '+key+' follows new tab order')}
 const donutDate='2096-02-15';
 for(const expenseOnly of [false,true]) {
   if(expenseOnly)await plugin.journal.add({date:donutDate,start:'12:00',minutes:0,category:money.name,title:'合成支出',amount:15,expenseType:'餐饮',extra:{}});
@@ -82,7 +92,7 @@ const planMeta=root.querySelector('.lubi-plan-task-list .lubi-task-meta-time');
 check(planMeta?.textContent==='09:00'&&planMeta.parentElement.textContent.includes('09:00 · 1h'),'daily plan preserves metadata text and separates time styling');
 const progress=root.querySelector('.lubi-plan-progress');
 check(progress?.getAttribute('aria-valuetext')===`${progress.getAttribute('aria-valuenow')}/${progress.getAttribute('aria-valuemax')} 已完成或已有记录`,'daily progress exposes the unchanged completion count');
-const shortHint=root.querySelector('.lubi-topbar .lubi-icon-btn');shortHint.focus();await tick();check(document.querySelector('.lubi-tip')?.classList.contains('is-label'),'short button hint uses compact presentation');shortHint.blur();
+const shortHint=root.querySelector('.lubi-block-actions .lubi-icon-btn');shortHint.focus();await tick();check(document.querySelector('.lubi-tip')?.classList.contains('is-label'),'short button hint uses compact presentation');shortHint.blur();
 root.querySelector('.lubi-block').focus();await tick();check(!!document.querySelector('.lubi-task-tip-title')&&!document.querySelector('.lubi-tip').classList.contains('is-label'),'task detail card keeps its richer presentation');root.querySelector('.lubi-block').blur();
 const before=JSON.stringify([...app.vault.files]);
 const pointer=(target,type,y)=>{const e=new window.MouseEvent(type,{bubbles:true,cancelable:true,clientX:200,clientY:y,button:0});Object.defineProperty(e,'pointerId',{value:99});target.dispatchEvent(e)};

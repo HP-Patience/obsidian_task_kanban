@@ -14,6 +14,18 @@ assert.equal(TaskForm.name,'TaskModal');assert.deepEqual([...first.contentEl.que
 const set=(modal,selector,value,event='input')=>{const input=modal.contentEl.querySelector(selector);assert(input,selector);input.value=value;input.dispatchEvent(new window.Event(event,{bubbles:true}));};
 const open=async opts=>{const modal=new TaskForm(app,plugin,{recordDate:D,...opts});modal.open();await modal.actualLoading;await wait(5);return modal};
 const rows=async id=>(await plugin.journal.read(D)).filter(r=>r.rec.task===id);
+// One shared new-task view for topbar creation and the right planning-lane selection.
+const formShape=m=>[...m.contentEl.querySelectorAll('label, .lubi-actual-details > summary, .lubi-kind-seg button')].map(e=>e.textContent);
+const checkNewForm=m=>{assert.equal(m.constructor,TaskForm);const d=m.contentEl.querySelector('.lubi-actual-details');assert(d&&!d.hidden&&d.open);assert.equal(d.querySelector('summary').textContent,'实际发生时间');assert(m.contentEl.querySelector('[data-actual=date]'));assert(m.contentEl.querySelector('[data-actual=start]'));assert(!m.contentEl.textContent.includes('留空保存计划；填写实际用时后保存并完成任务'));};
+view.openNew();await wait(40);let header=O.openModals.at(-1);checkNewForm(header);const shape=formShape(header);assert(header.contentEl.querySelector('.lubi-actual-hint').hidden);
+set(header,'[data-actual=minutes]','3.08h');set(header,'[data-actual=start]','07:00','change');assert(header.contentEl.querySelector('.lubi-actual-hint').hidden);assert(!header.contentEl.textContent.includes('实际 3.08h'));header.close();
+await plugin.tasks.upsert(blankTask({id:'shared-form-plan-lane',title:'合成规划区域',date:D,start:'07:45',estimate:160,category:'学习'}));view.show('today',D);await wait(220);
+const canvas=view.contentEl.querySelector('.lubi-tl-canvas'),lane=canvas.querySelector('.lubi-plan-lane');assert(lane);canvas.getBoundingClientRect=()=>({top:100,left:100,right:500,width:400,height:1344,bottom:1444});lane.getBoundingClientRect=()=>({top:68,left:350,right:500,width:150,height:1376,bottom:1444});
+const pointer=(target,type,minute)=>{const e=new window.MouseEvent(type,{bubbles:true,cancelable:true,clientX:425,clientY:100+minute*56/60,button:0});Object.defineProperty(e,'pointerId',{value:7401});target.dispatchEvent(e)};
+const beforeSelection=JSON.stringify([...app.vault.files]);pointer(canvas,'pointerdown',465);pointer(window,'pointermove',625);pointer(window,'pointerup',625);await wait(40);
+let selected=O.openModals.at(-1);checkNewForm(selected);assert.deepEqual(formShape(selected),shape);assert.equal(selected.t.start,'07:45');assert.equal(selected.t.estimate,160);assert.equal(selected.contentEl.querySelector('[data-actual=minutes]').value,'');assert(selected.contentEl.querySelector('.lubi-actual-hint').hidden);selected.close();assert.equal(JSON.stringify([...app.vault.files]),beforeSelection,'cancelled shared form writes nothing');
+await plugin.tasks.remove('shared-form-plan-lane');view.show('today',D);await wait(220);
+
 let modal=await open({defaults:{title:'计划与实际',date:D,start:'09:00',estimate:45}});set(modal,'[data-actual=minutes]','60');set(modal,'[data-actual=start]','10:00','change');await modal.save();
 let task=plugin.tasks.all.find(t=>t.title==='计划与实际'),id=task.id,record=(await rows(id))[0].rec;
 assert.equal(task.status,'done');assert.equal(task.start,'09:00');assert.equal(task.estimate,45);assert.equal(record.start,'10:00');assert.equal(record.minutes,60);assert.equal(record.estimatedMinutes,45);assert(!record.extra[PENDING_KEY]);assert.equal(task.doneLogs[D].start,'10:00');assert(!Object.hasOwn(task,'actualMinutes'));assert.equal(JSON.parse(app.vault.files.get('任务/任务数据.json')).version,14);

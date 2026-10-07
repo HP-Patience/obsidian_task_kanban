@@ -118,6 +118,7 @@
 /* 每日页与任务页共用顶栏日期导航；回顾页显示周期上下文 */
 .lubi-root[data-tab="review"] .lubi-day-nav { display: none; }
 
+.lubi-root[data-tab="tasks"] .lubi-body { scrollbar-gutter: stable; }
 .lubi-body { overflow-anchor: none; flex: 1; min-height: 0; overflow: auto; background: var(--background-secondary); }
 .lubi-page { padding: var(--lubi-gap-4); min-height: 100%; box-sizing: border-box; }
 
@@ -838,8 +839,9 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-topbar-left { display: flex; align-items: center; min-width: 0; }
 .lubi-root .lubi-topbar-tabs { justify-self: center; }
 .lubi-root .lubi-topbar-right { justify-self: end; margin-left: 0; gap: 6px; }
+.lubi-root[data-tab="review"] :is(.lubi-topbar-import, .lubi-topbar-ai) { display: none !important; }
 .lubi-context { font-weight: 600; font-size: var(--lubi-fs-md); color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 4px; }
-.lubi-root[data-tab="today"] .lubi-context, .lubi-root[data-tab="tasks"] .lubi-context { display: none; }
+.lubi-root[data-tab="tasks"] .lubi-context { display: none; }
 .lubi-root .lubi-date-label, .lubi-root button.lubi-date-label.is-today, .lubi-root .lubi-date-label.is-today { color: var(--text-normal); display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .lubi-today-badge {
   display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: var(--lubi-radius-pill);
@@ -1086,10 +1088,9 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 
 /* ---------- 窄面板 ---------- */
 @container (max-width: 720px) {
-  .lubi-root .lubi-topbar-tabs .lubi-seg-item > span:not(.lubi-icon) { display: none; }
   .lubi-root .lubi-topbar-tabs .lubi-seg-item { padding: 0 10px; }
-  .lubi-root .lubi-topbar-cta > span:not(.lubi-icon), .lubi-kbd-cta { display: none; }
-  .lubi-root .lubi-topbar-cta { padding: 0 9px; }
+  .lubi-root .lubi-topbar-import > span:not(.lubi-icon), .lubi-root .lubi-topbar-ai > span:not(.lubi-icon), .lubi-root .lubi-topbar-cta > span:not(.lubi-icon), .lubi-kbd-cta { display: none; }
+  .lubi-root .lubi-topbar-import, .lubi-root .lubi-topbar-ai, .lubi-root .lubi-topbar-cta { padding: 0 9px; }
   .lubi-root .lubi-date-label { min-width: 0; }
   .lubi-today-badge { display: none; }
 }
@@ -1099,6 +1100,7 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
   .lubi-root .lubi-topbar-right { grid-column: 2; grid-row: 1; }
   .lubi-root .lubi-topbar-tabs { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; }
   .lubi-root .lubi-day-nav { width: auto; justify-content: flex-start; }
+  .lubi-root .lubi-date-label > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 @media (pointer: coarse) {
   .lubi-root button.lubi-gap-btn:not(.clickable-icon) { opacity: 1; pointer-events: auto; }
@@ -1433,9 +1435,13 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 /* Unified planning views: keep controls visible at every width, scroll only the plot. */
 .lubi-root .lubi-planning-head { flex-wrap: wrap; gap: 8px 12px; margin-bottom: 0; }
 .lubi-planning-head .lubi-seg { flex-shrink: 0; }
-.lubi-root .lubi-planning-top { grid-template-columns: 240px minmax(0, 1fr); }
+.lubi-root .lubi-planning-top { grid-template-columns: minmax(0, 1fr) 300px; }
 /* 日历·日复用每日页两张摘要卡，不嵌套大卡或挤压环形图。 */
-.lubi-root .lubi-planning.is-calendar-day .lubi-planning-top { grid-template-columns: minmax(0, 1fr) 300px; }
+.lubi-calendar-day { min-width: 0; }
+.lubi-calendar-day .lubi-today-main, .lubi-calendar-day .lubi-today-side { grid-row: auto; }
+.lubi-planning-head .lubi-today-summary { min-width: 0; }
+.lubi-planning-head .lubi-summary-item { white-space: nowrap; }
+.lubi-root .lubi-calendar-day .lubi-timeline-scroll { height: max(320px, calc(var(--lubi-panel-height, 840px) - 180px)); }
 .lubi-root .lubi-planning.is-calendar-day .lubi-task-lists { gap: var(--lubi-gap-3); }
 .lubi-root .lubi-planning.is-calendar-day .lubi-task-lists > .lubi-list-card { margin-top: 0; padding-top: var(--lubi-gap-4); border: 1px solid var(--lubi-line); }
 .lubi-root .lubi-planning .lubi-planning-main,
@@ -1468,8 +1474,8 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-plan-list-parent { display: block; font-size: 11px; overflow-wrap: anywhere; }
 .lubi-plan-list-empty { padding: 16px 0; font-size: 12px; }
 .lubi-plan-range-list .lubi-task { padding: 7px 0; }
-@container (max-width: 820px) {
-  .lubi-root .lubi-planning-top, .lubi-root .lubi-planning.is-calendar-day .lubi-planning-top { grid-template-columns: minmax(0, 1fr); }
+@container (max-width: 900px) {
+  .lubi-root .lubi-planning-top { grid-template-columns: minmax(0, 1fr); }
   .lubi-planning-main { grid-row: 1; }
   .lubi-planning-head .lubi-schedule-range { margin-left: auto; }
   .lubi-planning .lubi-week { min-width: 660px; }
@@ -1477,8 +1483,8 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
   .lubi-planning .lubi-week-card { overflow-x: auto; }
 }
 @supports not (container-type: inline-size) {
-  @media (max-width: 820px) {
-    .lubi-root .lubi-planning-top, .lubi-root .lubi-planning.is-calendar-day .lubi-planning-top { grid-template-columns: minmax(0, 1fr); }
+  @media (max-width: 900px) {
+    .lubi-root .lubi-planning-top { grid-template-columns: minmax(0, 1fr); }
     .lubi-planning-main { grid-row: 1; }
     .lubi-planning .lubi-week-card { overflow-x: auto; }
     .lubi-planning .lubi-week { min-width: 660px; }
@@ -1489,3 +1495,18 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-planning .lubi-week, .lubi-month-calendar { position: relative; }
 .lubi-root .lubi-planning .lubi-wblock.is-done .lubi-wblock-title::before { content: none; }
 .lubi-root .lubi-planning button.lubi-allday-chip.is-done:not(.clickable-icon) { --chip: var(--text-muted); color: var(--text-muted); background: var(--background-secondary); text-decoration: line-through; opacity: 1; }
+
+/* JSON exchange stays local, using the existing modal and settings surfaces. */
+.lubi-json-import-modal .lubi-json-import-input, .lubi-settings .lubi-json-prompt { width: 100%; min-height: 200px; box-sizing: border-box; resize: vertical; font-family: var(--font-monospace, monospace); font-size: 12px; line-height: 1.5; }
+.lubi-json-import-modal { width: min(620px, calc(100vw - 24px)); }
+.lubi-json-import-modal .lubi-form-error[hidden] { display: none; }
+
+/* Settings model candidates use theme tokens, not the native OS datalist. */
+.lubi-settings .lubi-model-picker { display: grid; grid-template-columns: minmax(0, 1fr) 30px; gap: 0; width: 100%; min-width: 0; text-align: left; }
+.lubi-settings .lubi-settings-section .lubi-model-picker > input[type="text"] { grid-column: 1; grid-row: 1; width: 100%; min-width: 0; height: 30px; box-sizing: border-box; border-radius: 6px 0 0 6px; }
+.lubi-settings button.lubi-model-toggle { grid-column: 2; grid-row: 1; width: 30px; height: 30px; padding: 0; border: 1px solid var(--background-modifier-border); border-left: 0; border-radius: 0 6px 6px 0; background: var(--background-primary); color: var(--text-normal); }
+.lubi-settings .lubi-model-options { grid-column: 1 / -1; width: 100%; min-width: 0; max-height: 180px; overflow-y: auto; overscroll-behavior: contain; margin-top: 4px; border: 1px solid var(--background-modifier-border); border-radius: 6px; box-sizing: border-box; background: var(--background-primary); color: var(--text-normal); }
+.lubi-model-options[hidden] { display: none; }
+.lubi-model-option { display: flex; align-items: center; min-height: 36px; padding: 6px 10px; box-sizing: border-box; overflow-wrap: anywhere; font-size: 13px; text-align: left; cursor: pointer; }
+.lubi-model-option:hover, .lubi-model-option[aria-selected="true"] { background: var(--background-modifier-hover); }
+.lubi-model-empty { padding: 10px; font-size: 12px; color: var(--text-muted); }

@@ -84,6 +84,8 @@ export class Tasks {
   private loaded = false;
   private loadBlocked = false;
   private writing: Promise<void> = Promise.resolve();
+  private diskText: string | null = null;
+  lastImportBackup: string | null = null;
   /** 迁移发生时记录备份路径，供 UI 提示 */
   lastMigrationBackup: string | null = null;
   lastLoadError: string | null = null;
@@ -106,10 +108,12 @@ export class Tasks {
     const f = this.app.vault.getAbstractFileByPath(this.filePath());
     if (!(f instanceof TFile)) {
       this.store = { version: 14, tasks: [] };
+      this.diskText = null;
       this.loaded = true;
       return;
     }
     const raw = await this.app.vault.read(f);
+    this.diskText = raw;
     let data: unknown = null;
     try {
       data = JSON.parse(raw);
@@ -128,7 +132,7 @@ export class Tasks {
     this.lastLoadError = null;
     const obj = (data || {}) as { version?: number; tasks?: unknown[] };
     if (obj.version === 14 && Array.isArray(obj.tasks)) {
-      this.store = { version: 14, tasks: obj.tasks.map((t) => normalize(t as Partial<Task>)) };
+      this.store = { ...obj, version: 14, tasks: obj.tasks.map((t) => normalize(t as Partial<Task>)) };
     } else if (Array.isArray(obj.tasks)) {
       // 旧版 (v13 及更早) → 先备份再迁移
       const backup = normalizePath(`${this.settings().backupFolder}/迁移前-任务数据-v${obj.version ?? 0}-${stamp()}.json`);
@@ -143,19 +147,51 @@ export class Tasks {
     this.loaded = true;
   }
 
-  private async persist(): Promise<void> {
+  private async persist(added: Task[] = []): Promise<void> {
     if (this.loadBlocked) throw new Error(this.lastLoadError || "任务数据无法写入：数据加载失败。");
-    const text = JSON.stringify(this.store, null, 2);
     const next = this.writing.catch(() => undefined).then(async () => {
       const p = this.filePath();
       await ensureFolder(this.app, p.slice(0, p.lastIndexOf("/")));
       const f = this.app.vault.getAbstractFileByPath(p);
+      if (added.length) {
+        const ids = new Set(this.store.tasks.map(task => task.id));
+        for (const task of added) { if (ids.has(task.id)) throw new Error("任务 ID 重复，未导入");ids.add(task.id); }
+        if (f instanceof TFile) {
+          const before = await this.app.vault.read(f);
+          if (before !== this.diskText) throw new Error("任务文件已在外部更新，请刷新后重新导入");
+          let raw: { version?: number; tasks?: unknown[] };
+          try { raw = JSON.parse(before); } catch { throw new Error("任务文件 JSON 无效，未导入"); }
+          if (raw?.version !== 14 || !Array.isArray(raw.tasks)) throw new Error("任务文件格式无效，未导入");
+          const backup = normalizePath(`${this.settings().backupFolder}/导入前-任务数据-${stamp()}-${uid()}.json`);
+          await ensureFolder(this.app, backup.slice(0, backup.lastIndexOf("/")));
+          await this.app.vault.adapter.write(backup, before);this.lastImportBackup = backup;
+          let text = "";
+          this.lastWriteAt = Date.now();
+          await this.app.vault.process(f, current => {
+            if (current !== before) throw new Error("备份后任务文件已变化，未导入，请刷新重试");
+            text = JSON.stringify({ ...this.store, tasks: [...this.store.tasks, ...added] }, null, 2);
+            return text;
+          });
+          this.diskText = text;this.store.tasks.push(...added);return;
+        }
+        if (this.store.tasks.length) throw new Error("任务文件已被移除，请刷新后再导入");
+      }
+      const text = JSON.stringify({ ...this.store, tasks: [...this.store.tasks, ...added] }, null, 2);
       this.lastWriteAt = Date.now();
       if (f instanceof TFile) await this.app.vault.modify(f, text);
       else await this.app.vault.create(p, text);
+      this.diskText = text;if (added.length) this.store.tasks.push(...added);
     });
     this.writing = next;
     await next;
+  }
+
+  /** Only new, validated tasks; one write, no in-memory publication on failure. */
+  async addBatch(tasks: Task[]): Promise<void> {
+    if (!tasks.length) throw new Error("没有可导入的任务");
+    await this.load();
+    await this.persist(tasks);
+    this.onChange?.();
   }
 
   private async commit(): Promise<void> {

@@ -3,6 +3,7 @@ type Rows = (string | HTMLElement)[];
 const scope = ".lubi-root, .lubi-modal, .lubi-settings, .lubi-tooltip-scope";
 // 清单内容已直接展示；只保留可访问名称，不重复弹出提示。
 const listNames = '.lubi-task .lubi-task-title, .lubi-task .lubi-task-meta, .lubi-task > input[type="checkbox"]';
+const headerButtons = ".lubi-root .lubi-topbar button, .lubi-root .lubi-planning-head button";
 const rich = new WeakMap<Element, { rows: () => Rows | null; placement: "pointer" | "side" }>();
 let tipEl: HTMLElement | null = null;
 let pending: number | null = null;
@@ -18,7 +19,7 @@ export function hideTip(): void {
 /** 可访问名称与视觉提示共用文字，但不留会触发 Obsidian 黑框的 aria-label。 */
 function normalize(el: Element): void {
   if (!el.closest(scope)) return;
-  const listName = el.matches(listNames);
+  const listName = el.matches(listNames) || el.matches(headerButtons);
   if (listName) el.removeAttribute("data-lubi-tip");
   const label = el.getAttribute("aria-label") || el.getAttribute("title");
   if (!label) return;
@@ -102,7 +103,7 @@ export function installTooltips(): () => void {
   observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-label", "title"] });
   const targetOf = (event: Event): Element | null => {
     if (!(event.target instanceof window.Element) || !event.target.closest(scope)) return null;
-    const nameOnly = !!event.target.closest(listNames);
+    const nameOnly = !!event.target.closest(`${listNames}, ${headerButtons}`);
     const suspended = document.body.classList.contains("lubi-dragging") || !!event.target.closest("[data-lubi-tip-suspended]");
     let el: Element | null = event.target;
     while (el && el.closest(scope)) {

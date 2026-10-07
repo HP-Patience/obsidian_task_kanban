@@ -84,6 +84,24 @@ const settingTab = plugin.settingTabs[0];
 settingTab.display();
 fs.writeFileSync(new URL("settings.html", out), page("settings", freeze(settingTab.containerEl)));
 
+// Model dropdown previews exercise the public settings fetch, with synthetic responses.
+{
+ const saved={endpoint:plugin.settings.aiEndpoint,model:plugin.settings.aiModel};
+ plugin.settings.aiEndpoint='https://synthetic.invalid/v1';plugin.settings.aiModel='deepseek-flash';
+ settingTab.display();document.body.append(settingTab.containerEl);settingTab.containerEl.querySelector('.lubi-settings-ai').open=true;
+ const models=['deepseek-flash','deepseek-v4.1-flash',...Array.from({length:34},(_,i)=>'other-model-'+i)];
+ O.setRequestUrlHandler(()=>({status:200,json:{data:models.map(id=>({id}))}}));
+ [...settingTab.containerEl.querySelectorAll('button')].find(button=>button.textContent==='获取模型列表').click();await tick(150);
+ fs.writeFileSync(new URL('settings-models-all.html',out),page('settings-models-all',freeze(settingTab.containerEl)));
+ const modelInput=settingTab.containerEl.querySelector('[data-setting=ai-model]');modelInput.value='deepseek';modelInput.dispatchEvent(new window.Event('input',{bubbles:true}));await tick(40);
+ fs.writeFileSync(new URL('settings-models-filtered.html',out),page('settings-models-filtered',freeze(settingTab.containerEl)));
+ settingTab.containerEl.remove();O.setRequestUrlHandler(null);plugin.settings.aiEndpoint=saved.endpoint;plugin.settings.aiModel=saved.model;
+}
+// JSON import uses only a synthetic example; no live tasks/settings are exported.
+root.querySelector('.lubi-topbar-import').click();await tick(40);
+const jsonModal=O.openModals.at(-1);jsonModal.modalEl.classList.add('modal');jsonModal.titleEl.classList.add('modal-title');jsonModal.contentEl.classList.add('modal-content');
+jsonModal.contentEl.querySelector('textarea').value=JSON.stringify({tasks:[{title:'合成导入任务',category:'学习',date:T,start:'09:00',estimate:60}]},null,2);
+fs.writeFileSync(new URL('modal-json-import.html',out),page('modal-json-import',`<div class="lubi-root"><div class="modal-bg"></div>${freeze(jsonModal.modalEl)}</div>`));jsonModal.close();
 // 1. 每日页
 fs.writeFileSync(new URL("today.html", out), page("today", freeze(root)));
 // Freeze active drag states using synthetic plans/records, then cancel without persistence.
@@ -120,8 +138,8 @@ fs.writeFileSync(new URL("review.html", out), page("review", freeze(root)));
   }
   view.review={...savedReview};
 }
-// 3. 任务页
-view.show("tasks"); await tick(200);
+// 3. 计划周视图
+view.tasksState.period="week";view.show("tasks"); await tick(200);
 fs.writeFileSync(new URL("tasks.html", out), page("tasks", freeze(root)));
 // Freeze a real production hover event at a non-grid-aligned fractional pointer position.
 {
@@ -158,6 +176,14 @@ for(const [key,value,event]of [['minutes','60','input'],['start','10:00','change
 actualForm.contentEl.querySelector('.lubi-actual-details').open=true;
 actualForm.modalEl.classList.add('modal');actualForm.titleEl.classList.add('modal-title');actualForm.contentEl.classList.add('modal-content');
 fs.writeFileSync(new URL('modal-actual.html',out),page('modal-actual',`<div class="lubi-root"><div class="modal-bg"></div>${freeze(actualForm.modalEl)}</div>`));actualForm.close();
+for(const [name,opts] of [
+ ['modal-new-actual-only',{defaults:{title:'合成实际录入',category:'学习',date:T},recordDate:T,actualDefaults:{minutes:185,start:'07:00'}}],
+ ['modal-new-planned',{defaults:{title:'合成规划录入',category:'学习',date:T,start:'07:45',estimate:160},recordDate:T}],
+]) {
+ const form=new nm.constructor(app,plugin,opts);form.open();await tick(60);form.modalEl.classList.add('modal');form.titleEl.classList.add('modal-title');form.contentEl.classList.add('modal-content');
+ fs.writeFileSync(new URL(name+'.html',out),page(name,`<div class="lubi-root"><div class="modal-bg"></div>${freeze(form.modalEl)}</div>`));form.close();
+}
+
 // 6. 任务模态：点任务页里的一行
 view.show("tasks"); await tick(200);
 const rows = [...root.querySelectorAll(".lubi-task")];

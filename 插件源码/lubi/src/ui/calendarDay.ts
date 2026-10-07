@@ -1,4 +1,4 @@
-// 每日页：24h 时间轴（实线 = 记录，虚线 = 当天有开始时间的计划）+ 右侧当天分布 / 空白时段 / 当天任务下拉清单。
+// 日历·日：24h 时间轴（实线 = 记录，虚线 = 当天有开始时间的计划）+ 右侧当天分布 / 空白时段 / 当天任务下拉清单。
 // 计划展示：点计划块 = 按实际时间记一条并完成任务；也可直接取消当天计划。
 
 import { hideTip } from "./tooltips";
@@ -12,10 +12,11 @@ import { categoryOf } from "../settings";
 import { button, el, HOUR_PX, infoTip, icon, iconButton, stopAll, tip, undoNotice } from "./components";
 import { minuteAt, startDrag } from "./drag";
 import { RecordModal, TaskModal, openUnifiedRecord } from "./modals";
-import { dayTasks, deleteRecord, OpenRecord, renderDayTaskList, syncLinkedTask } from "./taskList";
+import { dayTasks, deleteRecord, OpenRecord, syncLinkedTask } from "./taskList";
 import type { Task } from "../core/tasks";
+import { planOccurrences } from "../core/planning";
 import { updateScheduleWithUndo } from "./tasks";
-import { renderDayDistribution, renderDayPlan } from "./daySummary";
+import { renderDayDistribution } from "./daySummary";
 
 const PX_PER_MIN = HOUR_PX / 60;
 // A dedicated header row keeps the plan-lane title above midnight tasks.
@@ -29,7 +30,7 @@ interface Lane {
   lanes: number;
 }
 
-export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: string, rerender: () => void): Promise<void> {
+export async function renderCalendarDay(plugin: LubiPlugin, host: HTMLElement, date: string, rerender: () => void, renderPlans: (side: HTMLElement, records: Rec[]) => void): Promise<void> {
   host.empty();
   host.addClass("lubi-today");
   const rows = await plugin.journal.read(date);
@@ -209,7 +210,8 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   // 已经有关联记录的计划（比如用 ▶ 记过、还没勾完成）不再画虚线块，避免同一件事出现两次
   const loggedTasks = new Set(rows.map((r) => r.rec.task).filter((id): id is string => !!id));
   const openPlans = planned.filter((t) => !plugin.tasks.isDoneOn(t, date) && !loggedTasks.has(t.id));
-  const timedPlans = openPlans.filter((t) => t.start);
+  const timedIds = new Set(planOccurrences(plugin.tasks.all, [date]).filter(item => item.timed).map(item => item.task.id));
+  const timedPlans = openPlans.filter((t) => timedIds.has(t.id) || (t.origin === "record" && !!t.start));
   canvas.toggleClass("has-plans", timedPlans.length > 0);
   const editPlan = (t: Task) => new TaskModal(plugin.app, plugin, { task: plugin.tasks.byId(t.id) || t, recordDate: date, onSaved: rerender }).open();
   if (timedPlans.length) {
@@ -576,9 +578,7 @@ export async function renderToday(plugin: LubiPlugin, host: HTMLElement, date: s
   // ---------- 右：摘要 ----------
   const side = host.createDiv({ cls: "lubi-today-side" });
   renderDayDistribution(plugin, side, rows.map((r) => r.rec), date);
-  if (planned.length) renderDayPlan(side, date, planned.length, planned.length - openPlans.length, (list) => {
-    renderDayTaskList(plugin, list, date, rerender, openNew, (task) => new TaskModal(plugin.app, plugin, { task, recordDate: date, onSaved: rerender }).open(), undefined, true);
-  });
+  renderPlans(side, rows.map(row => row.rec));
   renderGapCard(side, gaps, scrollToMin, openNew);
 }
 

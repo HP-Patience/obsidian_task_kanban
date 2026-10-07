@@ -1,10 +1,12 @@
-import { App, Notice, PluginSettingTab, requestUrl, Setting, TextComponent } from "obsidian";
+import { App, Notice, PluginSettingTab, requestUrl, Setting } from "obsidian";
 import type LubiPlugin from "../main";
 import { CategoryDef, DEFAULT_CATEGORIES } from "../settings";
 import { accentConflicts, parseColor, resolveDefault, RGB } from "../core/color";
 import { ConfirmModal } from "./modals";
 import { curlJson } from "../core/curl";
 import { iconButton, tip } from "./components";
+import { taskImportPrompt } from "../core/taskImport";
+import { modelPicker } from "./modelPicker";
 
 let settingsLabelId = 0;
 
@@ -122,6 +124,21 @@ export class LubiSettingTab extends PluginSettingTab {
     };
     draw();
 
+    const json = section("JSON 任务导入");
+    json.addClass("lubi-settings-json-import");
+    const promptValue = () => taskImportPrompt(s.categories.filter(c => c.kind === "time").map(c => c.name));
+    const copy = new Setting(json).setName("系统提示词").setDesc("复制给外部 AI，与它讨论后让它生成导入 JSON；不包含接口、密钥或历史任务。");
+    copy.settingEl.addClass("lubi-setting-stacked");
+    const prompt = json.createEl("textarea", { cls: "lubi-json-prompt", attr: { readonly: "", "aria-label": "JSON 任务导入系统提示词", spellcheck: "false" } });
+    prompt.value = promptValue();
+    copy.addButton(b => b.setButtonText("复制系统提示词").onClick(async () => {
+      prompt.value = promptValue();
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+        await navigator.clipboard.writeText(prompt.value);new Notice("系统提示词已复制");
+      } catch { prompt.focus();prompt.select();new Notice("无法自动复制，已选中提示词，请手动复制"); }
+    }));
+
     const ai = containerEl.createEl("details", { cls: "lubi-settings-section lubi-settings-ai" });
     const summary = ai.createEl("summary");
     summary.createSpan({ text: "AI 任务创建" });
@@ -132,21 +149,30 @@ export class LubiSettingTab extends PluginSettingTab {
     const endpoint = new Setting(ai).setName("接口地址").setDesc("填写兼容聊天接口地址");
     endpoint.settingEl.addClass("lubi-setting-stacked");
     endpoint.addText((t) => { t.inputEl.setAttribute("aria-label", "AI 接口地址"); t.inputEl.dataset.setting = "ai-endpoint"; return t.setValue(s.aiEndpoint).onChange((v) => { s.aiEndpoint = v.trim(); updateSummary(); save(); }); });
-    const choices = ai.createEl("datalist", { attr: { id: `lubi-ai-models-${++settingsLabelId}` } });
-    let modelText: TextComponent | undefined;
+    let modelInput: HTMLInputElement | undefined;
+    let choices: ReturnType<typeof modelPicker> | undefined;
     const model = new Setting(ai).setName("模型").setDesc("可手动填写，也可从获取到的模型中选择");
     model.settingEl.addClass("lubi-setting-stacked");
     model.addText((t) => {
-      modelText = t; t.inputEl.setAttribute("list", choices.id); t.inputEl.setAttribute("aria-label", "AI 模型"); t.inputEl.dataset.setting = "ai-model";
-      return t.setValue(s.aiModel).setPlaceholder("模型名称").onChange((v) => { s.aiModel = v.trim(); updateSummary(); save(); });
+      modelInput = t.inputEl; t.inputEl.setAttribute("aria-label", "AI 模型"); t.inputEl.dataset.setting = "ai-model";
+      t.setValue(s.aiModel).setPlaceholder("模型名称").onChange((v) => { s.aiModel = v.trim(); updateSummary(); save(); });
+      choices = modelPicker(t.inputEl, s.aiModel, value => { s.aiModel = value;updateSummary();save(); });
+      return t;
     });
-    if (s.aiModel) choices.createEl("option", { value: s.aiModel });
     const key = new Setting(ai).setName("API Key").setDesc("本地 Ollama 可留空，云端接口按服务商要求填写");
     key.settingEl.addClass("lubi-setting-stacked");
     key.addText((t) => { t.inputEl.type = "password"; t.inputEl.setAttribute("aria-label", "AI API Key"); t.inputEl.dataset.setting = "ai-key"; return t.setValue(s.aiApiKey).onChange((v) => { s.aiApiKey = v.trim(); save(); }); });
     const aiActions = new Setting(ai);
     aiActions.settingEl.addClass("lubi-settings-actions");
-    aiActions.addButton((b) => b.setButtonText("获取模型列表").onClick(() => void loadAiModels(s, modelText, choices, updateSummary, save)));
+    let fetchingModels = false;
+    aiActions.addButton((b) => b.setButtonText("获取模型列表").onClick(async () => {
+      if (fetchingModels) return;
+      fetchingModels = true;b.setDisabled(true);
+      const requested = { aiEndpoint: s.aiEndpoint, aiApiKey: s.aiApiKey };
+      const current = () => !!modelInput?.isConnected && s.aiEndpoint === requested.aiEndpoint && s.aiApiKey === requested.aiApiKey;
+      try { await loadAiModels(requested, names => choices?.setModels(names), current); }
+      finally { fetchingModels = false;b.setDisabled(false); }
+    }));
     aiActions.addButton((b) => b.setButtonText("测试连接").onClick(() => void testAiConnection(s)));
     ai.createEl("p", { cls: "lubi-settings-note", text: "API Key 仍以明文保存在本地插件设置中，请勿共享该设置文件。" });
 
@@ -160,7 +186,7 @@ export class LubiSettingTab extends PluginSettingTab {
       b.buttonEl.addClass("lubi-settings-maintenance-button");
       return b.setButtonText("检查并迁移").onClick(() => new ConfirmModal(this.app, "迁移旧数据？", "会先备份，再改写日记文件与任务数据。", () => void this.plugin.runMigration(true), "开始迁移", false).open());
     });
-    new Setting(maintenance).setName("重新显示入门提示").addButton((b) => b.setButtonText("显示").onClick(() => { s.onboardingDone = false; save(); new Notice("没有历史记录时，每日页会显示简短入门提示"); }));
+    new Setting(maintenance).setName("重新显示入门提示").addButton((b) => b.setButtonText("显示").onClick(() => { s.onboardingDone = false; save(); new Notice("没有历史记录时，计划的日历日视图会显示简短入门提示"); }));
   }
 
 }
@@ -182,21 +208,18 @@ async function fetchAiModels(settings: { aiEndpoint: string; aiApiKey: string })
   }
   if (response.status < 200 || response.status >= 300) throw new Error(`请求失败（${response.status}）`);
   const data = response.json as { data?: { id?: string }[]; models?: { name?: string; model?: string }[] };
-  const ids = data.data?.map((x) => x.id).filter((x): x is string => !!x) || data.models?.map((x) => x.name || x.model).filter((x): x is string => !!x) || [];
+  const ids = data.data?.map((x) => x.id).filter((x): x is string => typeof x === "string" && !!x.trim()) || data.models?.map((x) => x.name || x.model).filter((x): x is string => typeof x === "string" && !!x.trim()) || [];
   return [...new Set(ids)];
 }
 
-async function loadAiModels(settings: { aiEndpoint: string; aiApiKey: string; aiModel: string }, text: TextComponent | undefined, choices: HTMLElement, updateSummary: () => void, save: () => void): Promise<void> {
+async function loadAiModels(settings: { aiEndpoint: string; aiApiKey: string }, receive: (models: string[]) => void, current: () => boolean): Promise<void> {
   try {
     const models = await fetchAiModels(settings);
     if (!models.length) throw new Error("接口没有返回模型");
-    choices.empty();
-    for (const model of models) choices.createEl("option", { value: model });
-    settings.aiModel = String(settings.aiModel && models.includes(settings.aiModel) ? settings.aiModel : models[0]);
-    text?.setValue(settings.aiModel);
-    updateSummary(); save();
-    new Notice(`已获取 ${models.length} 个模型，请确认当前模型：${settings.aiModel}`);
-  } catch (e) { new Notice(`获取模型列表失败：${(e as Error).message}`, 6000); }
+    if (!current()) return;
+    receive(models);
+    new Notice(`已获取 ${models.length} 个模型，请从列表选择或手动填写`);
+  } catch (e) { if (current()) new Notice(`获取模型列表失败：${(e as Error).message}`, 6000); }
 }
 
 async function testAiConnection(settings: { aiEndpoint: string; aiApiKey: string; aiModel: string }): Promise<void> {

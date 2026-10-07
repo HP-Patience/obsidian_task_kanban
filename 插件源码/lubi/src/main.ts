@@ -38,9 +38,9 @@ export default class LubiPlugin extends Plugin {
 
     this.addCommand({ id: "open", name: "打开面板", callback: () => void this.activateView() });
     this.addCommand({ id: "log", name: "新建任务 / 支出", callback: () => this.quickLog() });
-    this.addCommand({ id: "open-today", name: "打开面板 · 每日页", callback: () => void this.activateView("today") });
+    this.addCommand({ id: "open-today", name: "打开计划 · 今天", callback: () => void this.activateView("today", todayStr()) });
     this.addCommand({ id: "open-review", name: "打开面板 · 回顾页", callback: () => void this.activateView("review") });
-    this.addCommand({ id: "open-tasks", name: "打开面板 · 任务页", callback: () => void this.activateView("tasks") });
+    this.addCommand({ id: "open-tasks", name: "打开面板 · 计划页", callback: () => void this.activateView("tasks") });
     this.addCommand({ id: "open-journal", name: "打开今天的日记文件", callback: () => void this.openJournal(todayStr()) });
     this.addCommand({ id: "migrate", name: "迁移旧版数据", callback: () => void this.runMigration(true) });
     this.addCommand({ id: "export-csv", name: "导出全部记录为 CSV", callback: () => void this.exportCsv() });
@@ -110,7 +110,7 @@ export default class LubiPlugin extends Plugin {
     for (const v of this.views()) v.refresh();
   }
 
-  async activateView(tab?: Tab, date?: string): Promise<DashboardView | null> {
+  async activateView(tab?: Tab | "today", date?: string): Promise<DashboardView | null> {
     let leaf: WorkspaceLeaf | null = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0] || null;
     if (!leaf) {
       leaf = this.app.workspace.getLeaf("tab");
@@ -126,7 +126,7 @@ export default class LubiPlugin extends Plugin {
     void this.activateView(tab);
   }
 
-  openDate(date: string, tab: Tab = "today"): void {
+  openDate(date: string, tab: Tab | "today" = "today"): void {
     void this.activateView(tab, date);
   }
 

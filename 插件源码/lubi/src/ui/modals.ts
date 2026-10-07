@@ -125,9 +125,9 @@ export class DeleteTaskModal extends Modal {
 
 export const SHORTCUTS: [string, string][] = [
   ["N", "新建任务 / 支出；实际用时在任务内填写"],
-  ["1 / 2 / 3", "切换 每日 · 计划 · 回顾"],
-  ["T", "回到今天（每日 / 任务页）"],
-  ["← / →", "前一天 / 后一天（每日 / 任务页）"],
+  ["1 / 2", "切换 计划 · 回顾"],
+  ["T", "回到今天（计划页）"],
+  ["← / →", "前一天 / 后一天（计划页）"],
   ["?", "打开本速查卡"],
   ["↑ / ↓", "时间轴：选中块移动 5 分钟（Alt 为 1 分钟）"],
   ["Shift + ↑ / ↓", "时间轴：改时长"],
@@ -770,11 +770,13 @@ export class TaskModal extends Modal {
     const actualStart = actualStartF.createEl("input", { type: "time", value: this.actualStart, attr: { "data-actual": "start" } });
     associate(actualStartL, actualStart); actualStart.disabled = this.actualReadOnly;
     actualStart.addEventListener("change", () => { this.actualStart = actualStart.value; this.actualEdited = true; syncActual(); });
-    actualDetails.open = !!this.actualStart;
+    actualDetails.open = !this.editing || !!this.actualStart;
     const syncActual = () => {
       const minutes = parseEstimate(this.actualText);
-      actualHint.setText(this.actualReadOnly ? this.actualSummary : minutes ? (formatEstimateComparison({ date: this.actualDate, start: this.actualStart || "00:00", minutes, estimatedMinutes: normalizeEstimatedMinutes(this.t.estimate), category: this.t.category, title: this.t.title, extra: {} }) || `实际 ${fmtDuration(minutes)}`) + (this.actualStart ? "" : " · 实际开始待核对") : this.actualSummary || "留空保存计划；填写实际用时后保存并完成任务");
-      actualDetails.hidden = !this.actualText.trim() || this.actualReadOnly;
+      const comparison = minutes && normalizeEstimatedMinutes(this.t.estimate) ? (formatEstimateComparison({ date: this.actualDate, start: this.actualStart || "00:00", minutes, estimatedMinutes: normalizeEstimatedMinutes(this.t.estimate), category: this.t.category, title: this.t.title, extra: {} }) || "") + (this.actualStart ? "" : " · 实际开始待核对") : "";
+      const hint = this.actualReadOnly ? this.actualSummary : minutes ? comparison : this.actualSummary;
+      actualHint.setText(hint); actualHint.hidden = !hint;
+      actualDetails.hidden = this.actualReadOnly;
     };
     actual.addEventListener("input", () => { this.actualText = actual.value; this.actualEdited = true; clearFieldError(actual); syncActual(); });
     this.actualRefresh = syncActual;

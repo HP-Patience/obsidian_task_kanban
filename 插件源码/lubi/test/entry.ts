@@ -13,3 +13,4 @@ export * from "../src/core/nameHistory";
 export * from "../src/core/gantt";
 
 export * from "../src/core/planning";
+export * from "../src/core/taskImport";

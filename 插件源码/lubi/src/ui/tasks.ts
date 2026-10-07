@@ -7,14 +7,15 @@ import { fmtDuration, hmToMin, minToHM, nowHM, shortDate, todayStr, weekdayZh } 
 import { categoryOf } from "../settings";
 import { button, el, HOUR_PX, hoverTip, infoTip, iconButton, segmented, stopAll, tip, undoNotice } from "./components";
 import { TaskModal, openUnifiedRecord } from "./modals";
-import { groupedRows, OpenRecord, taskRow } from "./taskList";
+import { dayTasks, groupedRows, OpenRecord, taskRow } from "./taskList";
 import { startDrag } from "./drag";
 import { explicitSpan, GanttPeriod, ganttWindow, stepGanttDate } from "../core/gantt";
 import { renderGantt } from "./gantt";
 import { renderDailyGantt } from "./dailyGantt";
 import { planDatePatch, planInbox, planOccurrences } from "../core/planning";
 import { renderMonthCalendar, renderRangeList } from "./planningViews";
-import { renderDayDistribution, renderDayPlan } from "./daySummary";
+import { renderCalendarDay } from "./calendarDay";
+import { renderDayPlan } from "./daySummary";
 import type { Rec } from "../core/records";
 
 const SNAP = 15;
@@ -90,19 +91,30 @@ export async function renderTasks(plugin: LubiPlugin, host: HTMLElement, date: s
   host.toggleClass("is-list", state.scheduleView === "list");
   const calendarDay = state.scheduleView === "calendar" && state.period === "day";
   host.toggleClass("is-calendar-day", calendarDay);
-  const records = calendarDay ? (await plugin.journal.read(date)).map(row => row.rec) : undefined;
   const openNew: OpenRecord = (d, onRec) => openUnifiedRecord(plugin, date, d, async rec => { if (rec && onRec) await onRec(rec); rerender(); });
   const edit = (task: Task, occurrenceDate = date) => new TaskModal(plugin.app, plugin, { task, recordDate: occurrenceDate, onSaved: rerender }).open();
   const create = (defaults: Partial<Task> = {}) => new TaskModal(plugin.app, plugin, { defaults, onSaved: rerender }).open();
   const days = ganttWindow(state.selectedDate, state.period);
-  renderPlanningHead(host, state, days, rerender);
+  const head = renderPlanningHead(host, state, days, rerender);
+  if (calendarDay) {
+    const day = host.createDiv({ cls: "lubi-calendar-day" });
+    await renderCalendarDay(plugin, day, date, rerender, (side, records) => {
+      side.addClass("lubi-tasks-left", "lubi-task-lists");
+      renderLists(plugin, side, date, rerender, openNew, edit, create, true, records);
+    });
+    const summary = day.querySelector<HTMLElement>(".lubi-today-summary")!;
+    head.querySelector(".lubi-schedule-range")!.after(summary);
+    const top = day.querySelector<HTMLElement>(".lubi-today-top")!;
+    if (!top.childElementCount) top.remove();
+    bindDrop(plugin, day.querySelector<HTMLElement>(".lubi-tl-canvas")!, date, 0, rerender);
+    return;
+  }
   const top = host.createDiv({ cls: "lubi-tasks-top lubi-planning-top" });
   const lists = top.createDiv({ cls: "lubi-tasks-left lubi-task-lists" });
-  if (!calendarDay) lists.addClass("lubi-card");
-  if (records) renderDayDistribution(plugin, lists, records, date);
-  renderLists(plugin, lists, date, rerender, openNew, edit, create, state.scheduleView !== "list", records);
+  lists.addClass("lubi-card");
+  renderLists(plugin, lists, date, rerender, openNew, edit, create, state.scheduleView !== "list");
   const main = top.createDiv({ cls: "lubi-tasks-week lubi-planning-main" });
-  if (calendarDay) top.appendChild(lists);
+  top.appendChild(lists);
   const card = main.createDiv({ cls: `lubi-card ${state.scheduleView === "gantt" ? "lubi-gantt-card" : state.scheduleView === "list" ? "lubi-plan-list-card" : state.period === "month" ? "lubi-month-card" : "lubi-week-card"}` });
   const save = (id: string, patch: Partial<ScheduleFields>, message: string) => updateScheduleWithUndo(plugin, id, patch, message, rerender);
   const drop = (target: HTMLElement, day: string) => bindDrop(plugin, target, day, null, rerender, true, () => {
@@ -116,7 +128,7 @@ export async function renderTasks(plugin: LubiPlugin, host: HTMLElement, date: s
   else renderCalendarSchedule(plugin, card, date, state, rerender, edit);
 }
 
-function renderPlanningHead(host: HTMLElement, state: TasksState, days: string[], rerender: () => void): void {
+function renderPlanningHead(host: HTMLElement, state: TasksState, days: string[], rerender: () => void): HTMLElement {
   const head = host.createDiv({ cls: "lubi-panel-head lubi-planning-head" });
   const views = segmented<TasksState["scheduleView"]>(head, [{ id: "calendar", label: "日历" }, { id: "gantt", label: "甘特图" }, { id: "list", label: "列表" }], state.scheduleView, value => { state.scheduleView = value; rerender(); });
   views.addClass("lubi-schedule-switch");
@@ -131,13 +143,16 @@ function renderPlanningHead(host: HTMLElement, state: TasksState, days: string[]
   const prev = iconButton(nav, "chevron-left", `向前一${unit}`, () => shift(-1)); prev.dataset.lubiFocus = "planning:previous";
   button(nav, "今天", () => { state.selectedDate = todayStr(); rerender(); }, { cls: "lubi-btn-sm" }).dataset.lubiFocus = "planning:today";
   const next = iconButton(nav, "chevron-right", `向后一${unit}`, () => shift(1)); next.dataset.lubiFocus = "planning:next";
+  return head;
 }
 
 // ---------- 左栏 ----------
 
 function renderLists(plugin: LubiPlugin, host: HTMLElement, date: string, rerender: () => void, openNew: OpenRecord, edit: (t: Task) => void, create: (d?: Partial<Task>) => void, showToday: boolean, records?: Rec[]): void {
   if (showToday) {
-    const occurrences = planOccurrences(plugin.tasks.all, [date]);
+    const scheduled = planOccurrences(plugin.tasks.all, [date]);
+    const occurrences = records ? dayTasks(plugin, date).map(task => scheduled.find(item => item.task.id === task.id) || { task, date, from: date, to: date, timed: !!task.start, done: plugin.tasks.isDoneOn(task, date) }) : scheduled;
+    if (records) occurrences.sort((a, b) => (a.timed ? hmToMin(a.task.start) : 1440) - (b.timed ? hmToMin(b.task.start) : 1440) || a.task.order - b.task.order);
     if (!records) occurrences.sort((a, b) => a.task.order - b.task.order || a.task.created.localeCompare(b.task.created));
     const today = occurrences.map(item => item.task);
     const logged = new Set(records?.map(rec => rec.task).filter(Boolean));
@@ -621,7 +636,7 @@ function bindDrop(plugin: LubiPlugin, target: HTMLElement, date: string, startH:
     let start = "";
     if (startH !== null) {
       const rect = target.getBoundingClientRect();
-      start = minToHM(Math.max(0, Math.min(1440 - SNAP, startH * 60 + snap(((e.clientY - rect.top) / HOUR_PX) * 60))));
+      start = minToHM(Math.max(0, Math.min(1440 - SNAP, startH * 60 + snap(target.classList.contains("lubi-tl-canvas") && rect.height > 0 ? (e.clientY - rect.top) / rect.height * 1440 : ((e.clientY - rect.top) / HOUR_PX) * 60))));
     }
     const task = plugin.tasks.byId(id);
     if (!task) return;

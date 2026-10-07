@@ -14,8 +14,12 @@ for(const t of [task('early',{date:D,start:'08:00',estimate:60}),task('late',{da
  task('repeat',{repeat:{kind:'daily',days:[]},startDate:'2026-10-05',endDate:'2026-10-11',doneDates:[D],skipDates:['2026-10-08']}),
  task('undated'),task('record',{date:D,origin:'record'}),task('parent'),task('child',{date:D,parent:'parent'})])await plugin.tasks.upsert(t);
 await plugin.journal.add({date:D,start:'09:00',minutes:20,category:'学习',title:'synthetic actual',extra:{}});
+await plugin.journal.add({date:D,start:'12:00',minutes:0,category:plugin.settings.categories.find(c=>c.kind==='money').name,title:'synthetic expense',amount:15,extra:{}});
 const view=await plugin.activateView('tasks',D);await settle();const root=view.contentEl;
-assert.equal(view.tasksState.scheduleView,'calendar');assert.equal(view.tasksState.period,'week');
+assert.equal(view.tasksState.scheduleView,'calendar');assert.equal(view.tasksState.period,'day');
+assert.deepEqual([...root.querySelectorAll('.lubi-topbar-tabs button')].map(b=>b.textContent),['计划','回顾']);
+assert.equal(view.tab,'tasks');
+assert(root.querySelector('.lubi-calendar-day .lubi-timeline'));
 const press=async key=>{const button=root.querySelector(`[data-lubi-focus="${key}"]`);assert(button,`missing control ${key}`);button.click();await settle()};
 const journal=()=>JSON.stringify([...app.vault.files].filter(([name])=>name.startsWith('日记/')));
 const dataBefore=JSON.stringify([...app.vault.files]);
@@ -25,9 +29,13 @@ for(const mode of ['calendar','gantt','list'])for(const period of ['day','week',
  assert.equal(root.querySelectorAll('.lubi-schedule-switch').length,1);
  assert.equal(root.querySelectorAll('.lubi-planning-period-switch').length,1);
  assert.equal(root.querySelectorAll('.lubi-topbar .mod-cta').length,1);
+ const aiButton=root.querySelector('.lubi-topbar-ai');assert(aiButton&&aiButton.nextElementSibling===root.querySelector('.lubi-topbar-cta'));
+ const beforeAi=JSON.stringify([...app.vault.files]);aiButton.click();await settle();const aiModal=O.openModals.at(-1);assert.equal(aiModal.constructor.name,'AiTaskModal');assert.equal(aiModal.date,D);aiModal.close();assert.equal(JSON.stringify([...app.vault.files]),beforeAi,'opening/canceling AI does not create tasks or records');
  assert(!root.querySelector('.lubi-error'));
- if(mode==='calendar'&&period!=='month') {
-  const heads=[...root.querySelectorAll('.lubi-week-day-button')];assert.equal(heads.length,period==='day'?1:7);
+ const sidebar=root.querySelector('.lubi-task-lists'),main=root.querySelector('.lubi-planning-main, .lubi-today-main');
+ assert.equal(main.nextElementSibling,sidebar,'main content precedes the right sidebar in reading and keyboard order');
+ if(mode==='calendar'&&period==='week') {
+  const heads=[...root.querySelectorAll('.lubi-week-day-button')];assert.equal(heads.length,7);
   assert.equal(root.querySelector('.lubi-week-hour').textContent,'00:00');assert.equal([...root.querySelectorAll('.lubi-week-hour')].at(-1).textContent,'24:00');
   assert(root.querySelector('.lubi-wblock'));assert(root.querySelector('.lubi-allday-chip'));
  }
@@ -45,7 +53,7 @@ for(const mode of ['calendar','gantt','list'])for(const period of ['day','week',
  }
  if(mode==='calendar'&&period==='day') {
   const side=root.querySelector('.lubi-task-lists');
-  assert(side.previousElementSibling.classList.contains('lubi-planning-main'),'day timeline precedes right sidebar in reading/tab order');
+  assert(side.previousElementSibling.classList.contains('lubi-today-main'),'day timeline precedes right sidebar in reading/tab order');
   assert.equal(side.querySelectorAll('.lubi-distribution').length,1);
   assert.equal(side.querySelectorAll('.lubi-plan-card').length,1);
   assert.equal(side.querySelectorAll('.lubi-list-card').length,1,'only inbox, no duplicate Today list');
@@ -58,7 +66,23 @@ for(const mode of ['calendar','gantt','list'])for(const period of ['day','week',
   const progress=side.querySelector('[role="progressbar"]');
   assert.equal(Number(progress.getAttribute('aria-valuemax')),tasks.length);
   assert.equal(Number(progress.getAttribute('aria-valuenow')),1,'repeat completion is for selected occurrence');
-  assert.deepEqual([...side.children].map(e=>e.classList.contains('lubi-distribution')?'distribution':e.classList.contains('lubi-plan-card')?'plans':'inbox'),['distribution','plans','inbox']);
+  assert.deepEqual([...side.children].slice(0,3).map(e=>e.classList.contains('lubi-distribution')?'distribution':e.classList.contains('lubi-plan-card')?'plans':'inbox'),['distribution','plans','inbox']);
+  const summary=root.querySelector('.lubi-today-summary'),head=root.querySelector('.lubi-planning-head');
+  assert.equal(root.querySelectorAll('.lubi-today-summary').length,1);
+  assert.equal(summary.parentElement,head);assert.equal(summary.previousElementSibling,head.querySelector('.lubi-schedule-range'));
+  assert.equal(summary.nextElementSibling,head.querySelector('.lubi-nav'));
+  assert(!root.querySelector('.lubi-calendar-day .lubi-today-summary'),'no duplicated standalone summary row');
+  assert.deepEqual([...summary.querySelectorAll('.lubi-summary-label')].map(e=>e.textContent),['记录投入','实际覆盖']);
+  assert.deepEqual([...summary.querySelectorAll('.lubi-summary-value')].map(e=>e.textContent),['0.3h','0.3h']);
+  assert.equal(root.querySelector('.lubi-pin-title')?.textContent,'synthetic expense','spending remains on the daily rail');
+  assert(root.querySelector('.lubi-block-title')?.textContent==='synthetic actual');
+  assert.equal(root.querySelector('.lubi-hour-label').textContent,'00:00');
+  assert.equal([...root.querySelectorAll('.lubi-hour-label')].at(-1).textContent,'24:00');
+  assert(root.querySelector('.lubi-plan'));
+  assert(root.querySelector('.lubi-gap-card'));
+  assert(side.querySelector('[data-task-id=span]'),'spanning plans stay visible without inventing daily timed blocks');
+  assert(![...root.querySelectorAll('.lubi-plan-title')].some(e=>e.textContent==='span'));
+  assert(side.querySelector('[data-task-id=record]'),'actual-created task remains accessible in merged daily list');
  } else assert(!root.querySelector('.lubi-task-lists .lubi-distribution, .lubi-task-lists .lubi-plan-card'),'other presentations retain existing sidebar');
  assert(!root.querySelector('.lubi-planning-main [data-task-id="record"]'));
  assert(!root.querySelector('.lubi-task-lists [data-task-id="span"]')||mode!=='list');
@@ -68,7 +92,7 @@ assert.equal(JSON.stringify([...app.vault.files]),dataBefore,'viewing all nine c
 await press('schedule:calendar');await press('planning-period:day');
 const distribution=()=>root.querySelector('.lubi-distribution').innerHTML.replace(/lubi-tooltip-label-\d+/g,'lubi-tooltip-label');
 const snapshot=distribution();
-view.show('today',D);await settle();assert.equal(distribution(),snapshot);
+view.show('today',D);await settle();assert.equal(distribution(),snapshot);assert.equal(view.tab,'tasks');assert.equal(root.querySelectorAll('.lubi-calendar-day').length,1);
 view.show('tasks',D);await settle();
 root.querySelector('.lubi-plan-task-details').open=false;view.refresh();await settle();assert(!root.querySelector('.lubi-plan-task-details').open);
 await press('planning:next');assert(root.querySelector('.lubi-plan-task-details').open);
@@ -101,6 +125,22 @@ assert(!root.querySelector('.lubi-list-card [data-task-id="day-drop"]'),'schedul
 const input=root.querySelector('.lubi-quick-add input');input.value='day quick add';
 input.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await settle();
 assert(plugin.tasks.all.some(t=>t.title==='day quick add'&&t.date===D));
+// Calendar-day timeline retains time-based inbox drop and undo; no actual record is invented.
+await plugin.tasks.upsert(task('timeline-drop'));view.refresh();await settle();
+const canvas=root.querySelector('.lubi-tl-canvas'), originalRect=canvas.getBoundingClientRect;
+canvas.getBoundingClientRect=()=>({top:100,height:1440*1.25,left:100,width:500,right:600,bottom:1900});
+const beforeTimelineDrop=journal();
+const dropEvent=new window.MouseEvent('drop',{bubbles:true,cancelable:true,clientY:100+600*1.25});
+Object.defineProperty(dropEvent,'dataTransfer',{value:{types:['text/lubi-task'],getData:t=>t==='text/lubi-task'?'timeline-drop':'',dropEffect:''}});
+canvas.dispatchEvent(dropEvent);await settle();
+assert.equal(plugin.tasks.byId('timeline-drop').date,D);assert.equal(plugin.tasks.byId('timeline-drop').start,'10:00');
+assert.equal(journal(),beforeTimelineDrop);
+[...document.querySelectorAll('.lubi-notice-btn')].at(-1).click();await settle();assert.equal(plugin.tasks.byId('timeline-drop').date,'');
+// Legacy daily command routes into calendar-day even from another presentation, using today.
+await press('schedule:gantt');await press('planning-period:month');
+plugin.commands.find(c=>c.id==='open-today').callback();await settle();
+assert.equal(view.tab,'tasks');assert.equal(view.tasksState.scheduleView,'calendar');assert.equal(view.tasksState.period,'day');
+assert.equal(view.tasksState.selectedDate,(await import('./core.mjs')).todayStr());
 // Month-end navigation is shared by every presentation.
 for(const mode of ['calendar','gantt','list']) {
  await press(`schedule:${mode}`);await press('planning-period:month');view.show('tasks','2026-01-31');await settle();
@@ -130,13 +170,13 @@ await press('schedule:list');const recurrence=root.querySelector('.lubi-plan-ran
 assert(plugin.tasks.byId('repeat').doneDates.includes('2026-10-09'));assert(!plugin.tasks.byId('repeat').doneDates.includes('2026-10-10'));
 // Session remembers view and range across page switches; new instance resets without writing settings.
 view.show('review');await settle();view.show('tasks');await settle();assert.equal(view.tasksState.scheduleView,'list');assert.equal(view.tasksState.period,'month');
-const fresh=app.workspace.getLeaf(true);await fresh.setViewState({type:'lubi-dashboard',active:true});await settle();assert.equal(fresh.view.tasksState.scheduleView,'calendar');assert.equal(fresh.view.tasksState.period,'week');
+const fresh=app.workspace.getLeaf(true);await fresh.setViewState({type:'lubi-dashboard',active:true});await settle();assert.equal(fresh.view.tasksState.scheduleView,'calendar');assert.equal(fresh.view.tasksState.period,'day');
 // An empty Vault still renders all three presentation axes, plus one range switch.
 const emptyApp=new O.App(),emptyPlugin=new Plugin(emptyApp,{id:'lubi',version:'1.6.0'});await emptyPlugin.onload();await emptyPlugin.tasks.load();const emptyView=await emptyPlugin.activateView('tasks',D);await settle();
 for(const mode of ['calendar','gantt','list'])for(const period of ['day','week','month']) {
  const state=emptyView.tasksState;state.scheduleView=mode;state.period=period;emptyView.show('tasks',D);await settle();const host=emptyView.contentEl;
  assert(host.querySelector('.lubi-planning-period-switch'));assert(!host.querySelector('.lubi-error'));
- assert(host.querySelector(mode==='calendar'?(period==='month'?'.lubi-month-calendar':'.lubi-week'):mode==='gantt'?'.lubi-gantt-heading':'.lubi-plan-list-date'));
+ assert(host.querySelector(mode==='calendar'?(period==='month'?'.lubi-month-calendar':period==='day'?'.lubi-timeline':'.lubi-week'):mode==='gantt'?'.lubi-gantt-heading':'.lubi-plan-list-date'));
  if(mode==='calendar'&&period==='day') {
   assert(host.querySelector('.lubi-distribution svg circle'),'empty ring retained');
   assert.equal(host.querySelector('.lubi-donut-center').textContent,'0h');

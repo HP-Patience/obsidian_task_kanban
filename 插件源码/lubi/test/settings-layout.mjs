@@ -17,7 +17,9 @@ if (!browser) {
     const root = document.querySelector('.lubi-settings'), ai = root.querySelector('.lubi-settings-ai');
     root.classList.add('vertical-tab-content');
     if (document.documentElement.dataset.expanded === 'true') ai.open = true;
-    const out = { overflow: root.scrollWidth - root.clientWidth, bodyOverflow: document.body.scrollWidth - innerWidth, aiOpen:ai.open, modelInputs:root.querySelectorAll('[data-setting=ai-model]').length, aiDropdowns:ai.querySelectorAll('select').length, labels:[], minFont:99, contrast:[], effects:[] };
+    const prompt=root.querySelector('.lubi-json-prompt'),copy=[...root.querySelectorAll('.lubi-settings-json-import button')].find(button=>button.textContent==='复制系统提示词');
+    const promptRect=prompt.getBoundingClientRect(),rootRect=root.getBoundingClientRect();
+    const out = { prompt:{readOnly:prompt.readOnly,visible:promptRect.width>0&&promptRect.height>=180,inside:promptRect.left>=rootRect.left&&promptRect.right<=rootRect.right,hasFormat:prompt.value.includes('tasks')&&prompt.value.includes('subtasks'),copy:!!copy&&copy.getBoundingClientRect().width>0}, overflow: root.scrollWidth - root.clientWidth, bodyOverflow: document.body.scrollWidth - innerWidth, aiOpen:ai.open, modelInputs:root.querySelectorAll('[data-setting=ai-model]').length, aiDropdowns:ai.querySelectorAll('select').length, labels:[], minFont:99, contrast:[], effects:[] };
     const rect = el => el.getBoundingClientRect();
     for (const group of root.querySelectorAll('.lubi-category-controls')) {
       const cells = [...group.children].map(rect);
@@ -45,7 +47,7 @@ if (!browser) {
       const model=root.querySelector('[data-setting=ai-model]'), key=root.querySelector('[data-setting=ai-key]');
       const controls=ai.querySelectorAll('.lubi-setting-stacked input');
       if (key.type!=='password') out.labels.push('key not masked');
-      for (const input of controls) if(rect(input).width<rect(input.closest('.setting-item')).width-2) out.labels.push('AI fields not full width');
+      for (const input of controls) if(rect(input.closest('.lubi-model-picker')||input).width<rect(input.closest('.setting-item')).width-2) out.labels.push('AI fields not full width');
     }
     const parse = text => { const m=(text.match(/[\d.]+/g)||[]).map(Number); if(text.startsWith('color(')){const a=m.slice(0,3).map(x=>x*255);if(m.length>3)a.push(m[3]);return a;} return m; };
     const luminance = values => values.slice(0,3).map(v=>{v/=255;return v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4)}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
@@ -73,6 +75,7 @@ if (!browser) {
       assert.equal(result.status,0,result.error?.message||result.stderr?.slice(-500));
       const matches=[...result.stdout.matchAll(/SETTINGS_LAYOUT:([A-Za-z0-9%._~-]+)/g)];assert(matches.length,'browser did not return settings geometry');
       const out=JSON.parse(decodeURIComponent(matches.at(-1)[1]));
+      assert(out.prompt.readOnly&&out.prompt.visible&&out.prompt.inside&&out.prompt.hasFormat&&out.prompt.copy,"copyable JSON prompt fits settings");
       assert(out.overflow<=1 && out.bodyOverflow<=1,theme+' '+width+': horizontal overflow '+JSON.stringify(out));
       assert.equal(out.aiOpen,expanded,'AI default/expanded state');assert.equal(out.modelInputs,1,'single model input');assert.equal(out.aiDropdowns,0,'no duplicate model selector');
       assert.deepEqual(out.labels,[],theme+' '+width+': controls overlap or too narrow');assert(out.minFont>=11,'settings font below 11px');assert.deepEqual(out.contrast,[],theme+' '+width+': insufficient contrast '+out.contrast.join('; '));assert.deepEqual(out.effects,[],'settings has decorative effects');

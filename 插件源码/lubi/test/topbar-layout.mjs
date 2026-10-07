@@ -66,7 +66,12 @@ if (!browser) {
     const right = document.querySelector('.lubi-topbar-right');
     out.tabsX = r(tabs) && Math.round(r(tabs).left);
     out.tabsW = r(tabs) && Math.round(r(tabs).width);
+    const ai=document.querySelector('.lubi-topbar-ai'),cta=document.querySelector('.lubi-topbar-cta');
+    const dateButton=document.querySelector('.lubi-date-label'),caption=dateButton?.firstElementChild;out.dateCaption=caption&&r(dateButton).width>0?{oneLine:getComputedStyle(caption).whiteSpace==='nowrap'||r(caption).height<=parseFloat(getComputedStyle(caption).lineHeight)+1,contained:r(caption).top>=r(dateButton).top-1&&r(caption).bottom<=r(dateButton).bottom+1}:null;
+    const jsonButton=document.querySelector('.lubi-topbar-import');out.jsonEntry=jsonButton?{visible:getComputedStyle(jsonButton).display!=='none'&&r(jsonButton).width>0,left:jsonButton.nextElementSibling===ai&&r(jsonButton).right<=r(ai).left+.5,inside:r(jsonButton).left>=0&&r(jsonButton).right<=innerWidth,secondary:!jsonButton.classList.contains('mod-cta'),named:(jsonButton.getAttribute('aria-label')||document.getElementById(jsonButton.getAttribute('aria-labelledby'))?.textContent)==='JSON 任务导入'}:null;
+    out.aiEntry=ai?{visible:getComputedStyle(ai).display!=='none'&&r(ai).width>0&&r(ai).height>0,left:ai.nextElementSibling===cta&&r(ai).right<=r(cta).left+.5,inside:r(ai).left>=0&&r(ai).right<=innerWidth,secondary:!ai.classList.contains('mod-cta'),named:(ai.getAttribute("aria-label")||document.getElementById(ai.getAttribute("aria-labelledby"))?.textContent)==="AI 创建任务",icon:!!ai.querySelector('svg')}:null;
     out.tabOrder=tabs?[...tabs.querySelectorAll('button')].map(b=>b.dataset.lubiFocus).join('|'):null;
+    out.tabLabels=tabs?[...tabs.querySelectorAll('button > span:not(.lubi-icon)')].map(e=>({text:e.textContent,visible:getComputedStyle(e).display!=='none'&&r(e).width>0&&r(e).height>0})):[];
     out.referenceControls = [...document.querySelectorAll('.lubi-root .lubi-seg')].map(group => {
       const buttons = [...group.querySelectorAll('.lubi-seg-item')], before = buttons.map(b => r(b).width);
       const states = buttons.map(b => b.getAttribute('aria-pressed'));
@@ -128,10 +133,13 @@ if (!browser) {
     out.zoneOverlap = (lr && tr && lr.width && lr.right > tr.left + 1 && getComputedStyle(tabs).gridRow === getComputedStyle(left).gridRow) || (rr && tr && rr.left < tr.right - 1 && getComputedStyle(tabs).gridRow === getComputedStyle(right).gridRow);
     // 精简界面仍保留主操作、所有折叠内容和键盘辅助入口。
     out.primaryActions = document.querySelectorAll(".lubi-root .mod-cta").length;
+    const jsonModal=document.querySelector('.lubi-json-import-modal');if(jsonModal){const box=r(jsonModal),input=jsonModal.querySelector('textarea');out.jsonModal={textVisible:r(input).width>0&&r(input).height>=180,inside:r(input).left>=box.left&&r(input).right<=box.right,overflow:document.documentElement.scrollWidth-innerWidth,buttons:[...jsonModal.querySelectorAll('.lubi-modal-actions button')].map(b=>({text:b.textContent,visible:r(b).width>0&&r(b).height>0}))};}
     out.simplifyErrors = [];
     const unifiedModal=document.querySelector('.lubi-task-modal');
     if(unifiedModal&&unifiedModal.querySelector('[data-actual=minutes]')) {
       const box=r(unifiedModal),hint=unifiedModal.querySelector('.lubi-actual-hint');
+      const details=unifiedModal.querySelector('.lubi-actual-details');
+      out.newTaskDetails=details?{visible:!details.hidden&&getComputedStyle(details).display!=='none',open:details.open,summary:details.querySelector('summary')?.textContent,inputsFit:[...details.querySelectorAll('input')].every(input=>r(input).width>0&&r(input).left>=box.left&&r(input).right<=box.right),hintVisible:hint?getComputedStyle(hint).display!=='none'&&r(hint).height>0:false,hint:hint?.textContent,removedInstruction:unifiedModal.textContent.includes('留空保存计划；填写实际用时后保存并完成任务')}:null;
       out.unifiedActual={modes:[...unifiedModal.querySelectorAll('.lubi-kind-seg button')].map(button=>button.dataset.lubiFocus),duration:unifiedModal.querySelector('[data-actual=minutes]').value,comparison:hint?.textContent,inputsFit:[...unifiedModal.querySelectorAll('input')].every(input=>r(input).width>0&&r(input).left>=box.left&&r(input).right<=box.right),overflow:document.documentElement.scrollWidth-innerWidth};
     }
     const sidebar = document.querySelector(".lubi-today-side");
@@ -150,7 +158,7 @@ if (!browser) {
     }
     if(document.querySelector(".lubi-tasks-projects, .lubi-project-toggle, .lubi-gantt, .lubi-project-peek")) out.simplifyErrors.push("removed project panel is still rendered");
     const lists = document.querySelector(".lubi-task-lists");
-    if (lists && (!lists.classList.contains("lubi-card") || lists.querySelector(".lubi-card"))) out.simplifyErrors.push("nested list cards");
+    if (lists && !lists.classList.contains("lubi-today-side") && (!lists.classList.contains("lubi-card") || lists.querySelector(".lubi-card"))) out.simplifyErrors.push("nested list cards");
     if ([...document.querySelectorAll(".lubi-summary-label")].some(el => el.textContent === "计划完成")) out.simplifyErrors.push("duplicate plan completion");
     if (document.querySelector(".lubi-review-signals, .lubi-tl-hint, .lubi-tl-stats, .lubi-onboard")) out.simplifyErrors.push("repeated statistics or guidance");
     for (const el of document.querySelectorAll(".lubi-root, .lubi-root *")) {
@@ -422,7 +430,7 @@ if (!browser) {
       const geometry = JSON.parse(decodeURIComponent(matches[matches.length - 1][1]));
       assert(!geometry.browserError, `browser probe error for ${page}: ${geometry.browserError} ${geometry.browserStack || ""}`);
       assert.equal(geometry.viewportWidth, width, `browser CSS viewport must really be ${width}px`);
-      if (geometry.tabOrder !== null) assert.equal(geometry.tabOrder,"seg:today|seg:tasks|seg:review", "all pages share the new top tab order");
+      if (geometry.tabOrder !== null) { assert.equal(geometry.tabOrder,"seg:tasks|seg:review", "all pages share the new top tab order"); assert.deepEqual(geometry.tabLabels.map(label=>label.text),["计划","回顾"]); assert(geometry.tabLabels.every(label=>label.visible), "both top-level labels remain visible on narrow panels"); }
       if (geometry.ganttAppearance) assert(Object.values(geometry.ganttAppearance.layout).every(Boolean), `${theme} ${page} ${width}px: shared compact name column with full-width normal layout ${JSON.stringify(geometry.ganttAppearance.layout)}`);
       return geometry;
     };
@@ -433,6 +441,9 @@ if (!browser) {
           const g = run(theme, page, width);
           xs[page] = g.tabsX;
           assert.equal(g.primaryActions, 1, `${theme} ${page}: exactly one emphasized primary action`);
+          assert(g.aiEntry&&g.aiEntry.secondary&&g.aiEntry.named&&g.aiEntry.icon, `${theme} ${page}: AI button retains name and secondary style`);
+          assert(g.jsonEntry&&g.jsonEntry.secondary&&g.jsonEntry.named,"JSON import has a secondary named button");
+          if(page==="review")assert(!g.aiEntry.visible&&!g.jsonEntry.visible,"review does not gain creation entries");else {assert(g.jsonEntry.visible&&g.jsonEntry.left&&g.jsonEntry.inside,"JSON import is visible left of AI");assert(g.aiEntry.visible&&g.aiEntry.left&&g.aiEntry.inside,`${theme} ${width}px: AI button stays visible left of new task without clipping`);}
           assert.deepEqual(g.simplifyErrors, [], `${theme} ${page}: simplified UI regression ${g.simplifyErrors.join(", ")}`);
           assert(g.foldStates.every(d => ((d.planTasks || d.gaps) ? d.open : !d.open) && d.summaryVisible), `${theme} ${page}: task list and gaps are open while secondary sections remain reachable`);
           if ([1400, 390].includes(width) && page !== "tasks") {
@@ -447,6 +458,7 @@ if (!browser) {
             if(g.reviewBarStates.filled)assert(g.reviewBarStates.filled.outline&&g.reviewBarStates.filled.height>0&&g.reviewBarStates.filled.badge,'nonzero today retains its existing highlight');
           }
           assert(g.barOverflow <= 1, `${theme} ${page} ${width}px: top bar overflows by ${g.barOverflow}px`);
+          if(width<=560&&g.dateCaption)assert(g.dateCaption.oneLine&&g.dateCaption.contained,`${theme} ${width}px: date caption stays one line and inside its button`);
           assert(!g.zoneOverlap, `${theme} ${page} ${width}px: top bar zones overlap ${JSON.stringify(g)}`);
           assert(g.referenceControls.every(c => c.stable && c.selected && Math.max(...c.heights) - Math.min(...c.heights) <= .5), `${theme} ${page} ${width}px: shared segments jump or have duplicate emphasis`);
           if (g.planProgress) {
@@ -521,6 +533,15 @@ if (!browser) {
       assert(a&&a.modes.join('|')==='seg:todo|seg:money'&&a.duration==='60'&&a.comparison.includes('预计 45min · 实际 1h · 超出 15min')&&a.inputsFit&&a.overflow<=1,theme+' '+width+'px: unified actual form layout '+JSON.stringify(a));
       assert(g.minFont>=11&&g.lowContrast.length===0,theme+' '+width+'px: unified actual form readability');
       console.log('ok   unified actual form '+theme+' '+width+'px: two modes, actual/estimate comparison, visible controls');
+    }
+    for(const theme of ['light','dark'])for(const width of [1000,600,390,320]) {
+      const g=run(theme,'modal-json-import',width),m=g.jsonModal;assert(m&&m.textVisible&&m.inside&&m.overflow<=1&&m.buttons.length===2&&m.buttons.every(b=>b.visible),theme+' '+width+'px: JSON paste/import modal is usable '+JSON.stringify(m));assert(g.minFont>=11&&g.lowContrast.length===0,'JSON import text is readable');console.log('PASS JSON import modal: '+theme+' '+width+'px');
+    }
+    for(const theme of ['light','dark'])for(const width of [1000,600,390,320])for(const page of ['modal-new-actual-only','modal-new-planned']) {
+      const g=run(theme,page,width),d=g.newTaskDetails;
+      assert(d&&d.visible&&d.open&&d.summary==='实际发生时间'&&d.inputsFit&&!d.hintVisible&&!d.hint&&!d.removedInstruction,theme+' '+width+'px '+page+': same expanded actual-time fields without redundant hints '+JSON.stringify(d));
+      assert(g.unifiedActual.inputsFit&&g.unifiedActual.overflow<=1&&g.minFont>=11&&g.lowContrast.length===0,theme+' '+width+'px '+page+': shared new-task modal stays readable');
+      console.log('PASS shared new-task modal: '+theme+' '+width+'px '+page);
     }
     for(const theme of ['light','dark']) for(const width of [1400,390]) {
       const g=run(theme,'today-empty',width),d=g.emptyDonut;

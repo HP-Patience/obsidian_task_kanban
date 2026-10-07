@@ -1,4 +1,4 @@
-// 每日页和计划日历日视图共用的分类分布与计划进度卡片。
+// 计划日历日视图的分类分布与计划进度卡片。
 import type LubiPlugin from "../main";
 import { PENDING_KEY, Rec } from "../core/records";
 import { fmtHours, shortDate, todayStr } from "../core/time";

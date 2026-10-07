@@ -7,16 +7,18 @@ import type LubiPlugin from "../main";
 import { normalizeEstimatedMinutes, ParsedLine, PENDING_KEY, Rec } from "../core/records";
 import { Task, DoneLog, blankTask } from "../core/tasks";
 import { fmtDuration, hmToMin, minToHM, nowHM, todayStr } from "../core/time";
+import { planOccurrences } from "../core/planning";
 import { categoryOf } from "../settings";
 import { button, catDot, icon, iconButton, tip, undoNotice } from "./components";
 
 /** 打开「新建 · 已完成」记录框；onRec 在记录真正保存后回调（取消则不调用） */
 export type OpenRecord = (defaults?: Partial<Rec>, onRec?: (rec: Rec) => void | Promise<void>) => void;
 
-/** 某天应显示的任务：有子任务的父任务不单列（它们以分组标题出现） */
+/** 当天清单：排期投影 + 原有记录任务；只有推导出跨度的父任务不单列。 */
 export function dayTasks(plugin: LubiPlugin, date: string): Task[] {
-  return plugin.tasks.forDate(date).filter((t) => !plugin.tasks.children(t.id).length)
-    .sort((a, b) => a.order - b.order || a.created.localeCompare(b.created));
+  const items = new Map(plugin.tasks.forDate(date).filter(t => !plugin.tasks.children(t.id).length).map(t => [t.id, t]));
+  for (const { task } of planOccurrences(plugin.tasks.all, [date])) items.set(task.id, task);
+  return [...items.values()].sort((a, b) => a.order - b.order || a.created.localeCompare(b.created));
 }
 
 /** 按父任务分组渲染；只有一组且无父任务时不显示组标题 */
