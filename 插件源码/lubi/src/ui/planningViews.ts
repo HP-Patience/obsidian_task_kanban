@@ -33,7 +33,7 @@ export function renderMonthCalendar(plugin: LubiPlugin, card: HTMLElement, selec
       catDot(chip, categoryOf(plugin.settings, task.category));
       if (occurrence.timed) chip.createSpan({ cls: "lubi-month-task-time", text: task.start });
       chip.createSpan({ cls: "lubi-month-task-title", text: task.title });
-      infoTip(chip, task.title, [occurrence.from === occurrence.to ? date : `${occurrence.from} – ${occurrence.to}`,
+      infoTip(chip, task.title, [...(plugin.tasks.projectOf(task) ? [`项目：${plugin.tasks.projectOf(task)!.title}`] : []), occurrence.from === occurrence.to ? date : `${occurrence.from} – ${occurrence.to}`,
         ...(occurrence.timed ? [`开始：${task.start}`] : []), `预计用时：${task.estimate ? fmtDuration(task.estimate) : "未设置"}`,
         occurrence.done ? "已完成" : "待完成"], task.notes);
       chip.addEventListener("click", event => { event.stopPropagation(); edit(task, date); });
@@ -65,7 +65,7 @@ export function renderRangeList(plugin: LubiPlugin, card: HTMLElement, days: str
         () => edit(task, date), { compact: true, span, timed: occurrence.timed });
       row.dataset.date = date;
       decorate(row, task);
-      const path = plugin.tasks.pathOf(task).slice(0, -1).map(parent => parent.title).join(" / ");
+      const path = plugin.tasks.projectOf(task)?.title || plugin.tasks.pathOf(task).slice(0, -1).map(parent => parent.title).join(" / ");
       if (path) row.querySelector(".lubi-task-body")?.createSpan({ cls: "lubi-plan-list-parent lubi-muted", text: path });
     }
   }

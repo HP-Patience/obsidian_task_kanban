@@ -9,6 +9,7 @@ import { ganttWindow } from "../core/gantt";
 import { renderTasks, TasksState } from "./tasks";
 import { ShortcutsModal, TaskModal } from "./modals";
 import { AiTaskModal } from "./aiTask";
+import { fitGanttLabels } from "./ganttLabels";
 import { JsonTaskImportModal } from "./taskImport";
 
 export const VIEW_TYPE = "lubi-dashboard";
@@ -32,6 +33,7 @@ export class DashboardView extends ItemView {
   private visitedReview = false;
   private readonly scrollCache = new Map<string, { body: number; timeline?: number; week?: number; ganttLeft?: number; ganttTop?: number }>();
   private panelObserver?: ResizeObserver;
+  private ganttObserved?: HTMLElement;
   readonly refresh = debounce(() => void this.render(), 150);
 
   constructor(leaf: WorkspaceLeaf, private plugin: LubiPlugin) {
@@ -60,6 +62,7 @@ export class DashboardView extends ItemView {
     root.empty();
     root.addClass("lubi-root");
     const sizePanel = () => {
+      fitGanttLabels(root);
       const height = root.getBoundingClientRect().height;
       if (height >= 200) root.style.setProperty("--lubi-panel-height", `${Math.round(height)}px`);
     };
@@ -294,6 +297,12 @@ export class DashboardView extends ItemView {
     const bodyScroll = this.body.scrollTop;
     this.body.empty();
     this.body.appendChild(host);
+    if (this.ganttObserved) this.panelObserver?.unobserve(this.ganttObserved);
+    this.ganttObserved = host.querySelector<HTMLElement>(".lubi-gantt-table") || undefined;
+    if (this.ganttObserved) this.panelObserver?.observe(this.ganttObserved);
+    fitGanttLabels(host);
+    void document.fonts?.ready.then(() => { if (host.isConnected) fitGanttLabels(host); });
+
     this.lastRenderKey = key;
     if (focusKey && (document.activeElement === active || document.activeElement === document.body)) {
       const replacements = Array.from(this.body.querySelectorAll<HTMLElement>("[data-lubi-focus]"))

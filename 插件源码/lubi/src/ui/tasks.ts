@@ -112,7 +112,7 @@ export async function renderTasks(plugin: LubiPlugin, host: HTMLElement, date: s
   const top = host.createDiv({ cls: "lubi-tasks-top lubi-planning-top" });
   const lists = top.createDiv({ cls: "lubi-tasks-left lubi-task-lists" });
   lists.addClass("lubi-card");
-  renderLists(plugin, lists, date, rerender, openNew, edit, create, state.scheduleView !== "list");
+  renderLists(plugin, lists, date, rerender, openNew, edit, create, true);
   const main = top.createDiv({ cls: "lubi-tasks-week lubi-planning-main" });
   top.appendChild(lists);
   const card = main.createDiv({ cls: `lubi-card ${state.scheduleView === "gantt" ? "lubi-gantt-card" : state.scheduleView === "list" ? "lubi-plan-list-card" : state.period === "month" ? "lubi-month-card" : "lubi-week-card"}` });
@@ -151,29 +151,35 @@ function renderPlanningHead(host: HTMLElement, state: TasksState, days: string[]
 function renderLists(plugin: LubiPlugin, host: HTMLElement, date: string, rerender: () => void, openNew: OpenRecord, edit: (t: Task) => void, create: (d?: Partial<Task>) => void, showToday: boolean, records?: Rec[]): void {
   if (showToday) {
     const scheduled = planOccurrences(plugin.tasks.all, [date]);
-    const occurrences = records ? dayTasks(plugin, date).map(task => scheduled.find(item => item.task.id === task.id) || { task, date, from: date, to: date, timed: !!task.start, done: plugin.tasks.isDoneOn(task, date) }) : scheduled;
+    let occurrences = records ? dayTasks(plugin, date).map(task => scheduled.find(item => item.task.id === task.id) || { task, date, from: date, to: date, timed: !!task.start, done: plugin.tasks.isDoneOn(task, date) }) : scheduled;
+    const logged = new Set(records?.map(rec => rec.task).filter(Boolean));
+    // Date alone is not an independent activity for an ancestor used as a group.
+    if (records) {
+      const ancestors = new Set(occurrences.flatMap(item => plugin.tasks.pathOf(item.task).slice(0, -1).map(t => t.id)));
+      occurrences = occurrences.filter(({ task }) => !ancestors.has(task.id) || !!task.start || task.estimate > 0 || logged.has(task.id));
+    }
     if (records) occurrences.sort((a, b) => (a.timed ? hmToMin(a.task.start) : 1440) - (b.timed ? hmToMin(b.task.start) : 1440) || a.task.order - b.task.order);
     if (!records) occurrences.sort((a, b) => a.task.order - b.task.order || a.task.created.localeCompare(b.task.created));
     const today = occurrences.map(item => item.task);
-    const logged = new Set(records?.map(rec => rec.task).filter(Boolean));
     const done = today.filter(t => plugin.tasks.isDoneOn(t, date) || logged.has(t.id)).length;
     const renderList = (list: HTMLElement) => {
-      groupedRows(plugin, list, today, edit, (group, t) => {
+      const row = (group: HTMLElement, t: Task) => {
         const occurrence = occurrences.find(item => item.task.id === t.id)!;
-        const li = taskRow(plugin, group, t, date, rerender, openNew, () => edit(t), { compact: !records, timed: occurrence.timed,
+        const li = taskRow(plugin, group, t, date, rerender, openNew, () => edit(t), { compact: !records, hideContext: !!records, timed: occurrence.timed,
           span: occurrence.from !== occurrence.to ? `${shortDate(occurrence.from)} – ${shortDate(occurrence.to)}` : undefined });
         li.dataset.date = date;
         makeDraggable(li, t);
         bindTaskSort(plugin, li, t, list, rerender);
-      });
+      };
+      groupedRows(plugin, list, today, edit, row);
     };
     let card: HTMLElement;
     if (records) card = renderDayPlan(host, date, today.length, done, renderList);
     else {
-      card = host.createDiv({ cls: "lubi-section lubi-list-card" });
+      card = host.createDiv({ cls: "lubi-section lubi-list-card lubi-selected-day-list", attr: { "data-date": date } });
       const head = card.createDiv({ cls: "lubi-panel-head" });
-      el(head, "h3", "lubi-panel-title", date === todayStr() ? "今天" : `${shortDate(date)} 周${weekdayZh(date)}`);
-      head.createSpan({ cls: "lubi-muted", text: today.length ? `${done}/${today.length}` : "" });
+      el(head, "h3", "lubi-panel-title", date === todayStr() ? "今日计划" : `${shortDate(date)} 周${weekdayZh(date)}`);
+      head.createSpan({ cls: "lubi-muted", text: `${done}/${today.length} 已做` });
       const list = card.createDiv({ cls: "lubi-task-list" });
       if (!today.length) list.createDiv({ cls: "lubi-muted lubi-pad", text: "暂无安排" });
       renderList(list);
@@ -210,7 +216,7 @@ function renderLists(plugin: LubiPlugin, host: HTMLElement, date: string, rerend
   const ih = ib.createDiv({ cls: "lubi-panel-head" });
   el(ih, "h3", "lubi-panel-title", "未安排");
   ih.createSpan({ cls: "lubi-muted", text: inbox.length ? String(inbox.length) : "" });
-  iconButton(ih, "plus", "新建未安排任务", () => create(), "lubi-push-right");
+  iconButton(ih, "plus", "新建未安排任务", () => create(), "lubi-push-right lubi-inbox-add");
   const il = ib.createDiv({ cls: "lubi-task-list" });
   if (!inbox.length) il.createDiv({ cls: "lubi-muted lubi-pad", text: "暂无未安排任务" });
   groupedRows(plugin, il, inbox, edit, (group, t) => {
@@ -335,6 +341,7 @@ function renderCalendarSchedule(plugin: LubiPlugin, card: HTMLElement, date: str
       const doneChip = plugin.tasks.isDoneOn(t, d);
       const chip = strip.createEl("button", { cls: `lubi-allday-chip ${doneChip ? "is-done" : ""}`, attr: { type: "button" } });
       const summary = [
+        ...(plugin.tasks.projectOf(t) ? [`项目：${plugin.tasks.projectOf(t)!.title}`] : []),
         `${shortDate(d)} · 全天（未设置开始时间）`,
         `预计用时：${t.estimate > 0 ? fmtDuration(t.estimate) : "未设置"}`,
         doneChip ? "已完成" : "待完成",
@@ -461,7 +468,7 @@ function renderCalendarSchedule(plugin: LubiPlugin, card: HTMLElement, date: str
       const handle = block.createDiv({ cls: "lubi-block-handle is-bottom" });
       block.setAttribute("tabindex", "0");
       block.setAttribute("role", "button");
-      infoTip(block, t.title, [`${shortDate(d)} · ${t.start}–${minToHM(startMin + dur)}`, `预计用时：${t.estimate ? fmtDuration(t.estimate) : "未设置（显示按 30 分钟）"}`, plugin.tasks.isDoneOn(t, d) ? "已完成" : "待完成"], t.notes);
+      infoTip(block, t.title, [...(plugin.tasks.projectOf(t) ? [`项目：${plugin.tasks.projectOf(t)!.title}`] : []), `${shortDate(d)} · ${t.start}–${minToHM(startMin + dur)}`, `预计用时：${t.estimate ? fmtDuration(t.estimate) : "未设置（显示按 30 分钟）"}`, plugin.tasks.isDoneOn(t, d) ? "已完成" : "待完成"], t.notes);
       block.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); edit(t, d); }
       });

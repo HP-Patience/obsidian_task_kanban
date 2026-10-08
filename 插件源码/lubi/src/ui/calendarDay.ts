@@ -245,7 +245,7 @@ export async function renderCalendarDay(plugin: LubiPlugin, host: HTMLElement, d
       ph.createSpan({ cls: "lubi-plan-title", text: t.title });
       const planActions = pb.createDiv({ cls: "lubi-block-actions" });
       planActions.addEventListener("pointerdown", (e) => e.stopPropagation());
-      iconButton(planActions, "pencil", "编辑计划", () => editPlan(t));
+      iconButton(planActions, "pencil", "编辑计划", () => editPlan(t), "lubi-quiet-action");
       const cancelPlan = async () => {
         try {
           const result = await plugin.tasks.cancelPlanOn(t.id, date);
@@ -264,7 +264,7 @@ export async function renderCalendarDay(plugin: LubiPlugin, host: HTMLElement, d
       tip(handleBottom, "拖动调整计划结束时间");
       const late = date === todayStr() && s0 + mins < hmToMin(nowHM());
       pb.toggleClass("is-late", late);
-      infoTip(pb, t.title, [`${shortDate(date)} · ${t.start}–${minToHM(s0 + mins)}`, `预计用时：${t.estimate ? fmtDuration(t.estimate) : "未设置"}`, late ? "已过计划时间 · 待完成" : "待完成", ...(t.repeat.kind !== "none" ? ["重复任务：调整时间会应用于后续重复项"] : [])], t.notes);
+      infoTip(pb, t.title, [...(plugin.tasks.projectOf(t) ? [`项目：${plugin.tasks.projectOf(t)!.title}`] : []), `${shortDate(date)} · ${t.start}–${minToHM(s0 + mins)}`, `预计用时：${t.estimate ? fmtDuration(t.estimate) : "未设置"}`, late ? "已过计划时间 · 待完成" : "待完成", ...(t.repeat.kind !== "none" ? ["重复任务：调整时间会应用于后续重复项"] : [])], t.notes);
       let suppressPointerClick = false;
       const placePlan = (start: number, minutes: number) => {
         const height = Math.max(Math.min(minutes, 1440 - start) * PX_PER_MIN, 20);
@@ -372,8 +372,8 @@ export async function renderCalendarDay(plugin: LubiPlugin, host: HTMLElement, d
     const comparison = formatEstimateComparison(r);
     infoTip(block, r.title, [`${shortDate(date)} · ${invalid ? `${r.start}（时长跨出当天，需校对）` : `${r.start}–${minToHM(startMin + r.minutes)}`}`, `分类：${r.category}`, `${pending ? "按计划生成的时长（待确认）" : "实际用时"}：${fmtDuration(r.minutes)}`, ...(comparison ? [comparison] : []), ...(r.task && plugin.tasks.byId(r.task) ? [`关联任务：${plugin.tasks.byId(r.task)!.title}`] : []), ...(pending ? ["按计划自动记下，尚未核对实际时间"] : [])], r.notes);
     const acts = block.createDiv({ cls: "lubi-block-actions" });
-    iconButton(acts, "pencil", "编辑", () => openEdit(row));
-    iconButton(acts, "trash-2", "删除", () => void deleteRecord(plugin, date, row, rerender));
+    iconButton(acts, "pencil", "编辑", () => openEdit(row), "lubi-quiet-action");
+    iconButton(acts, "trash-2", "删除", () => void deleteRecord(plugin, date, row, rerender), "lubi-quiet-action");
 
     const live = (s: { start: number; minutes: number }, atEnd = false) => {
       block.style.top = `${s.start * PX_PER_MIN}px`;

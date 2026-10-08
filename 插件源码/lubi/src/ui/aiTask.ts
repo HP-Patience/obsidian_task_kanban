@@ -85,7 +85,7 @@ export class AiTaskModal extends Modal {
     this.result.empty();
     try {
       const categories = s.categories.filter((c) => c.kind === "time").map((c) => c.name);
-      const system = `你是 Lubi 的任务解析器。当前日期是 ${todayStr()}。只返回 JSON，不要 Markdown，不要解释。字段必须是：title（字符串）、category（从 ${JSON.stringify(categories)} 中选一个）、date（YYYY-MM-DD 或空字符串）、start（HH:MM 或空字符串）、estimate（分钟数字或 0）、startDate（YYYY-MM-DD 或空字符串）、endDate（YYYY-MM-DD 或空字符串）、confidence（high/medium/low）、explanation（简短中文）、subtasks（子任务数组，每项包含 title、date、start、estimate；没有子任务时返回空数组）。用户明确说有多个步骤或子任务时，必须拆成 subtasks；不要把子任务塞进 title。只在用户明确提供时填写日期、时间、时长和截止日期；子任务未明确的日期和分类由应用继承父任务，未明确的时长留空或 0。`;
+      const system = `你是 Lubi 的任务解析器。当前日期是 ${todayStr()}。只返回 JSON，不要 Markdown，不要解释。字段必须是：title（字符串）、category（从 ${JSON.stringify(categories)} 中选一个）、date（YYYY-MM-DD 或空字符串）、start（HH:MM 或空字符串）、estimate（分钟数字或 0）、startDate（YYYY-MM-DD 或空字符串）、endDate（YYYY-MM-DD 或空字符串）、confidence（high/medium/low）、explanation（简短中文）、subtasks（子任务数组，每项包含 title、date、start、estimate；没有子任务时返回空数组）。用户明确说有多个步骤时，拆成 subtasks 供逐项确认；应用将其保存为独立任务，可继承所选项目，不创建父子关系。只在用户明确提供时填写日期、时间、时长和截止日期；子任务未明确的日期和分类由应用继承父任务，未明确的时长留空或 0。`;
       const body = JSON.stringify({ model: s.aiModel, temperature: 0.1, messages: [{ role: "system", content: system }, { role: "user", content: prompt }] });
       let response: { status: number; json: unknown };
       try {
@@ -119,7 +119,7 @@ export class AiTaskModal extends Modal {
     const grid = this.result.createDiv({ cls: "lubi-ai-task-grid" });
     for (const [label, value] of rows) { const row = grid.createDiv({ cls: "lubi-ai-task-row" }); row.createSpan({ cls: "lubi-muted", text: label }); row.createSpan({ text: value }); }
     if (d.subtasks?.length) {
-      this.result.createDiv({ cls: "lubi-ai-task-subtasks-title", text: `子任务（${d.subtasks.length}）` });
+      this.result.createDiv({ cls: "lubi-ai-task-subtasks-title", text: `后续任务（${d.subtasks.length}）` });
       const list = this.result.createDiv({ cls: "lubi-ai-task-subtasks" });
       d.subtasks.forEach((child, i) => list.createDiv({ text: `${i + 1}. ${child.title}${child.estimate ? `（${child.estimate} 分钟）` : ""}` }));
     }
@@ -146,7 +146,7 @@ export class AiTaskModal extends Modal {
       if (!child) { this.onSaved?.(); return; }
       const defaults: Partial<Task> = {
         title: child.title,
-        parent: parent.id,
+        project: parent.project,
         category: parent.category,
         date: child.date || parent.date,
         start: child.start || "",

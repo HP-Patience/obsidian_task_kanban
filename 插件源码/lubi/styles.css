@@ -242,12 +242,14 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 /* ---------- 任务列表 ---------- */
 .lubi-task-list { display: flex; flex-direction: column; }
 .lubi-task {
-  display: flex; align-items: flex-start; gap: 10px; padding: 8px 6px; border-radius: var(--lubi-radius-s);
+  --lubi-task-pad-x: 6px; --lubi-task-line: calc(var(--font-ui-small) * 1.4);
+  display: flex; align-items: flex-start; gap: 10px; padding: 8px var(--lubi-task-pad-x); border-radius: var(--lubi-radius-s);
   border-bottom: 1px solid var(--lubi-border); cursor: pointer; position: relative;
 }
 .lubi-task:last-child { border-bottom: none; }
 .lubi-task:hover { background: var(--background-modifier-hover); }
-.lubi-task input[type="checkbox"] { margin-top: 3px; flex-shrink: 0; }
+/* 去掉原生左右外边距，复选框左缘与分组标题文字对齐 */
+.lubi-task input[type="checkbox"] { margin: 3px 0 0; flex-shrink: 0; }
 .lubi-task-body { flex: 1; min-width: 0; }
 .lubi-task-title { display: flex; align-items: flex-start; gap: 6px; font-size: var(--font-ui-small); min-width: 0; }
 .lubi-task-title-text { min-width: 0; flex: 1; overflow-wrap: anywhere; line-height: 1.4; }
@@ -268,11 +270,11 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-task.is-blocked .lubi-blocked-icon svg { width: 13px; height: 13px; color: var(--color-orange); }
 .lubi-task-actions { display: inline-flex; position: static; margin-left: auto; flex-shrink: 0; align-self: flex-start; }
 .lubi-task:hover .lubi-task-actions { display: inline-flex; }
-.lubi-task-list-compact .lubi-task { padding: 5px 4px; }
+.lubi-task-list-compact .lubi-task { --lubi-task-pad-x: 4px; padding: 5px var(--lubi-task-pad-x); }
 .lubi-task.is-draggable { cursor: grab; }
 .lubi-task.is-dragging { opacity: 0.4; }
 .lubi-quick-add { display: flex; align-items: center; gap: 8px; margin-top: var(--lubi-gap-2); color: var(--lubi-muted); }
-.lubi-quick-add input { flex: 1; border: none; background: transparent; box-shadow: none; padding: 8px 0; font-size: var(--font-ui-small); border-radius: 0; }
+.lubi-quick-add input { flex: 1; border: none; background: transparent; box-shadow: none; padding: 8px 6px; font-size: var(--font-ui-small); border-radius: 0; }
 .lubi-quick-add input:focus { box-shadow: none; outline: none; border-bottom: 1px solid var(--lubi-accent); }
 .lubi-ai-task-intro { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--text-muted); }
 .lubi-ai-task-modal textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 88px; }
@@ -937,16 +939,17 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 }
 .lubi-root .lubi-legend-pct { font-size: var(--lubi-fs-xs); }
 /* 待办行：▶ 开始 */
-.lubi-root .lubi-task-actions { gap: 2px; background: var(--background-primary); border-radius: 6px; }
-.lubi-root .lubi-task-actions .lubi-icon-btn { width: 28px; height: 28px; }
+/* 按钮中心对齐标题首行；按钮框右缘贴齐卡片内容右缘（与进度条、添加按钮一致） */
+.lubi-root .lubi-task-actions { --lubi-task-action-size: 28px; gap: 2px; background: var(--background-primary); border-radius: 6px; margin-top: calc((var(--lubi-task-line, 18px) - var(--lubi-task-action-size)) / 2); margin-right: calc(-1 * var(--lubi-task-pad-x, 6px)); }
+.lubi-root .lubi-task-actions button.lubi-icon-btn:not(.clickable-icon) { width: var(--lubi-task-action-size); height: var(--lubi-task-action-size); }
 .lubi-root .lubi-task-start svg { color: var(--lubi-ok); }
 .lubi-root .lubi-task:focus-within .lubi-task-actions { display: inline-flex; }
 /* 今日收尾 */
 
 /* ---------- 回顾页 ---------- */
 .lubi-root .lubi-kpis-v2 { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: var(--lubi-gap-3); }
-.lubi-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--lubi-gap-3); }
-.lubi-root .lubi-kpi.is-primary { display: flex; flex-direction: column; justify-content: center; padding: 6px 0; }
+.lubi-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--lubi-gap-3); }
+.lubi-root .lubi-kpi.is-primary { display: flex; flex-direction: column; justify-content: flex-start; padding: 6px 0; }
 .lubi-root .lubi-kpi.is-primary .lubi-kpi-value { font-size: var(--lubi-fs-kpi); letter-spacing: -0.01em; margin: 4px 0 6px; }
 .lubi-root .lubi-kpi-label { font-size: var(--lubi-fs-sm); }
 .lubi-root .lubi-kpi-value { font-size: var(--lubi-fs-xl); }
@@ -1101,10 +1104,13 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
   .lubi-root .lubi-topbar-tabs { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; }
   .lubi-root .lubi-day-nav { width: auto; justify-content: flex-start; }
   .lubi-root .lubi-date-label > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 窄面板时间刻度列与画布起点一致，不留空白条 */
+  .lubi-root .lubi-timeline { --lubi-gutter: 42px; }
 }
 @media (pointer: coarse) {
   .lubi-root button.lubi-gap-btn:not(.clickable-icon) { opacity: 1; pointer-events: auto; }
-  .lubi-root .lubi-task-actions { display: inline-flex; }
+  .lubi-root .lubi-task-list .lubi-task { padding-block: max(10px, calc((44px - var(--lubi-task-line)) / 2)); }
+  .lubi-root .lubi-task-actions { --lubi-task-action-size: 44px; display: inline-flex; margin-top: calc((var(--lubi-task-line, 18px) - var(--lubi-task-action-size)) / 2); }
 }
 @media (prefers-reduced-motion: reduce) {
   .lubi-switch-thumb, .lubi-switch-track { transition: none; }
@@ -1254,9 +1260,9 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-root button.lubi-pending-badge { height: auto; min-height: 0; border: 0; box-shadow: none; cursor: pointer; }
 
 /* 今日计划：任务名称为主，时间使用等宽数字，沿用已做 / 总数进度。 */
-.lubi-plan-card > .lubi-panel-head { justify-content: space-between; }
-.lubi-plan-card > .lubi-panel-head > .lubi-muted { flex-shrink: 0; font-variant-numeric: tabular-nums; }
-.lubi-plan-task-list .lubi-task { padding: 10px 0; border-radius: 0; border-bottom-color: var(--lubi-line-soft); }
+:is(.lubi-plan-card, .lubi-selected-day-list) > .lubi-panel-head { justify-content: space-between; }
+:is(.lubi-plan-card, .lubi-selected-day-list) > .lubi-panel-head > .lubi-muted { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.lubi-plan-task-list .lubi-task { --lubi-task-line: calc(var(--lubi-fs-md) * 1.4); padding: 10px var(--lubi-task-pad-x); border-radius: 0; border-bottom-color: var(--lubi-line-soft); }
 .lubi-plan-task-list .lubi-task-title { font-size: var(--lubi-fs-md); }
 .lubi-plan-task-list .lubi-task-meta { margin-top: 4px; font-size: var(--lubi-fs-sm); }
 .lubi-plan-task-list .lubi-task-body:has(.lubi-task-title > .lubi-dot) .lubi-task-meta { padding-left: 14px; }
@@ -1394,7 +1400,7 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-gantt-bar.is-editable { cursor: grab; touch-action: none; user-select: none; }
 .lubi-gantt-bar.is-summary { border: 1px solid var(--chip); background: var(--background-secondary); }
 .lubi-gantt-bar.is-done { --chip: var(--text-muted); background: var(--background-secondary); border-color: var(--text-muted); color: var(--text-muted); }
-.lubi-gantt-bar-label { display: block; padding: 2px 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; line-height: 16px; pointer-events: none; }
+.lubi-gantt-bar-label { display: inline-block; width: max-content; max-width: none; margin: 0 8px; padding: 2px 4px; visibility: hidden; white-space: nowrap; font-size: 11px; line-height: 16px; pointer-events: none; }
 .lubi-gantt-handle { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; touch-action: none; }
 .lubi-gantt-handle.is-start { left: 0; }
 .lubi-gantt-handle.is-end { right: 0; }
@@ -1473,7 +1479,7 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-root .lubi-plan-list-date { display: block; height: auto; margin: 0 0 4px; padding: 4px 0; border: 0; box-shadow: none; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 600; text-align: left; }
 .lubi-plan-list-parent { display: block; font-size: 11px; overflow-wrap: anywhere; }
 .lubi-plan-list-empty { padding: 16px 0; font-size: 12px; }
-.lubi-plan-range-list .lubi-task { padding: 7px 0; }
+.lubi-plan-range-list .lubi-task { --lubi-task-pad-x: 0px; padding: 7px var(--lubi-task-pad-x); }
 @container (max-width: 900px) {
   .lubi-root .lubi-planning-top { grid-template-columns: minmax(0, 1fr); }
   .lubi-planning-main { grid-row: 1; }
@@ -1510,3 +1516,8 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-model-option { display: flex; align-items: center; min-height: 36px; padding: 6px 10px; box-sizing: border-box; overflow-wrap: anywhere; font-size: 13px; text-align: left; cursor: pointer; }
 .lubi-model-option:hover, .lubi-model-option[aria-selected="true"] { background: var(--background-modifier-hover); }
 .lubi-model-empty { padding: 10px; font-size: 12px; color: var(--text-muted); }
+
+.lubi-task-modal [data-task-project="name"] { flex: 1; width: auto; min-width: 0; }
+
+.lubi-gantt-project-heading { display: grid; grid-template-columns: var(--gantt-name-w) minmax(0, 1fr); min-height: 28px; border-top: 1px solid var(--lubi-border); background: var(--background-secondary); }
+.lubi-gantt-project-heading > .lubi-gantt-name { background: var(--background-secondary); font-size: var(--font-ui-small); font-weight: 600; overflow-wrap: anywhere; }

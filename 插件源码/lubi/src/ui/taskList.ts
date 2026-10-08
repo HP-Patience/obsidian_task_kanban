@@ -26,13 +26,15 @@ export function groupedRows(plugin: LubiPlugin, list: HTMLElement, items: Task[]
   const groups = new Map<string, { parent?: Task; title: string; tasks: Task[] }>();
   for (const task of items) {
     const parents = plugin.tasks.pathOf(task).slice(0, -1);
-    const key = parents.map((p) => p.id).join("/") || "__root__";
-    if (!groups.has(key)) groups.set(key, { parent: parents[parents.length - 1], title: parents.map((p) => p.title).join(" / "), tasks: [] });
+    const project = plugin.tasks.projectOf(task);
+    const key = project ? `project:${project.id}` : parents.map((p) => p.id).join("/") || "__root__";
+    if (!groups.has(key)) groups.set(key, { parent: project ? undefined : parents[parents.length - 1], title: project?.title || parents.map((p) => p.title).join(" / "), tasks: [] });
     groups.get(key)!.tasks.push(task);
   }
   for (const group of groups.values()) {
     const section = list.createDiv({ cls: "lubi-task-group" });
-    if (group.parent) {
+    if (group.title && !group.parent) section.createDiv({ cls: "lubi-task-group-title lubi-muted", text: group.title });
+    else if (group.parent) {
       const path = button(section, group.title, () => edit(group.parent!), { cls: "lubi-task-group-title" });
       tip(path, `编辑父任务：${group.title}`);
     }
@@ -262,7 +264,7 @@ export async function deleteRecord(plugin: LubiPlugin, date: string, row: Parsed
   rerender();
 }
 
-export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: string, rerender: () => void, openNew: OpenRecord, onClick?: () => void, options: { compact?: boolean; span?: string; timed?: boolean } = {}): HTMLElement {
+export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: string, rerender: () => void, openNew: OpenRecord, onClick?: () => void, options: { compact?: boolean; span?: string; timed?: boolean; parentSeparator?: string; hideContext?: boolean } = {}): HTMLElement {
   const done = plugin.tasks.isDoneOn(t, date);
   const li = ul.createDiv({ cls: `lubi-task ${done ? "is-done" : ""} ${t.blocked ? "is-blocked" : ""}`.trim() });
   const cb = li.createEl("input", { type: "checkbox" });
@@ -291,7 +293,9 @@ export function taskRow(plugin: LubiPlugin, ul: HTMLElement, t: Task, date: stri
   if (t.origin === "record") tip(line, `由记录生成${onClick ? " · 点击编辑" : ""}：${t.title}`);
   const parents = plugin.tasks.pathOf(t).slice(0, -1);
   const meta: string[] = [];
-  if (parents.length && !options.compact) meta.push(parents.map((p) => p.title).join(" / "));
+  const project = plugin.tasks.projectOf(t);
+  if (project && !options.compact && !options.hideContext) meta.push(project.title);
+  else if (parents.length && !options.compact && !options.hideContext) meta.push(parents.map((p) => p.title).join(options.parentSeparator || " / "));
   if (t.start && options.timed !== false) meta.push(options.compact && t.estimate ? `${t.start}–${minToHM(hmToMin(t.start) + t.estimate)}` : t.start);
   if (options.span) meta.push(options.span);
   if (t.estimate && !options.compact) meta.push(fmtDuration(t.estimate));

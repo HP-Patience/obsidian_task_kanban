@@ -3,7 +3,15 @@ type Rows = (string | HTMLElement)[];
 const scope = ".lubi-root, .lubi-modal, .lubi-settings, .lubi-tooltip-scope";
 // 清单内容已直接展示；只保留可访问名称，不重复弹出提示。
 const listNames = '.lubi-task .lubi-task-title, .lubi-task .lubi-task-meta, .lubi-task > input[type="checkbox"]';
-const headerButtons = ".lubi-root .lubi-topbar button, .lubi-root .lubi-planning-head button";
+// 已有文字或常见图标足以表达用途；静默子元素也不触发父级详情卡。
+const quietControls = [
+  ".lubi-root .lubi-topbar button", ".lubi-root .lubi-planning-head button", ".lubi-root .lubi-inbox-add",
+  ".lubi-quiet-action", ".lubi-modal .lubi-kind-seg button", ".lubi-root .lubi-plan-progress",
+  ".lubi-root .lubi-gantt-collapse", ".lubi-root .lubi-review .lubi-toolbar .lubi-nav button.lubi-icon-btn",
+  ".lubi-settings .lubi-model-toggle", ".lubi-root .lubi-task-group-title", ".lubi-modal .lubi-cat-option",
+  ".lubi-modal .lubi-quick-chip-warn.lubi-switch", ".lubi-settings .lubi-category-up",
+  ".lubi-settings .lubi-category-remove", ".lubi-root .lubi-gap-row-add",
+].join(", ");
 const rich = new WeakMap<Element, { rows: () => Rows | null; placement: "pointer" | "side" }>();
 let tipEl: HTMLElement | null = null;
 let pending: number | null = null;
@@ -19,7 +27,7 @@ export function hideTip(): void {
 /** 可访问名称与视觉提示共用文字，但不留会触发 Obsidian 黑框的 aria-label。 */
 function normalize(el: Element): void {
   if (!el.closest(scope)) return;
-  const listName = el.matches(listNames) || el.matches(headerButtons);
+  const listName = el.matches(listNames) || el.matches(quietControls);
   if (listName) el.removeAttribute("data-lubi-tip");
   const label = el.getAttribute("aria-label") || el.getAttribute("title");
   if (!label) return;
@@ -37,7 +45,11 @@ function normalize(el: Element): void {
   el.setAttribute("aria-labelledby", description.id);
   el.setAttribute("data-lubi-label-id", description.id);
   el.removeAttribute("aria-label"); el.removeAttribute("title");
-  if (!nameOnly && !rich.has(el)) el.setAttribute("data-lubi-tip", label);
+  if (!nameOnly && !rich.has(el)) {
+    const hint = el.matches(".lubi-task-start") ? "填写实际用时，保存后完成任务"
+      : el.matches(".lubi-task-unlogged") ? "按计划补记一条待确认记录" : label;
+    el.setAttribute("data-lubi-tip", hint);
+  }
 }
 export function setTipLabel(el: HTMLElement, text: string): void {
   el.setAttribute("data-lubi-tip", text);
@@ -103,7 +115,7 @@ export function installTooltips(): () => void {
   observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-label", "title"] });
   const targetOf = (event: Event): Element | null => {
     if (!(event.target instanceof window.Element) || !event.target.closest(scope)) return null;
-    const nameOnly = !!event.target.closest(`${listNames}, ${headerButtons}`);
+    const nameOnly = !!event.target.closest(`${listNames}, ${quietControls}`);
     const suspended = document.body.classList.contains("lubi-dragging") || !!event.target.closest("[data-lubi-tip-suspended]");
     let el: Element | null = event.target;
     while (el && el.closest(scope)) {

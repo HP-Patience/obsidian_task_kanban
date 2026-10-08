@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import * as O from './mock-obsidian.js';
 import Module from 'node:module';
 import {createRequire} from 'node:module';
-import {blankTask,ganttWindow} from './core.mjs';
+import {blankTask,ganttWindow,shiftDate,shortDate,weekdayZh,todayStr} from './core.mjs';
 const load=Module._load;Module._load=function(id,...args){return id==='obsidian'?O:load.call(this,id,...args)};
 const Plugin=createRequire(import.meta.url)(process.env.LUBI_TEST_PLUGIN||'./plugin.cjs').default;
 const app=new O.App(), plugin=new Plugin(app,{id:'lubi',version:'1.6.0'});await plugin.onload();await plugin.tasks.load();
@@ -45,7 +45,7 @@ for(const mode of ['calendar','gantt','list'])for(const period of ['day','week',
   assert(!root.querySelector('.lubi-month-task[data-task-id="repeat"][data-date="2026-10-08"]'));
  }
  if(mode==='list') {
-  assert.equal(root.querySelectorAll('.lubi-task-lists .lubi-list-card').length,1,'no duplicate selected-day sidebar');
+  assert.equal(root.querySelectorAll('.lubi-task-lists .lubi-list-card').length,2,'selected-day card plus inbox');const selected=root.querySelector('.lubi-selected-day-list');assert(selected&&selected.dataset.date===D);assert(selected.querySelector('.lubi-quick-add'));assert.equal(selected.nextElementSibling.querySelector('h3').textContent,'未安排');assert(selected.querySelector('[data-task-id=early] input[type=checkbox]'));assert(selected.querySelector('[data-task-id=early] .lubi-task-start'));
   const rows=[...root.querySelectorAll('.lubi-plan-range-list .lubi-task')];
   assert(rows.some(row=>row.dataset.taskId==='early'));assert.equal(rows.filter(row=>row.dataset.taskId==='span').length,1);
   const dayRows=rows.filter(row=>row.dataset.date===D);assert(dayRows.findIndex(row=>row.dataset.taskId==='early')<dayRows.findIndex(row=>row.dataset.taskId==='late'));
@@ -85,7 +85,7 @@ for(const mode of ['calendar','gantt','list'])for(const period of ['day','week',
   assert(side.querySelector('[data-task-id=record]'),'actual-created task remains accessible in merged daily list');
  } else assert(!root.querySelector('.lubi-task-lists .lubi-distribution, .lubi-task-lists .lubi-plan-card'),'other presentations retain existing sidebar');
  assert(!root.querySelector('.lubi-planning-main [data-task-id="record"]'));
- assert(!root.querySelector('.lubi-task-lists [data-task-id="span"]')||mode!=='list');
+ assert(!root.querySelector('.lubi-task-lists > .lubi-list-card:last-child [data-task-id="span"]'),'spans do not enter the unscheduled inbox');
 }
 assert.equal(JSON.stringify([...app.vault.files]),dataBefore,'viewing all nine combinations never writes task or journal data');
 // Shared distribution is identical to daily; refreshing preserves the chosen fold state.
@@ -168,6 +168,26 @@ await assertOccurrence(root.querySelector('.lubi-month-task[data-task-id="repeat
 await press('schedule:gantt');await assertOccurrence(root.querySelector('.lubi-gantt-row[data-task-id="repeat"] .lubi-gantt-bar[data-from="2026-10-09"]'),'2026-10-09');
 await press('schedule:list');const recurrence=root.querySelector('.lubi-plan-range-list .lubi-task[data-task-id="repeat"][data-date="2026-10-09"]');assert(recurrence);recurrence.querySelector('input').click();await settle();
 assert(plugin.tasks.byId('repeat').doneDates.includes('2026-10-09'));assert(!plugin.tasks.byId('repeat').doneDates.includes('2026-10-10'));
+// List selected-day sidebar reuses Gantt controls in all periods, not the range's first day.
+const selectedNext=shiftDate(D,1);
+await plugin.tasks.upsert(blankTask({id:'list-side-next',title:'所选次日任务',category:'学习',date:selectedNext,start:'10:00',estimate:25}));
+const beforeSidebarRender=JSON.stringify([...app.vault.files]);
+for(const period of ['day','week','month']) {
+ view.tasksState.scheduleView='list';view.tasksState.period=period;view.show('tasks',selectedNext);await settle();
+ const side=root.querySelector('.lubi-selected-day-list'),main=root.querySelector('.lubi-plan-range-list');
+ assert(side&&side.dataset.date===selectedNext&&main);assert(side.querySelector('[data-task-id=list-side-next]'));assert(!side.querySelector('[data-task-id=early]'));
+ assert(side.querySelector('.lubi-quick-add input').getAttribute('aria-label')?.includes(selectedNext)||document.getElementById(side.querySelector('.lubi-quick-add input').getAttribute('aria-labelledby'))?.textContent.includes(selectedNext));
+ assert.equal(side.querySelector('h3').textContent,selectedNext===todayStr()?'今日计划':`${shortDate(selectedNext)} 周${weekdayZh(selectedNext)}`);
+ assert.equal(side.nextElementSibling.querySelector('h3').textContent,'未安排');
+}
+assert.equal(JSON.stringify([...app.vault.files]),beforeSidebarRender,'switching list periods does not write task data');
+let selectedCard=root.querySelector('.lubi-selected-day-list');selectedCard.querySelector('[data-task-id=list-side-next] .lubi-task-title-button').click();await settle();let selectedForm=O.openModals.at(-1);assert.equal(selectedForm.t.id,'list-side-next');selectedForm.close();
+selectedCard.querySelector('[data-task-id=list-side-next] .lubi-task-start').click();await settle();selectedForm=O.openModals.at(-1);assert.equal(selectedForm.t.id,'list-side-next');assert.equal(selectedForm.actualDate,selectedNext);selectedForm.close();
+selectedCard.querySelector('[data-task-id=list-side-next] input[type=checkbox]').click();await settle();assert(plugin.tasks.isDoneOn(plugin.tasks.byId('list-side-next'),selectedNext));assert(root.querySelector('.lubi-plan-range-list [data-task-id=list-side-next] input').checked);assert(root.querySelector('.lubi-selected-day-list [data-task-id=list-side-next] input').checked);
+root.querySelector('.lubi-selected-day-list [data-task-id=list-side-next] input[type=checkbox]').click();await settle();assert(!plugin.tasks.isDoneOn(plugin.tasks.byId('list-side-next'),selectedNext));
+selectedCard=root.querySelector('.lubi-selected-day-list');const quick=selectedCard.querySelector('.lubi-quick-add input');quick.value='侧栏新建所选日任务';selectedCard.querySelector('.lubi-quick-add button').click();await settle();const created=plugin.tasks.all.find(t=>t.title==='侧栏新建所选日任务');assert(created&&created.date===selectedNext);assert(root.querySelector(`.lubi-plan-range-list [data-task-id="${created.id}"]`));
+view.show('tasks',D);await settle();assert.equal(root.querySelector('.lubi-selected-day-list').dataset.date,D);
+console.log('PASS list sidebar: all periods, selected date (not range start), shared actions, no render writes, completion sync and quick add');
 // Session remembers view and range across page switches; new instance resets without writing settings.
 view.show('review');await settle();view.show('tasks');await settle();assert.equal(view.tasksState.scheduleView,'list');assert.equal(view.tasksState.period,'month');
 const fresh=app.workspace.getLeaf(true);await fresh.setViewState({type:'lubi-dashboard',active:true});await settle();assert.equal(fresh.view.tasksState.scheduleView,'calendar');assert.equal(fresh.view.tasksState.period,'day');
@@ -187,5 +207,30 @@ for(const mode of ['calendar','gantt','list'])for(const period of ['day','week',
   assert(host.querySelector('.lubi-plan-task-details').textContent.includes('暂无安排'));
  }
 }
+// Flat daily actions: date-only ancestors are context, never progress or duplicated rows.
+await emptyPlugin.tasks.upsert(blankTask({id:'flat-root',title:'考研数学',category:'学习',date:D}));
+await emptyPlugin.tasks.upsert(blankTask({id:'flat-mid',title:'微积分',category:'学习',parent:'flat-root',date:D}));
+await emptyPlugin.tasks.upsert(blankTask({id:'flat-first',title:'导数学习',category:'学习',parent:'flat-mid',date:D,start:'08:00',estimate:30}));
+await emptyPlugin.tasks.upsert(blankTask({id:'flat-second',title:'积分学习',category:'学习',parent:'flat-mid',date:D,start:'09:00',estimate:45}));
+const beforeFlat=JSON.stringify([...emptyApp.vault.files]);emptyView.show('today',D);await settle();let flat=emptyView.contentEl.querySelector('.lubi-plan-task-list');
+assert.equal(JSON.stringify([...emptyApp.vault.files]),beforeFlat,'rendering does not modify tasks or completion');
+assert.equal(flat.querySelectorAll('.lubi-task').length,2);assert.equal(flat.querySelectorAll('.lubi-task-group-title').length,1);
+assert(!flat.querySelector('[data-task-id="flat-root"]'));assert(!flat.querySelector('[data-task-id="flat-mid"]'));
+assert.deepEqual([...flat.querySelectorAll('.lubi-task')].map(e=>e.dataset.taskId),['flat-first','flat-second']);
+assert.equal(flat.querySelector('.lubi-task-group-title span').textContent.trim(),'考研数学 / 微积分');assert([...flat.querySelectorAll('.lubi-task-meta')].every(e=>!e.textContent.includes('考研数学')));
+assert.equal(emptyView.contentEl.querySelector('.lubi-plan-progress').getAttribute('aria-valuemax'),'2');
+assert.equal(emptyView.contentEl.querySelector('.lubi-plan-progress').getAttribute('aria-valuenow'),'0');
+const child=flat.querySelector('[data-task-id="flat-first"]');assert(child.querySelector('input[type=checkbox]')&&child.querySelector('.lubi-task-start'));
+child.querySelector('.lubi-task-title-button').click();await settle();let form=O.openModals.at(-1);assert.equal(form.t.id,'flat-first');form.close();
+await emptyPlugin.tasks.upsert({...emptyPlugin.tasks.byId('flat-mid'),start:'07:00',estimate:15});
+emptyView.show('today',D);await settle();flat=emptyView.contentEl.querySelector('.lubi-plan-task-list');
+assert.equal(flat.querySelectorAll('[data-task-id="flat-mid"]').length,1,'parent with independent time remains actionable');
+assert.equal(emptyView.contentEl.querySelector('.lubi-plan-progress').getAttribute('aria-valuemax'),'3');
+await emptyPlugin.journal.add({date:D,start:'06:00',minutes:10,title:'考研数学实际活动',category:'学习',task:'flat-root',extra:{}});
+emptyView.show('today',D);await settle();flat=emptyView.contentEl.querySelector('.lubi-plan-task-list');
+assert(flat.querySelector('[data-task-id="flat-root"]'),'parent with actual record retained');
+assert.equal(emptyView.contentEl.querySelector('.lubi-plan-progress').getAttribute('aria-valuemax'),'4');
+assert.equal(emptyView.contentEl.querySelector('.lubi-plan-progress').getAttribute('aria-valuenow'),'1');
+console.log('PASS flat daily actions: date-only grouping parents excluded, context metadata, progress, time ordering, editing, independent parents and actual records retained');
 assert(!root.querySelector('.lubi-error'));emptyPlugin.onunload();plugin.onunload();await view.onClose();await fresh.view.onClose();await emptyView.onClose();
 console.log('PASS planning interactions: nine modes, shared navigation, clean views, date moves, recurrence edit/completion, parent context, empty axes and session defaults');

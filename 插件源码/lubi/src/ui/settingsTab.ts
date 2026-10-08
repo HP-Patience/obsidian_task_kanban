@@ -74,6 +74,7 @@ export class LubiSettingTab extends PluginSettingTab {
     // Planning calendars always show the full day; retain legacy hour fields only in saved data.
     new Setting(basics).setName("完成任务时自动记一条").setDesc("按计划时间生成待确认记录，可核对和撤销").addToggle((t) => {
       t.toggleEl.setAttribute("aria-label", "完成任务时自动记一条");
+      t.toggleEl.addClass("lubi-quiet-action");
       return t.setValue(s.promptLogOnComplete).onChange((v) => { s.promptLogOnComplete = v; save(); });
     });
     new Setting(basics).setName("每日可用小时").setDesc("用于计划负载计算，不代表实际投入").addText((t) => {
@@ -186,6 +187,12 @@ export class LubiSettingTab extends PluginSettingTab {
       b.buttonEl.addClass("lubi-settings-maintenance-button");
       return b.setButtonText("检查并迁移").onClick(() => new ConfirmModal(this.app, "迁移旧数据？", "会先备份，再改写日记文件与任务数据。", () => void this.plugin.runMigration(true), "开始迁移", false).open());
     });
+    new Setting(maintenance).setName("旧父任务转为项目").setDesc("先备份任务文件；保留任务 ID 和历史记录，纯分组父项只作存档，不再计入任务。不会自动迁移。").addButton(b => b.setButtonText("转换为项目").onClick(() => new ConfirmModal(this.app, "转换旧父任务？", "旧顶层父任务成为项目，层级展平；有实际记录、计划时间或预计用时的父项仍保留为任务。备份保存在配置的备份文件夹。", () => {
+      void (async () => {
+        try { const ids = new Set<string>();for (const date of this.plugin.journal.dates()) for (const row of await this.plugin.journal.read(date, true)) if (row.rec.task) ids.add(row.rec.task);const count = await this.plugin.tasks.convertParentsToProjects(ids);new Notice(`已转换 ${count} 个项目，原任务与记录保留`);this.plugin.refreshViews();this.display(); }
+        catch (e) { new Notice(`转换失败：${(e as Error).message}，原数据未改动`); }
+      })();
+    }, "备份并转换", false).open()));
     new Setting(maintenance).setName("重新显示入门提示").addButton((b) => b.setButtonText("显示").onClick(() => { s.onboardingDone = false; save(); new Notice("没有历史记录时，计划的日历日视图会显示简短入门提示"); }));
   }
 

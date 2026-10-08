@@ -47,7 +47,7 @@ const view = await plugin.activateView("today", "2026-09-24");
 await tick();
 const root = view.contentEl;
 // Existing timeline-record editor is still tested directly; public creation is tested via TaskModal below.
-root.querySelector('.lubi-block-actions [data-lubi-tip="编辑"]').click();await tick();const legacyModal=O.openModals.at(-1),LegacyTimeForm=legacyModal.constructor;legacyModal.close();
+root.querySelector('.lubi-block-actions [data-icon="pencil"]').click();await tick();const legacyModal=O.openModals.at(-1),LegacyTimeForm=legacyModal.constructor;legacyModal.close();
 const {todayStr:realToday}=await import('./core.mjs');
 const openLegacyTime=(instance=plugin,host=app)=>{const modal=new LegacyTimeForm(host,instance,{date:instance.views()[0]?.activeDate()||realToday(),onSaved:()=>instance.refreshViews()});modal.open();return modal};
 const fillActual=(modal,minutes,start)=>{for(const [key,value,type]of [['minutes',String(minutes),'input'],['start',start,'change']]){const input=modal.contentEl.querySelector('[data-actual='+key+']');input.value=value;input.dispatchEvent(new window.Event(type,{bubbles:true}))}};
@@ -233,7 +233,7 @@ view.show("today"); await tick();
   await toggle();
   view.show("today", D); await tick();
   const b2 = [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试");
-  b2.querySelector('.lubi-block-actions [data-lubi-tip="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
+  b2.querySelector('.lubi-block-actions [data-icon="trash-2"]').click(); for (let i = 0; i < 4; i++) await tick();
   check(linked().length === 0 && !plugin.tasks.byId(ID), "sync: deleting the only record of a one-off task on the daily page deletes the task too");
   check(O.notices.at(-1)?.includes("也已删除") || document.body.textContent.includes("也已删除"), "sync: task deletion is announced");
   [...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); for (let i = 0; i < 4; i++) await tick();
@@ -241,14 +241,14 @@ view.show("today"); await tick();
   // 还有别的记录关联：任务保留，只取消当天完成
   await plugin.journal.add({ date: "2026-09-23", start: "07:00", minutes: 20, category: "学习", title: "同步测试", task: ID, extra: {} });
   view.show("today", D); await tick();
-  [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试").querySelector('.lubi-block-actions [data-lubi-tip="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
+  [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试").querySelector('.lubi-block-actions [data-icon="trash-2"]').click(); for (let i = 0; i < 4; i++) await tick();
   check(linked().length === 0 && plugin.tasks.byId(ID) && !plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D), "sync: a task with other linked records is kept and unchecked");
   await plugin.journal.remove("2026-09-23", await plugin.journal.findLine("2026-09-23", { start: "07:00", minutes: 20, category: "学习", title: "同步测试" }));
   // 重复任务：保留任务，只取消当天完成
   await plugin.tasks.upsert({ ...plugin.tasks.byId(ID), repeat: { kind: "daily", days: [] }, status: "todo", doneDates: [D], doneLogs: undefined });
   await plugin.journal.add({ date: D, start: "06:40", minutes: 20, category: "学习", title: "同步测试", task: ID, extra: {} });
   view.show("today", D); await tick();
-  [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试").querySelector('.lubi-block-actions [data-lubi-tip="删除"]').click(); for (let i = 0; i < 4; i++) await tick();
+  [...root.querySelectorAll(".lubi-block")].find((b) => b.querySelector(".lubi-block-title")?.textContent === "同步测试").querySelector('.lubi-block-actions [data-icon="trash-2"]').click(); for (let i = 0; i < 4; i++) await tick();
   check(linked().length === 0 && plugin.tasks.byId(ID) && !plugin.tasks.isDoneOn(plugin.tasks.byId(ID), D), "sync: deleting a repeating task's record keeps the task, unchecks the day");
   if (plugin.tasks.byId(ID)) await plugin.tasks.remove(ID);
   // 清掉本段产生的撤销提示，避免后面的用例点到它们
@@ -283,7 +283,7 @@ view.show("today"); await tick();
   // 在每日页删除这条记录 → 任务一起删除，可撤销
   view.show("today", D); await tick();
   const b = [...root.querySelectorAll(".lubi-block")].find((x) => x.querySelector(".lubi-block-title")?.textContent === "补记午饭后散步");
-  b.querySelector('.lubi-block-actions [data-lubi-tip="删除"]').click(); await settle();
+  b.querySelector('.lubi-block-actions [data-icon="trash-2"]').click(); await settle();
   check(!plugin.tasks.byId(t.id) && !app.vault.files.get(`日记/${D}.md`).includes("补记午饭后散步"), "new: deleting the record also deletes its generated task");
   [...document.body.querySelectorAll(".lubi-notice-btn")].at(-1).click(); await settle();
   check(!!plugin.tasks.byId(t.id) && app.vault.files.get(`日记/${D}.md`).includes(`[任务:: ${t.id}]`), "new: undo restores both record and task");
@@ -965,7 +965,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   await checkInfoWithoutFooter(plan, "daily plan", ["计划层测试", "预计用时：", "待完成"]);
   check(plan.querySelectorAll(".lubi-block-actions button").length === 2 && !plan.querySelector(".lubi-plan-cancel") && plan.tagName !== "BUTTON", "timeline actions: plan uses two real buttons without a nested button or old cross");
   const countBeforeEdit = O.openModals.length;
-  plan.querySelector('[data-lubi-tip="编辑计划"]').click(); await tick();
+  plan.querySelector('[data-icon="pencil"]').click(); await tick();
   check(O.openModals.length === countBeforeEdit + 1 && O.openModals.at(-1)?.constructor.name === "TaskModal" && O.openModals.at(-1)?.t.id === ID, "timeline actions: plan pencil edits the task without opening a recording form");
   O.openModals.at(-1)?.close();
   plan?.click(); await tick();
@@ -1056,7 +1056,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
     check(plugin.tasks.isDoneOn(current, D), `start: saving completes the ${repeating ? "repeating" : "one-off"} task`);
     check(current.doneLogs?.[D]?.title === "实际记录标题" && current.doneLogs?.[D]?.start === "10:00", "start: completion registers the saved record, not the original draft");
     check(row(plugin.tasks.byId(task.id).title)?.querySelector('input[type="checkbox"]')?.checked && !row(plugin.tasks.byId(task.id).title)?.querySelector(".lubi-task-start"), "start: the task row shows completed and hides the start button");
-    check(root.querySelector(".lubi-list-card .lubi-panel-head .lubi-muted")?.textContent === "1/1", "start: task completion count refreshes");
+    check(root.querySelector(".lubi-list-card .lubi-panel-head .lubi-muted")?.textContent === "1/1 已做", "start: task completion count refreshes");
     const persisted = JSON.parse(app.vault.files.get("任务/任务数据.json")).tasks.find((item) => item.id === task.id);
     check(repeating ? persisted.doneDates.includes(D) : persisted.status === "done", "start: completed state is persisted to the task file");
     if (repeating) check(plugin.tasks.isDoneOn(current, D) && current.doneDates.includes(previous) && !plugin.tasks.isDoneOn(current, shiftDate(D, 1)), "start: a repeating task completes only this occurrence and preserves other days");
@@ -1123,7 +1123,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   check(!block.querySelector(".lubi-block-sub") && block.getAttribute("data-lubi-tip").includes("预计 45min · 实际 1h · 超出 15min"), "estimate UI: secondary comparison moves to details and still uses the historical snapshot");
   block.focus(); await tick();
   check(document.body.querySelector(".lubi-tip")?.textContent.includes("预计 45min · 实际 1h · 超出 15min"), "estimate UI: keyboard focus exposes the historical comparison");
-  block.querySelector('[data-lubi-tip="编辑"]').click(); await tick();
+  block.querySelector('[data-icon="pencil"]').click(); await tick();
   modal = O.openModals.at(-1);
   check(modal.rec.estimatedMinutes === 45, "estimate UI: editing a historical record preserves its forecast");
   const editedDuration = modal.contentEl.querySelector('.lubi-timebar-dur input[type="number"]');
@@ -1144,7 +1144,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
 
   await plugin.journal.add({ date: D, start: "13:00", minutes: 30, category: "学习", title: "estimate-legacy-record", task: task.id, extra: {} });
   view.show("today", D); await settle();
-  blockFor("estimate-legacy-record").querySelector('[data-lubi-tip="编辑"]').click(); await tick();
+  blockFor("estimate-legacy-record").querySelector('[data-icon="pencil"]').click(); await tick();
   modal = O.openModals.at(-1);
   check(modal.rec.estimatedMinutes === undefined && !modal.contentEl.querySelector(".lubi-estimate-values") && modal.contentEl.querySelector(".lubi-estimate-note")?.textContent.includes("没有预计用时快照"), "estimate UI: old linked records are not backfilled from current task estimates");
   await save(modal);
@@ -1236,7 +1236,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   input(category.querySelector('[data-category-field=icon] input'), 'wallet');
   input(category.querySelector('[data-category-field=color] select'), 'var(--color-green)', 'change');
   category.querySelector('[role=checkbox]').click(); await tick();
-  check(category.querySelector(".lubi-category-remove").getAttribute("data-lubi-tip").includes("测试分类") && category.querySelector(".lubi-category-up").getAttribute("data-lubi-tip").includes("测试分类"), "settings: renamed categories update action names without redrawing or losing the input");
+  check([".lubi-category-remove", ".lubi-category-up"].every(selector => { const action = category.querySelector(selector); return !action.hasAttribute("data-lubi-tip") && document.getElementById(action.getAttribute("aria-labelledby"))?.textContent.includes("测试分类"); }), "settings: renamed categories keep accessible action names without hover hints, redrawing or losing the input");
   check(stored.categories[0].name === '测试分类' && stored.categories[0].kind === 'money' && stored.categories[0].icon === 'wallet' && stored.categories[0].color === 'var(--color-green)' && !!stored.categories[0].rest, "settings: category name, kind, icon, color and background changes persist");
   const beforeOrder = settingsPlugin.settings.categories.map(c => c.name);
   host.querySelectorAll('.lubi-category-up')[1].click(); await tick();

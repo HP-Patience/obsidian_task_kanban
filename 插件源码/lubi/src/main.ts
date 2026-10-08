@@ -149,7 +149,8 @@ export default class LubiPlugin extends Plugin {
       const data = { format: "lubi-data", version: 1, exportedAt: new Date().toISOString(), taskStore, records };
       const path = normalizePath(`Lubi-导出-${stamp()}-${uid()}.json`);
       await this.app.vault.create(path, `${JSON.stringify(data, null, 2)}\n`);
-      new Notice(`已导出 ${taskStore.tasks.length} 个任务、${records.length} 条记录：${path}`, 8000);
+      const visible = taskStore.tasks.filter(t => !(taskStore.projectContainers || []).includes(t.id)).length;
+      new Notice(`已导出 ${taskStore.projects?.length || 0} 个项目、${visible} 个任务、${records.length} 条记录：${path}`, 8000);
     } catch (e) {
       new Notice(`导出失败：${(e as Error).message}。原数据未修改。`, 8000);
     } finally {

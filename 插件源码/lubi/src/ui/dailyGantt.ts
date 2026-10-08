@@ -5,7 +5,8 @@ import { Task } from "../core/tasks";
 import { fmtDuration, minToHM } from "../core/time";
 import { categoryOf } from "../settings";
 import { button, catDot, infoTip, stopAll } from "./components";
-import { ganttShell } from "./gantt";
+import { ganttShell, projectRows, projectHeading } from "./gantt";
+import { fitGanttLabel } from "./ganttLabels";
 import { startDrag, DragMode } from "./drag";
 
 export function renderDailyGantt(plugin: LubiPlugin, card: HTMLElement, date: string, rerender: () => void, edit: (task: Task) => void, save: (id: string, patch: Partial<Pick<Task, "start" | "estimate">>, message: string) => Promise<void>): void {
@@ -17,13 +18,16 @@ export function renderDailyGantt(plugin: LubiPlugin, card: HTMLElement, date: st
   }
   const rows = dailyGanttRows(plugin.tasks.all, date);
   if (!rows.length) { table.createDiv({ cls: "lubi-gantt-empty lubi-muted", text: "这一天没有已安排的规划任务", attr: { role: "status" } }); return; }
-  for (const row of rows) {
+  for (const group of projectRows(plugin, rows)) {
+    projectHeading(table, group, Array.from({ length: 24 }, () => ""), true);
+    for (const row of group.rows) {
     const task = row.task;
     const open = () => { const current = plugin.tasks.byId(task.id); if (current) edit(current); else { new Notice("任务已不存在", 5000); rerender(); } };
     const line = table.createDiv({ cls: "lubi-gantt-row", attr: { role: "row", "data-task-id": task.id } });
     line.style.setProperty("--chip", categoryOf(plugin.settings, task.category).color);
     line.toggleClass("is-done", row.done);
     const name = line.createDiv({ cls: "lubi-gantt-name", attr: { role: "rowheader" } });
+    name.style.setProperty("--gantt-indent", "8px");
     catDot(name, categoryOf(plugin.settings, task.category));
     button(name, task.title, open, { cls: "lubi-gantt-title" });
     const track = line.createDiv({ cls: "lubi-gantt-track", attr: { role: "cell" } });
@@ -38,6 +42,7 @@ export function renderDailyGantt(plugin: LubiPlugin, card: HTMLElement, date: st
       bar.style.left = `${start / 1440 * 100}%`;
       bar.style.width = minutes ? `${Math.min(minutes, 1440 - start) / 1440 * 100}%` : "6px";
       label.setText(minutes >= 60 ? fmtDuration(minutes) : "");
+      fitGanttLabel(bar);
     };
     place(row.start, row.minutes);
     const end = row.start + row.minutes;
@@ -81,5 +86,6 @@ export function renderDailyGantt(plugin: LubiPlugin, card: HTMLElement, date: st
       const handle = bar.createDiv({ cls: `lubi-gantt-handle is-${mode === "resize-start" ? "start" : "end"}`, attr: { "aria-hidden": "true" } });
       handle.addEventListener("click", stopAll); bind(handle, mode);
     }
+  }
   }
 }

@@ -147,6 +147,8 @@ if (!browser) {
       out.taskFieldOrder={plan:planFields.map(e=>e.querySelector('label')?.textContent),actual:actualFields.map(e=>e.querySelector('label')?.textContent),planPair:!planDate||(Math.abs(r(planDate).top-r(planStart).top)<=1&&r(planDate).right<=r(planStart).left),actualPair:actualFields.length===3&&Math.abs(r(actualFields[0]).top-r(actualFields[1]).top)<=1&&r(actualFields[0]).right<=r(actualFields[1]).left,actualBelow:actualFields.length===3&&r(actualFields[2]).top>=r(actualFields[0]).bottom};
       out.unifiedActual={modes:[...unifiedModal.querySelectorAll('.lubi-kind-seg button')].map(button=>button.dataset.lubiFocus),duration:unifiedModal.querySelector('[data-actual=minutes]').value,comparison:hint?.textContent,inputsFit:[...unifiedModal.querySelectorAll('input')].every(input=>r(input).width>0&&r(input).left>=box.left&&r(input).right<=box.right),overflow:document.documentElement.scrollWidth-innerWidth};
     }
+    const projectSelect=document.querySelector('[data-task-project=select]'),projectName=document.querySelector('[data-task-project=name]');
+    if(projectSelect&&projectName){const host=projectSelect.closest('.lubi-task-modal'),create=[...host.querySelectorAll('button')].find(b=>b.textContent.trim()==='创建项目'),box=r(host),controls=[projectSelect,projectName,create];out.projectForm={fit:controls.every(e=>e&&r(e).width>0&&r(e).left>=box.left&&r(e).right<=box.right),overlap:Math.abs(r(projectName).top-r(create).top)<=2&&r(projectName).right>r(create).left+1,named:!!(projectSelect.getAttribute('aria-label')||document.getElementById(projectSelect.getAttribute('aria-labelledby'))?.textContent)&&!!projectName.getAttribute('aria-label'),value:projectSelect.value,overflow:document.documentElement.scrollWidth-innerWidth};}
     const sidebar = document.querySelector(".lubi-today-side");
     if (sidebar && (sidebar.classList.contains("lubi-card") || sidebar.querySelector(".lubi-card .lubi-card"))) out.simplifyErrors.push("nested daily cards");
     const emptyRing=sidebar?.querySelector('.lubi-distribution .lubi-donut');
@@ -386,7 +388,7 @@ if (!browser) {
       const rows=[...gs.querySelectorAll('.lubi-gantt-row')],names=rows.map(row=>row.querySelector('.lubi-gantt-name'));
       const flat=names.filter(n=>!n.querySelector('.lubi-gantt-collapse,.lubi-gantt-spacer'));
       const card=gs.closest('.lubi-gantt-card'),cardStyle=getComputedStyle(card);
-      const layout={nameWidth:names.every(n=>r(n).width>=140&&r(n).width<=160&&Math.abs(r(n).width-r(heading).width)<=1),normalRows:rows.every(row=>r(row).height>=38&&r(row).height<=39),normalHeader:Math.abs(r(heading).height-44)<=1,flatLeft:flat.length>0&&flat.every(n=>r(n.querySelector('.lubi-dot')).left-r(n).left<=7),panelFills:Math.abs(r(card).width-r(card.parentElement).width)<=1,scrollerFills:Math.abs(r(gs).width-(card.clientWidth-parseFloat(cardStyle.paddingLeft)-parseFloat(cardStyle.paddingRight)))<=1,tableFills:r(gs.querySelector('.lubi-gantt-table')).width>=gs.clientWidth-1,barInside:[...gs.querySelectorAll('.lubi-gantt-bar')].every(b=>r(b).top>=r(b.closest('.lubi-gantt-row')).top&&r(b).bottom<=r(b.closest('.lubi-gantt-row')).bottom)};
+      const layout={nameWidth:names.every(n=>r(n).width>=140&&r(n).width<=160&&Math.abs(r(n).width-r(heading).width)<=1),normalRows:rows.every(row=>r(row).height>=38&&r(row).height<=39),normalHeader:Math.abs(r(heading).height-44)<=1,flatLeft:flat.length>0&&flat.every(n=>{const offset=r(n.querySelector('.lubi-dot')).left-r(n).left;return offset>=14&&offset<=15}),panelFills:Math.abs(r(card).width-r(card.parentElement).width)<=1,scrollerFills:Math.abs(r(gs).width-(card.clientWidth-parseFloat(cardStyle.paddingLeft)-parseFloat(cardStyle.paddingRight)))<=1,tableFills:r(gs.querySelector('.lubi-gantt-table')).width>=gs.clientWidth-1,barInside:[...gs.querySelectorAll('.lubi-gantt-bar')].every(b=>r(b).top>=r(b.closest('.lubi-gantt-row')).top&&r(b).bottom<=r(b.closest('.lubi-gantt-row')).bottom)};
       const done=[...gs.querySelectorAll('.lubi-gantt-bar.is-done')],todo=gs.querySelector('.lubi-gantt-bar:not(.is-done)');
       out.ganttAppearance={layout,center:getComputedStyle(heading).justifyContent==='center',left:titles.every(el=>getComputedStyle(el).textAlign==='left'),neutral:done.every(el=>getComputedStyle(el).borderLeftColor===getComputedStyle(el).color),changed:!!todo&&done.length>0&&done.every(el=>getComputedStyle(el).borderLeftColor!==getComputedStyle(todo).borderLeftColor)};
     }
@@ -557,6 +559,12 @@ if (!browser) {
       assert(order.planPair&&order.actualPair&&order.actualBelow,theme+' '+width+'px: date/time pairs and duration below');
       assert(g.unifiedActual.inputsFit&&g.unifiedActual.overflow<=1&&g.minFont>=11&&g.lowContrast.length===0,theme+' '+width+'px '+page+': shared new-task modal stays readable');
       console.log('PASS shared new-task modal: '+theme+' '+width+'px '+page);
+    }
+    for(const theme of ['light','dark'])for(const width of [1000,600,390,320]) {
+      const g=run(theme,'modal-project',width),p=g.projectForm;
+      assert(p&&p.fit&&!p.overlap&&p.named&&p.value&&p.overflow<=1,theme+' '+width+'px: project picker and inline creation fit '+JSON.stringify(p));
+      assert(g.minFont>=11&&g.lowContrast.length===0,theme+' '+width+'px: project form readable');
+      console.log('PASS project form: '+theme+' '+width+'px, selected project, inline create, labels and no clipping');
     }
     for(const theme of ['light','dark']) for(const width of [1400,390]) {
       const g=run(theme,'today-empty',width),d=g.emptyDonut;

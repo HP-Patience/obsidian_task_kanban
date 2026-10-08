@@ -8,11 +8,15 @@ import { parseDate, shiftDate, stamp, uid, weekStart } from "./time";
 export type TaskStatus = "todo" | "doing" | "done";
 export type RepeatKind = "none" | "daily" | "weekly" | "monthly";
 
+export interface Project { id: string; title: string; created: string; }
+
 export interface Task {
   id: string;
   title: string;
   category: string;
   parent: string | null;
+  /** Optional project membership; legacy parent links remain readable until conversion. */
+  project?: string;
   status: TaskStatus;
   blocked: boolean;
   /** 安排执行日 YYYY-MM-DD，空 = 未安排 */
@@ -51,6 +55,8 @@ export interface DoneLog {
 export interface TaskStore {
   version: 14;
   tasks: Task[];
+  projects?: Project[];
+  projectContainers?: string[];
 }
 
 export function blankTask(partial: Partial<Task> = {}): Task {
@@ -96,7 +102,86 @@ export class Tasks {
   constructor(private app: App, private settings: () => LubiSettings) {}
 
   get all(): Task[] {
-    return this.store.tasks;
+    const containers = new Set(this.store.projectContainers || []);
+    return this.store.tasks.filter(t => !containers.has(t.id));
+  }
+
+  get projectList(): Project[] { return this.store.projects || []; }
+  projectOf(task: Task): Project | undefined { return this.projectList.find(p => p.id === task.project); }
+  lastProjectBackup: string | null = null;
+
+  /** Project changes publish only after a backed-up, conflict-checked single write. */
+  private async projectChange<T>(change: (store: TaskStore) => T): Promise<T> {
+    await this.load();
+    if (this.loadBlocked) throw new Error(this.lastLoadError || "任务数据不可写");
+    let result!: T;
+    const next = this.writing.catch(() => undefined).then(async () => {
+      const p = this.filePath(), file = this.app.vault.getAbstractFileByPath(p);
+      if (file && !(file instanceof TFile)) throw new Error("任务路径不是文件");
+      const before = file instanceof TFile ? await this.app.vault.read(file) : null;
+      if (before !== this.diskText) throw new Error("任务文件已在外部更新，请刷新后重试");
+      const base = JSON.parse(JSON.stringify(this.store)) as TaskStore;
+      const copy = JSON.parse(JSON.stringify(base)) as TaskStore;
+      result = change(copy);
+      const text = JSON.stringify(copy, null, 2);
+      if (text === JSON.stringify(this.store, null, 2)) return;
+      if (file instanceof TFile) {
+        const backup = normalizePath(`${this.settings().backupFolder}/项目变更前-${stamp()}-${uid()}.json`);
+        await ensureFolder(this.app, backup.slice(0, backup.lastIndexOf("/")));
+        await this.app.vault.adapter.write(backup, before!); this.lastProjectBackup = backup;
+        if (file.path !== p) throw new Error("任务文件已被移动，未修改");
+        this.lastWriteAt = Date.now();
+        await this.app.vault.process(file, current => { if (current !== before) throw new Error("备份后任务文件已变化，未修改"); return text; });
+      } else { await ensureFolder(this.app, p.slice(0, p.lastIndexOf("/"))); this.lastWriteAt = Date.now();await this.app.vault.create(p, text); }
+      // Eager legacy task edits can be queued while this write is in flight. Keep their independent fields.
+      const originals = new Map(base.tasks.map(t => [t.id, t]));
+      const converted = new Map(copy.tasks.map(t => [t.id, t]));
+      for (const current of this.store.tasks) {
+        const original = originals.get(current.id), nextTask = converted.get(current.id);
+        if (!original) { if (!nextTask) copy.tasks.push(current);continue; }
+        if (!nextTask) continue;
+        for (const [key, value] of Object.entries(current)) if (JSON.stringify(value) !== JSON.stringify((original as unknown as Record<string, unknown>)[key])) (nextTask as unknown as Record<string, unknown>)[key] = value;
+      }
+      const currentIds = new Set(this.store.tasks.map(t => t.id));
+      copy.tasks = copy.tasks.filter(t => !originals.has(t.id) || currentIds.has(t.id));
+      this.store = copy; this.diskText = text; this.lastWriteAt = Date.now();
+    });
+    this.writing = next; await next; this.onChange?.(); return result;
+  }
+
+  async addProject(title: string): Promise<Project> {
+    title = title.trim(); if (!title || title.length > 200) throw new Error("项目名须为 1–200 字符");
+    return this.projectChange(store => {
+      store.projects ||= [];
+      const found = store.projects.find(p => p.title === title); if (found) return found;
+      const project = { id: uid(), title, created: new Date().toISOString() };store.projects.push(project);return project;
+    });
+  }
+
+  /** Explicit conversion only: keep all task IDs and archival container data for record references. */
+  async convertParentsToProjects(recordIds: Set<string>): Promise<number> {
+    return this.projectChange(store => {
+      const byId = new Map(store.tasks.map(t => [t.id, t]));
+      if (byId.size !== store.tasks.length) throw new Error("任务 ID 重复，请先修复再转换");
+      const parents = new Set(store.tasks.map(t => t.parent).filter((id): id is string => !!id && byId.has(id)));
+      if (!parents.size) return 0;
+      const root = (t: Task): Task => { const seen = new Set<string>(); while (t.parent && byId.has(t.parent)) { if (seen.has(t.id)) throw new Error("旧父任务关系存在循环，请先修复");seen.add(t.id);t = byId.get(t.parent)!; } return t; };
+      store.projects ||= []; const mapping = new Map<string, Project>();
+      for (const id of parents) { const r = root(byId.get(id)!); if (mapping.has(r.id)) continue; const project = store.projects.find(p => p.title === r.title) || { id: uid(), title: r.title, created: new Date().toISOString() }; if (!store.projects.includes(project)) store.projects.push(project);mapping.set(r.id, project); }
+      const links = Object.fromEntries(store.tasks.filter(t => t.parent).map(t => [t.id, t.parent]));
+      const assignments = new Map(store.tasks.map(t => [t.id, mapping.get(root(t).id)?.id]));
+      const containers = new Set(store.projectContainers || []);
+      for (const t of store.tasks) {
+        if (assignments.get(t.id) && !t.project) t.project = assignments.get(t.id);
+        if (parents.has(t.id) && !t.start && !t.estimate && !(t.startDate && t.endDate) && t.repeat.kind === "none" && !recordIds.has(t.id) && !Object.keys(t.doneLogs || {}).length && t.origin !== "record") containers.add(t.id);
+        t.parent = null;
+      }
+      store.projectContainers = [...containers];
+      const metadata = store as TaskStore & { legacyParentLinks?: Record<string, unknown> };
+      if (metadata.legacyParentLinks && (typeof metadata.legacyParentLinks !== "object" || Array.isArray(metadata.legacyParentLinks))) throw new Error("旧关系存档格式异常，未转换");
+      metadata.legacyParentLinks = { ...(metadata.legacyParentLinks || {}), ...links };
+      return mapping.size;
+    });
   }
 
   private filePath(): string {
@@ -203,7 +288,18 @@ export class Tasks {
   async addBatch(tasks: Task[]): Promise<void> {
     if (!tasks.length) throw new Error("没有可导入的任务");
     await this.load();
-    await this.persist(tasks);
+    if (tasks.some(t => t.project)) {
+      await this.projectChange(store => {
+        store.projects ||= []; const ids = new Set(store.tasks.map(t => t.id));
+        for (const input of tasks) {
+          if (ids.has(input.id)) throw new Error("任务 ID 重复，未导入"); ids.add(input.id);
+          const t = { ...input };
+          if (t.project) { const title = t.project.trim(); if (!title || title.length > 200) throw new Error("项目名无效"); let p = store.projects.find(p => p.id === title || p.title === title); if (!p) { p = { id: uid(), title, created: new Date().toISOString() };store.projects.push(p); } t.project = p.id;t.parent = null; }
+          store.tasks.push(t);
+        }
+      });
+      this.lastImportBackup = this.lastProjectBackup;
+    } else await this.persist(tasks);
     this.onChange?.();
   }
 
@@ -219,11 +315,11 @@ export class Tasks {
   }
 
   children(id: string): Task[] {
-    return this.store.tasks.filter((t) => t.parent === id).sort(byOrder);
+    return this.all.filter((t) => t.parent === id).sort(byOrder);
   }
 
   roots(): Task[] {
-    return this.store.tasks.filter((t) => !t.parent || !this.byId(t.parent)).sort(byOrder);
+    return this.all.filter((t) => !t.parent || !this.byId(t.parent)).sort(byOrder);
   }
 
   pathOf(task: Task): Task[] {
@@ -244,12 +340,12 @@ export class Tasks {
 
   /** 某天应出现的任务（安排在当天的 + 重复规则命中的） */
   forDate(date: string): Task[] {
-    return this.store.tasks.filter((t) => occursOn(t, date)).sort(byTime);
+    return this.all.filter((t) => occursOn(t, date)).sort(byTime);
   }
 
   /** 未安排的叶子任务（没有 date、非重复、未完成、没有子任务） */
   inbox(): Task[] {
-    return this.store.tasks
+    return this.all
       .filter((t) => !t.date && t.repeat.kind === "none" && t.status !== "done" && !this.children(t.id).length)
       .sort(byOrder);
   }
@@ -288,6 +384,7 @@ export class Tasks {
   // ---------- 变更 ----------
 
   async upsert(task: Task, completeParents = false): Promise<Task> {
+    if (task.project) { if (!this.projectOf(task)) throw new Error("所属项目不存在，请重新选择"); task.parent = null; }
     task.updated = new Date().toISOString();
     const i = this.store.tasks.findIndex((t) => t.id === task.id);
     if (i >= 0) this.store.tasks[i] = task;
@@ -318,7 +415,7 @@ export class Tasks {
       t.doneDates = done ? [...t.doneDates, date] : t.doneDates.filter((d) => d !== date);
     }
     t.updated = new Date().toISOString();
-    if (done && t.parent) this.autoCompleteParent(t.parent);
+    if (done && t.parent && !t.project) this.autoCompleteParent(t.parent);
     await this.commit();
     return done;
   }

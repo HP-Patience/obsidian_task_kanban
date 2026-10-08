@@ -1,6 +1,8 @@
 // 生成静态预览 HTML（jsdom 渲染 + Obsidian 变量垫片），配合 test/shot.py 截图做视觉检查。
 import * as O from "./mock-obsidian.js";
 import fs from "fs";
+import { buildSync } from "esbuild";
+const ganttLabelScript = buildSync({ entryPoints: ["src/ui/ganttLabels.ts"], bundle: true, write: false, format: "iife", globalName: "LubiGanttLabels" }).outputFiles[0].text;
 import { demoData, seedVault } from "./demo-data.mjs";
 import Module from "module";
 import { createRequire } from "module";
@@ -68,7 +70,7 @@ const freeze = (el) => { for (const i of el.querySelectorAll("input, textarea"))
 // 与真实视图一致：按 data-scroll-target 定位首屏
 // 静态页没有插件脚本：按 tasks.ts 同样的算法补上周日程的滚动条轨道宽度
 const boot = `<script>addEventListener("load",()=>{for(const el of document.querySelectorAll("[data-scroll-target]"))el.scrollTop=Number(el.dataset.scrollTarget)||0;for(const b of document.querySelectorAll(".lubi-week-body"))b.parentElement.style.setProperty("--lubi-week-sbw",Math.max(0,b.offsetWidth-b.clientWidth)+"px");const g=document.querySelector(".lubi-gantt-card");if(g&&g.getBoundingClientRect().top>innerHeight-80)g.scrollIntoView({block:"start"});});</script>`;
-const page = (title, body, dark = false) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${shim}${styles}</style></head><body class="${dark ? "theme-dark" : "theme-light"}">${body}${boot}</body></html>`;
+const page = (title, body, dark = false) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${shim}${styles}</style></head><body class="${dark ? "theme-dark" : "theme-light"}">${body}${boot}<script>${ganttLabelScript};addEventListener("load",()=>{LubiGanttLabels.fitGanttLabels(document);document.fonts?.ready.then(()=>LubiGanttLabels.fitGanttLabels(document));});</script></body></html>`;
 const out = new URL("../preview/", import.meta.url);
 const outDark = new URL("dark/", out);
 fs.mkdirSync(outDark, { recursive: true });
@@ -238,6 +240,12 @@ for (const [kind, Form, opts] of [["record",m.constructor,{date:T,defaults:{cate
   fs.writeFileSync(new URL('tasks-week-gantt.html',out),page('tasks-week-gantt',freeze(root)));
 
 }
+// Real project grouping in planning geometry fixtures, alongside independent tasks.
+{
+ const project=await plugin.tasks.addProject('考研数学：基础知识复习与真题训练（合成项目）');
+ const task=plugin.tasks.all.find(t=>t.date===T&&t.origin!=='record'&&!t.parent&&t.id!=='layout-gantt-parent');
+ if(task)await plugin.tasks.upsert({...task,project:project.id,parent:null});
+}
 // All nine planning presentations, including month/list compact task labels.
 {
   const {blankTask,shiftDate}=await import('./core.mjs');
@@ -250,6 +258,16 @@ for (const [kind, Form, opts] of [["record",m.constructor,{date:T,defaults:{cate
     view.tasksState.scheduleView=mode;view.tasksState.period=period;view.show('tasks',T);await tick(200);
     fs.writeFileSync(new URL(`planning-${mode}-${period}.html`,out),page(`planning-${mode}-${period}`,freeze(root)));
   }
+}
+// Project picker in the shared modal, including long names and inline creation.
+{
+ const project=await plugin.tasks.addProject('考研数学：基础知识复习与真题训练（合成项目）');
+ view.tasksState.scheduleView='calendar';view.tasksState.period='day';view.show('tasks',T);await tick(250);
+ view.openNew();await tick(40);const form=O.openModals.at(-1);
+ [...form.contentEl.querySelectorAll('.lubi-extras-toggles button')].find(b=>b.textContent.trim()==='项目').click();
+ const select=form.contentEl.querySelector('[data-task-project=select]');select.value=project.id;select.dispatchEvent(new window.Event('change',{bubbles:true}));
+ form.modalEl.classList.add('modal');form.titleEl.classList.add('modal-title');form.contentEl.classList.add('modal-content');
+ fs.writeFileSync(new URL('modal-project.html',out),page('modal-project',`<div class="lubi-root"><div class="modal-bg"></div>${freeze(form.modalEl)}</div>`));form.close();
 }
 console.log("preview written to", out.pathname);
 process.exit(0);

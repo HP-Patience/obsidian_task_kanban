@@ -580,6 +580,7 @@ export class TaskModal extends Modal {
   private t: Task;
   private editing: boolean;
   private saving = false;
+  private creatingProject = false;
   private titleInput?: HTMLInputElement;
   private repeatSelect?: HTMLSelectElement;
   private dateInput?: HTMLInputElement;
@@ -666,8 +667,8 @@ export class TaskModal extends Modal {
     const cat = categoryOf(s, this.t.category);
     this.modalEl.style.setProperty("--chip", cat.color);
     titleEl.empty();
-    titleEl.createSpan({ text: this.editing ? "编辑任务" : parent ? "新建子任务" : "新建" });
-    if (parent) titleEl.createSpan({ cls: "lubi-modal-ctx", text: this.plugin.tasks.pathOf(parent).map((p) => p.title).join(" / ") });
+    titleEl.createSpan({ text: this.editing ? "编辑任务" : "新建" });
+    if (parent && !this.t.project) titleEl.createSpan({ cls: "lubi-modal-ctx", text: this.plugin.tasks.pathOf(parent).map((p) => p.title).join(" / ") });
     titleEl.createSpan({ cls: "lubi-dirty", text: "● 未保存", attr: { "aria-live": "polite" } });
     this.syncDirty();
     if (!this.editing && !parent) kindSwitch(contentEl, "todo", (kind) => { if (kind === "money") this.switchToRecord(kind); });
@@ -837,17 +838,20 @@ export class TaskModal extends Modal {
       });
       if (initiallyOpen) open();
     };
-    optional("父任务", "corner-down-right", (host) => {
-      const parentSel = host.createEl("select", { attr: { "aria-label": "父任务" } });
-      parentSel.createEl("option", { value: "", text: "（无 · 顶层）" });
-      const forbidden = new Set([this.t.id, ...this.plugin.tasks.descendants(this.t.id).map((d) => d.id)]);
-      for (const cand of this.plugin.tasks.all.filter((x) => !forbidden.has(x.id) && x.status !== "done")) {
-        parentSel.createEl("option", { value: cand.id, text: this.plugin.tasks.pathOf(cand).map((p) => p.title).join(" / ") });
-      }
-      parentSel.value = this.t.parent || "";
-      parentSel.addEventListener("change", () => (this.t.parent = parentSel.value || null));
-    }, () => (this.t.parent = null), !!this.t.parent);
-    const spanLabel = this.t.repeat.kind === "none" ? "项目跨度" : "生效范围";
+    optional("项目", "folder", (host) => {
+      const select = host.createEl("select", { attr: { "aria-label": "所属项目", "data-task-project": "select" } });
+      const refresh = () => { select.empty();select.createEl("option", { value: "", text: "不属于项目" }); for (const p of this.plugin.tasks.projectList) select.createEl("option", { value: p.id, text: p.title });select.value = this.t.project || ""; };
+      refresh();select.addEventListener("change", () => { this.t.project = select.value || undefined;this.t.parent = null; });
+      const add = host.createDiv({ cls: "lubi-inline" });
+      const input = add.createEl("input", { type: "text", attr: { placeholder: "新项目名称", "aria-label": "新项目名称", maxlength: "200", "data-task-project": "name" } });
+      const create = button(add, "创建项目", async () => {
+        if (this.creatingProject || this.saving) return;create.disabled = true;this.creatingProject = true;select.disabled = true;input.disabled = true;
+        try { const p = await this.plugin.tasks.addProject(input.value);if (this.actualClosed || !select.isConnected) return;this.t.project = p.id;this.t.parent = null;refresh();input.value = "";this.syncDirty();select.focus(); }
+        catch (e) { formError(this.contentEl, (e as Error).message); }
+        finally { create.disabled = false;this.creatingProject = false;select.disabled = false;input.disabled = false; }
+      }, { cls: "lubi-btn-sm" });
+    }, () => { this.t.project = undefined;this.t.parent = null; }, !!this.t.project);
+    const spanLabel = this.t.repeat.kind === "none" ? "任务跨度" : "生效范围";
     optional(spanLabel, "calendar-range", (host) => {
       const row = host.createDiv({ cls: "lubi-grid lubi-grid-2" });
       const sdF = row.createDiv({ cls: "lubi-field" });
@@ -948,7 +952,7 @@ export class TaskModal extends Modal {
   }
 
   private async save(): Promise<void> {
-    if (this.saving) return;
+    if (this.saving || this.creatingProject) return;
     if (!this.editing && this.opts.quickActual) {
       const parsed = parseQuick(this.t.title, this.plugin.settings.categories.filter(c => c.kind === "time").map(c => c.name));
       if (parsed?.start && parsed.minutes === undefined && !this.actualText.trim()) { fieldError(this.actualInput, "已填写开始时间，请补填实际用时"); return; }

@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const project = dirname(dirname(fileURLToPath(import.meta.url)));
-const pluginCss = readFileSync(join(project, "styles.css"), "utf8");
+const pluginCss = readFileSync(process.env.LUBI_TEST_CSS || join(project, "styles.css"), "utf8");
 const browser = [
   process.env.LUBI_BROWSER,
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -51,11 +51,14 @@ if (!browser) {
       { width: 760, theme: "dark", themeAfterPlugin: true },
       { width: 390, theme: "light", themeAfterPlugin: true },
       { width: 320, theme: "dark", themeAfterPlugin: true },
+      { width: 390, theme: "light", themeAfterPlugin: true, coarse: true },
+      { width: 320, theme: "dark", themeAfterPlugin: true, coarse: true },
     ];
     for (const [index, item] of cases.entries()) {
+      const css = item.coarse ? pluginCss.replaceAll("@media (pointer: coarse)", "@media all") : pluginCss;
       const styles = item.themeAfterPlugin
-        ? `<style>${pluginCss}</style><style>${themeCss}</style>`
-        : `<style>${themeCss}</style><style>${pluginCss}</style>`;
+        ? `<style>${css}</style><style>${themeCss}</style>`
+        : `<style>${themeCss}</style><style>${css}</style>`;
       const days = Array.from({ length: 7 }, (_, i) => `<div class="lubi-week-day ${i === 4 ? "is-selected" : ""}">
         <button type="button" class="lubi-week-day-button" ${i === 4 ? 'aria-current="date"' : ""}>
           <span class="lubi-week-dow">周${"一二三四五六日"[i]}</span><span class="lubi-week-date">${20 + i}</span>
@@ -76,7 +79,7 @@ if (!browser) {
                 <div class="lubi-task"><input type="checkbox"><div class="lubi-task-body">
                   <button type="button" class="lubi-task-title lubi-task-title-button" id="taskTitle"><span class="lubi-dot" style="--dot:#5d82ca"></span><span class="lubi-task-title-text">${longTitle}</span></button>
                   <div class="lubi-task-meta" id="taskMeta">${longPath} · 09:00 · 1h</div>
-                </div></div>
+                </div><div class="lubi-task-actions" id="taskActions"><button type="button" class="lubi-icon-btn lubi-task-start" aria-label="开始任务"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 3 12 9-12 9Z"></path></svg></button></div></div>
               </div></div></div><div class="lubi-agenda-host"><div class="lubi-card lubi-agenda-card" id="agenda">窄屏日程</div></div></div>
               <div class="lubi-card lubi-week-card" id="weekCard"><div class="lubi-panel-head">周日程</div>
                 <div class="lubi-week"><div class="lubi-week-corner"></div>${days}</div>
@@ -119,6 +122,8 @@ if (!browser) {
           const result = {
             width: ${item.width}, root: metrics($('.lubi-root')), page: metrics($('.lubi-page')),
             left: metrics($('#leftCard')), group: metrics($('#groupPath')), task: metrics($('#taskTitle')),
+            taskActions: metrics($('#taskActions')), taskStart: metrics($('#taskActions .lubi-task-start')),
+            titleText: metrics($('#taskTitle .lubi-task-title-text')), titleLine: parseFloat(getComputedStyle($('#taskTitle .lubi-task-title-text')).lineHeight),
             meta: metrics($('#taskMeta')), week: metrics($('#weekCard')), agenda: metrics($('#agenda')),
             chip: metrics($('#longChip')), day: metrics($('#longChip').closest('.lubi-week-day')),
             chipTwo: metrics($('#longChip').nextElementSibling),
@@ -143,7 +148,7 @@ if (!browser) {
       const matches = [...run.stdout.matchAll(/LUBI_TASK_UI:(%7B[A-Za-z0-9%._~!'()*-]+)/g)];
       assert(matches.length, `browser did not report task UI metrics: ${run.stderr?.slice(-700)} ${run.stdout.slice(-900)}`);
       const g = JSON.parse(decodeURIComponent(matches[matches.length - 1][1]));
-      const label = `${item.width}px ${item.theme} themeAfter=${item.themeAfterPlugin}`;
+      const label = `${item.width}px ${item.theme} themeAfter=${item.themeAfterPlugin} coarse=${!!item.coarse}`;
       const fits = (el, name) => {
         assert(el.scrollW <= el.clientW + 1, `${name} horizontal overflow ${label}: ${JSON.stringify(el)}`);
         assert(el.scrollH <= el.clientH + 2, `${name} clipped vertically ${label}: ${JSON.stringify(el)}`);
@@ -151,6 +156,7 @@ if (!browser) {
       assert(g.page.scrollW <= g.page.clientW + 1, `tasks page horizontal overflow ${label}: ${JSON.stringify(g.page)}`);
       fits(g.group, "parent path"); fits(g.task, "task title"); fits(g.meta, "task details");
       assert(g.group.right <= g.left.right + 1 && g.task.right <= g.left.right + 1, `text must stay inside left card ${label}`);
+      assert(Math.abs((g.taskStart.top + g.taskStart.h / 2) - (g.titleText.top + g.titleLine / 2)) <= 0.5, `start triangle must align with the first title line ${label}: ${JSON.stringify({task: g.task, taskActions: g.taskActions, taskStart: g.taskStart})}`);
       assert.equal(g.group.whiteSpace, "normal", `parent path must wrap ${label}`);
       assert.equal(g.task.whiteSpace, "normal", `task title must wrap ${label}`);
       assert.equal(g.meta.whiteSpace, "normal", `task details must wrap ${label}`);

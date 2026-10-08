@@ -10,6 +10,37 @@ const check=(value,message)=>{console.log((value?'ok  ':'FAIL ')+message);if(!va
 const D='2026-09-24';
 const {blankTask}=await import('./core.mjs');await plugin.tasks.upsert(blankTask({id:'history-candidate',title:'可主动选择的历史任务',category:'学习'}));let Record;
 const view=await plugin.activateView('today',D);await tick();const root=view.contentEl;
+// Approved quiet controls retain accessible names, including nested icon events inside a detail card.
+const quietCases = [
+ ['lubi-root','<button class="lubi-quiet-action"></button>'],
+ ['lubi-modal','<div class="lubi-kind-seg"><button></button></div>'],
+ ['lubi-root','<div class="lubi-plan-progress" role="progressbar" tabindex="0"></div>'],
+ ['lubi-settings','<div class="lubi-quiet-action checkbox-container" tabindex="0"></div>'],
+ ['lubi-root','<button class="lubi-gantt-collapse"></button>'],
+ ['lubi-root','<div class="lubi-review"><div class="lubi-toolbar"><div class="lubi-nav"><button class="lubi-icon-btn"></button></div></div></div>'],
+ ['lubi-settings','<button class="lubi-model-toggle"></button>'],
+ ['lubi-root','<button class="lubi-task-group-title"></button>'],
+ ['lubi-modal','<button class="lubi-cat-option"></button>'],
+ ['lubi-modal','<button class="lubi-quick-chip-warn lubi-switch"></button>'],
+ ['lubi-settings','<button class="lubi-category-up"></button>'],
+ ['lubi-settings','<button class="lubi-category-remove"></button>'],
+ ['lubi-root','<button class="lubi-gap-row-add"></button>'],
+];
+for(const [scope,html] of quietCases) {
+ const host=document.body.createDiv({cls:scope}),parent=host.createDiv({attr:{'aria-label':'父级详情'}});
+ parent.innerHTML=html;const control=parent.querySelector('button,[tabindex]');control.setAttribute('aria-label','可访问操作名称');control.createSpan({cls:'probe-icon'});
+ await tick();const target=control.querySelector('.probe-icon');target.dispatchEvent(new window.MouseEvent('pointermove',{bubbles:true,clientX:200,clientY:30,buttons:0}));await new Promise(r=>setTimeout(r,300));
+ check(!document.querySelector('.lubi-tip'),'quiet nested icon does not open own or parent hint: '+html);
+ control.focus();await tick();check(!document.querySelector('.lubi-tip'),'quiet keyboard focus: '+html);control.blur();
+ check(!control.hasAttribute('title')&&!control.hasAttribute('aria-label')&&!control.hasAttribute('data-lubi-tip')&&document.getElementById(control.getAttribute('aria-labelledby'))?.textContent==='可访问操作名称','quiet control keeps accessible name: '+html);
+ parent.dispatchEvent(new window.MouseEvent('pointermove',{bubbles:true,clientX:200,clientY:30,buttons:0}));await new Promise(r=>setTimeout(r,300));
+ check(document.querySelector('.lubi-tip')?.textContent==='父级详情','parent detail is preserved outside quiet control: '+html);host.remove();await tick();
+}
+for(const [cls,hint] of [['lubi-task-start','填写实际用时，保存后完成任务'],['lubi-task-unlogged','按计划补记一条待确认记录']]) {
+ const host=document.body.createDiv({cls:'lubi-root'}),control=host.createEl('button',{cls,attr:{'aria-label':'具体任务的完整操作名称'}});await tick();
+ control.focus();await tick();check(document.querySelector('.lubi-tip')?.textContent===hint,'short operational hint: '+cls);control.blur();
+ check(document.getElementById(control.getAttribute('aria-labelledby'))?.textContent==='具体任务的完整操作名称','short hint retains full accessible name: '+cls);host.remove();await tick();
+}
 // Header buttons keep accessible names, but never custom or native tooltips.
 for(const button of root.querySelectorAll('.lubi-topbar button, .lubi-planning-head button')) {
  const target=button.querySelector('svg,span')||button;
@@ -20,6 +51,21 @@ for(const button of root.querySelectorAll('.lubi-topbar button, .lubi-planning-h
  const labelled=document.getElementById(button.getAttribute('aria-labelledby'));
  check(!!labelled?.textContent?.trim()||!!button.textContent.trim(),'header keeps its accessible name: '+button.dataset.lubiFocus);
 }
+// Inbox add is already identified by its plus icon and section heading.
+for(const mode of ['calendar','gantt','list']) {
+ view.tasksState.scheduleView=mode;view.show('tasks',D);await tick();
+ const add=root.querySelector('.lubi-inbox-add');check(!!add,'inbox add exists in '+mode);
+ const target=add.querySelector('svg')||add;
+ target.dispatchEvent(new window.MouseEvent('pointermove',{bubbles:true,clientX:200,clientY:30,buttons:0}));await new Promise(r=>setTimeout(r,300));
+ check(!document.querySelector('.lubi-tip'),'inbox add hover stays quiet in '+mode);
+ add.focus();await tick();check(!document.querySelector('.lubi-tip'),'inbox add focus stays quiet in '+mode);add.blur();
+ check(!add.hasAttribute('title')&&!add.hasAttribute('aria-label')&&!add.hasAttribute('data-lubi-tip'),'inbox add has no tooltip attributes in '+mode);
+ check(document.getElementById(add.getAttribute('aria-labelledby'))?.textContent==='新建未安排任务','inbox add keeps accessible name in '+mode);
+ const before=plugin.tasks.all.length;add.click();await tick();const modal=O.openModals.at(-1);
+ check(!!modal?.contentEl.querySelector('.lubi-plan-grid'),'inbox add still opens task form in '+mode);
+ modal?.close();await tick();check(plugin.tasks.all.length===before,'cancel inbox add writes no task in '+mode);
+}
+view.tasksState.scheduleView='calendar';view.show('today',D);await tick();
 check([...root.querySelectorAll('.lubi-topbar-tabs button')].map(x=>x.dataset.lubiFocus).join('|')==='seg:tasks|seg:review','top tabs are plan/review only');
 for(const [i,tab] of [...root.querySelectorAll('.lubi-topbar-tabs button')].entries()) {
   const label=['计划','回顾'][i];
@@ -92,7 +138,7 @@ const planMeta=root.querySelector('.lubi-plan-task-list .lubi-task-meta-time');
 check(planMeta?.textContent==='09:00'&&planMeta.parentElement.textContent.includes('09:00 · 1h'),'daily plan preserves metadata text and separates time styling');
 const progress=root.querySelector('.lubi-plan-progress');
 check(progress?.getAttribute('aria-valuetext')===`${progress.getAttribute('aria-valuenow')}/${progress.getAttribute('aria-valuemax')} 已完成或已有记录`,'daily progress exposes the unchanged completion count');
-const shortHint=root.querySelector('.lubi-block-actions .lubi-icon-btn');shortHint.focus();await tick();check(document.querySelector('.lubi-tip')?.classList.contains('is-label'),'short button hint uses compact presentation');shortHint.blur();
+const shortHint=root.querySelector('.lubi-task-start');shortHint.focus();await tick();check(document.querySelector('.lubi-tip')?.classList.contains('is-label'),'short button hint uses compact presentation');shortHint.blur();
 root.querySelector('.lubi-block').focus();await tick();check(!!document.querySelector('.lubi-task-tip-title')&&!document.querySelector('.lubi-tip').classList.contains('is-label'),'task detail card keeps its richer presentation');root.querySelector('.lubi-block').blur();
 const before=JSON.stringify([...app.vault.files]);
 const pointer=(target,type,y)=>{const e=new window.MouseEvent(type,{bubbles:true,cancelable:true,clientX:200,clientY:y,button:0});Object.defineProperty(e,'pointerId',{value:99});target.dispatchEvent(e)};
