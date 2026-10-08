@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS, LubiSettings, DEFAULT_CATEGORIES, migratePalette } fr
 import { Journal } from "./core/journal";
 import { Tasks } from "./core/tasks";
 import { detectLegacyJournals, migrateJournals } from "./core/migrate";
-import { shiftDate, todayStr, minToHM, hmToMin, stamp } from "./core/time";
+import { shiftDate, todayStr, minToHM, hmToMin, stamp, uid } from "./core/time";
 import { DashboardView, VIEW_TYPE, Tab } from "./ui/view";
 import { hideTip } from "./ui/components";
 import { installTooltips } from "./ui/tooltips";
@@ -24,6 +24,7 @@ export default class LubiPlugin extends Plugin {
   private refreshTimer: number | null = null;
   private pendingTaskReload = false;
   private pendingRecentRefresh = false;
+  private exporting = false;
 
   async onload(): Promise<void> {
     this.disposeTooltips = installTooltips();
@@ -43,7 +44,8 @@ export default class LubiPlugin extends Plugin {
     this.addCommand({ id: "open-tasks", name: "打开面板 · 计划页", callback: () => void this.activateView("tasks") });
     this.addCommand({ id: "open-journal", name: "打开今天的日记文件", callback: () => void this.openJournal(todayStr()) });
     this.addCommand({ id: "migrate", name: "迁移旧版数据", callback: () => void this.runMigration(true) });
-    this.addCommand({ id: "export-csv", name: "导出全部记录为 CSV", callback: () => void this.exportCsv() });
+    // Preserve the existing command ID so assigned export hotkeys continue to work.
+    this.addCommand({ id: "export-csv", name: "导出数据 JSON", callback: () => void this.exportJson() });
 
     // 日记或任务文件被外部修改 → 刷新
     this.registerEvent(this.app.vault.on("modify", (f) => this.onFileChange(f.path)));
@@ -135,19 +137,24 @@ export default class LubiPlugin extends Plugin {
     await this.app.workspace.getLeaf("tab").openFile(f);
   }
 
-  async exportCsv(): Promise<void> {
-    const rows = ["date,start,end,minutes,category,title,task,amount,expenseType,notes"];
-    const quote = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    for (const date of this.journal.dates()) {
-      for (const row of await this.journal.read(date)) {
-        const r = row.rec;
-        const end = r.minutes > 0 ? minToHM(hmToMin(r.start) + r.minutes) : "";
-        rows.push([r.date, r.start, end, r.minutes, r.category, r.title, r.task, r.amount, r.expenseType, r.notes].map(quote).join(","));
+  async exportJson(): Promise<void> {
+    if (this.exporting) return;
+    this.exporting = true;
+    try {
+      const taskStore = await this.tasks.exportSnapshot();
+      const records: Rec[] = [];
+      for (const date of this.journal.dates()) {
+        for (const row of await this.journal.read(date, true)) records.push(row.rec);
       }
+      const data = { format: "lubi-data", version: 1, exportedAt: new Date().toISOString(), taskStore, records };
+      const path = normalizePath(`Lubi-导出-${stamp()}-${uid()}.json`);
+      await this.app.vault.create(path, `${JSON.stringify(data, null, 2)}\n`);
+      new Notice(`已导出 ${taskStore.tasks.length} 个任务、${records.length} 条记录：${path}`, 8000);
+    } catch (e) {
+      new Notice(`导出失败：${(e as Error).message}。原数据未修改。`, 8000);
+    } finally {
+      this.exporting = false;
     }
-    const path = normalizePath(`Lubi-导出-${stamp()}.csv`);
-    await this.app.vault.create(path, `\uFEFF${rows.join("\n")}\n`);
-    new Notice(`已导出 ${rows.length - 1} 条记录：${path}`, 8000);
   }
 
   /** 新建：有面板时交给面板（任务页默认「待做」，其他页默认「已完成」），否则记今天的一条 */

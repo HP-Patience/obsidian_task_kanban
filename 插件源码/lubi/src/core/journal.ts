@@ -42,10 +42,10 @@ export class Journal {
     return this.app.vault.create(this.path(date), content);
   }
 
-  async read(date: string): Promise<ParsedLine[]> {
+  async read(date: string, fresh = false): Promise<ParsedLine[]> {
     const f = this.file(date);
     if (!f) return [];
-    const text = await this.app.vault.cachedRead(f);
+    const text = await (fresh ? this.app.vault.read(f) : this.app.vault.cachedRead(f));
     return parseLines(text, date);
   }
 

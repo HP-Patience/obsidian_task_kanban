@@ -649,8 +649,6 @@ export class TaskModal extends Modal {
         this.actualInput.value = this.actualText; this.actualInput.disabled = this.actualReadOnly;
         const start = this.contentEl.querySelector<HTMLInputElement>('[data-actual="start"]');
         if (start) { start.value = this.actualStart; start.disabled = this.actualReadOnly; }
-        const details = this.contentEl.querySelector<HTMLDetailsElement>(".lubi-actual-details");
-        if (details && this.actualStart && !this.actualEdited) details.open = true;
         this.actualRefresh?.();
       }
     } catch (e) {
@@ -702,9 +700,40 @@ export class TaskModal extends Modal {
       if (target.isConnected) target.focus();
     }, 20);
 
-    // 安排：重复 · 日期 · 开始 · 预计
-    const grid = contentEl.createDiv({ cls: "lubi-grid" });
-    const repF = grid.createDiv({ cls: "lubi-field" });
+    // 计划：日期和时间 → 预计用时 → 重复
+    const grid = contentEl.createDiv({ cls: "lubi-grid lubi-plan-grid" });
+    if (this.t.repeat.kind === "none") {
+      const dateF = grid.createDiv({ cls: "lubi-field" });
+      const dateLabel = dateF.createEl("label", { text: "计划开始日期" });
+      const date = dateF.createEl("input", { type: "date", value: this.t.date });
+      associate(dateLabel, date);
+      this.dateInput = date;
+      date.addEventListener("change", () => (this.t.date = date.value));
+    }
+    const startF = grid.createDiv({ cls: "lubi-field" });
+    startF.addClass("lubi-plan-start-field");
+    const startLabel = startF.createEl("label", { text: "计划开始时间" });
+    const start = startF.createEl("input", { type: "time", value: this.t.start });
+    associate(startLabel, start);
+    start.addEventListener("change", () => (this.t.start = start.value));
+    const estF = grid.createDiv({ cls: "lubi-field lubi-plan-full-field" });
+    const estLabel = estF.createEl("label", { text: "预计用时" });
+    const estWrap = estF.createDiv({ cls: "lubi-timebar-dur lubi-timebar-dur-block" });
+    const est = estWrap.createEl("input", { type: "text", value: this.t.estimate ? fmtDuration(this.t.estimate) : "", attr: { inputmode: "decimal", placeholder: "如 45min / 2.5h", autocomplete: "off" } });
+    associate(estLabel, est);
+    this.estimateInput = est;
+    const estHint = estWrap.createSpan({ cls: "lubi-timebar-unit is-static" });
+    const syncEst = () => {
+      const v = parseEstimate(est.value);
+      this.estimateInvalid = v === null;
+      if (v !== null) this.t.estimate = v;
+      estHint.setText(v === null ? "?" : v ? `${v} min` : "min");
+    };
+    syncEst();
+    est.addEventListener("input", () => { clearFieldError(est); syncEst(); });
+    est.addEventListener("blur", () => { if (!this.estimateInvalid && this.t.estimate) est.value = fmtDuration(this.t.estimate); });
+
+    const repF = grid.createDiv({ cls: "lubi-field lubi-plan-full-field" });
     const repLabel = repF.createEl("label", { text: "重复" });
     const repSel = repF.createEl("select", { cls: "lubi-repeat-select" });
     associate(repLabel, repSel);
@@ -723,64 +752,6 @@ export class TaskModal extends Modal {
       this.render(false);
       this.contentEl.querySelector<HTMLSelectElement>(".lubi-repeat-select")?.focus();
     });
-    if (this.t.repeat.kind === "none") {
-      const dateF = grid.createDiv({ cls: "lubi-field" });
-      const dateLabel = dateF.createEl("label", { text: "安排日期" });
-      const date = dateF.createEl("input", { type: "date", value: this.t.date });
-      associate(dateLabel, date);
-      this.dateInput = date;
-      date.addEventListener("change", () => (this.t.date = date.value));
-    }
-    const startF = grid.createDiv({ cls: "lubi-field" });
-    startF.addClass("lubi-plan-start-field");
-    const startLabel = startF.createEl("label", { text: "计划开始" });
-    const start = startF.createEl("input", { type: "time", value: this.t.start });
-    associate(startLabel, start);
-    start.addEventListener("change", () => (this.t.start = start.value));
-    const estF = grid.createDiv({ cls: "lubi-field" });
-    const estLabel = estF.createEl("label", { text: "预计用时" });
-    const estWrap = estF.createDiv({ cls: "lubi-timebar-dur lubi-timebar-dur-block" });
-    const est = estWrap.createEl("input", { type: "text", value: this.t.estimate ? fmtDuration(this.t.estimate) : "", attr: { inputmode: "decimal", placeholder: "如 45min / 2.5h", autocomplete: "off" } });
-    associate(estLabel, est);
-    this.estimateInput = est;
-    const estHint = estWrap.createSpan({ cls: "lubi-timebar-unit is-static" });
-    const syncEst = () => {
-      const v = parseEstimate(est.value);
-      this.estimateInvalid = v === null;
-      if (v !== null) this.t.estimate = v;
-      estHint.setText(v === null ? "?" : v ? `${v} min` : "min");
-    };
-    syncEst();
-    est.addEventListener("input", () => { clearFieldError(est); syncEst(); });
-    est.addEventListener("blur", () => { if (!this.estimateInvalid && this.t.estimate) est.value = fmtDuration(this.t.estimate); });
-
-    const actualF = grid.createDiv({ cls: "lubi-field lubi-actual-field" });
-    const actualLabel = actualF.createEl("label", { text: "实际用时" });
-    const actual = actualF.createEl("input", { type: "text", value: this.actualText, attr: { placeholder: "完成后填写，如 60min", inputmode: "decimal", "data-actual": "minutes" } });
-    associate(actualLabel, actual); this.actualInput = actual; actual.disabled = this.actualReadOnly;
-    const actualHint = contentEl.createDiv({ cls: "lubi-muted lubi-actual-hint", attr: { role: "status" } });
-    const actualDetails = contentEl.createEl("details", { cls: "lubi-actual-details" });
-    actualDetails.createEl("summary", { text: "实际发生时间" });
-    const actualGrid = actualDetails.createDiv({ cls: "lubi-grid" });
-    const actualDayF = actualGrid.createDiv({ cls: "lubi-field" }), actualDayL = actualDayF.createEl("label", { text: "实际开始日期" });
-    const actualDay = actualDayF.createEl("input", { type: "date", value: this.actualDate, attr: { "data-actual": "date" } });
-    associate(actualDayL, actualDay); actualDay.disabled = this.editing;
-    actualDay.addEventListener("change", () => { this.actualDate = actualDay.value; this.actualEdited = true; });
-    const actualStartF = actualGrid.createDiv({ cls: "lubi-field" }), actualStartL = actualStartF.createEl("label", { text: "实际开始（可留空）" });
-    const actualStart = actualStartF.createEl("input", { type: "time", value: this.actualStart, attr: { "data-actual": "start" } });
-    associate(actualStartL, actualStart); actualStart.disabled = this.actualReadOnly;
-    actualStart.addEventListener("change", () => { this.actualStart = actualStart.value; this.actualEdited = true; syncActual(); });
-    actualDetails.open = !this.editing || !!this.actualStart;
-    const syncActual = () => {
-      const minutes = parseEstimate(this.actualText);
-      const comparison = minutes && normalizeEstimatedMinutes(this.t.estimate) ? (formatEstimateComparison({ date: this.actualDate, start: this.actualStart || "00:00", minutes, estimatedMinutes: normalizeEstimatedMinutes(this.t.estimate), category: this.t.category, title: this.t.title, extra: {} }) || "") + (this.actualStart ? "" : " · 实际开始待核对") : "";
-      const hint = this.actualReadOnly ? this.actualSummary : minutes ? comparison : this.actualSummary;
-      actualHint.setText(hint); actualHint.hidden = !hint;
-      actualDetails.hidden = this.actualReadOnly;
-    };
-    actual.addEventListener("input", () => { this.actualText = actual.value; this.actualEdited = true; clearFieldError(actual); syncActual(); });
-    this.actualRefresh = syncActual;
-    est.addEventListener("input", syncActual); syncActual();
 
     if (this.t.repeat.kind === "weekly") {
       const days = contentEl.createDiv({ cls: "lubi-days" });
@@ -806,6 +777,35 @@ export class TaskModal extends Modal {
         });
       }
     }
+
+    const actualF = contentEl.createDiv({ cls: "lubi-field lubi-actual-field" });
+    const actualLabel = actualF.createEl("label", { text: "实际用时" });
+    const actual = actualF.createEl("input", { type: "text", value: this.actualText, attr: { placeholder: "完成后填写，如 60min", inputmode: "decimal", "data-actual": "minutes" } });
+    associate(actualLabel, actual); this.actualInput = actual; actual.disabled = this.actualReadOnly;
+    const actualHint = contentEl.createDiv({ cls: "lubi-muted lubi-actual-hint", attr: { role: "status" } });
+    const actualDetails = contentEl.createDiv({ cls: "lubi-actual-details" });
+    const actualGrid = actualDetails.createDiv({ cls: "lubi-grid" });
+    const actualDayF = actualGrid.createDiv({ cls: "lubi-field" }), actualDayL = actualDayF.createEl("label", { text: "实际开始日期" });
+    const actualDay = actualDayF.createEl("input", { type: "date", value: this.actualDate, attr: { "data-actual": "date" } });
+    associate(actualDayL, actualDay); actualDay.disabled = this.editing;
+    actualDay.addEventListener("change", () => { this.actualDate = actualDay.value; this.actualEdited = true; });
+    const actualStartF = actualGrid.createDiv({ cls: "lubi-field" }), actualStartL = actualStartF.createEl("label", { text: "实际开始时间" });
+    const actualStart = actualStartF.createEl("input", { type: "time", value: this.actualStart, attr: { "data-actual": "start" } });
+    associate(actualStartL, actualStart); actualStart.disabled = this.actualReadOnly;
+    actualStart.addEventListener("change", () => { this.actualStart = actualStart.value; this.actualEdited = true; syncActual(); });
+    actualDetails.append(actualF);
+    const syncActual = () => {
+      const minutes = parseEstimate(this.actualText);
+      const comparison = minutes && normalizeEstimatedMinutes(this.t.estimate) ? (formatEstimateComparison({ date: this.actualDate, start: this.actualStart || "00:00", minutes, estimatedMinutes: normalizeEstimatedMinutes(this.t.estimate), category: this.t.category, title: this.t.title, extra: {} }) || "") + (this.actualStart ? "" : " · 实际开始待核对") : "";
+      const hint = this.actualReadOnly ? this.actualSummary : minutes ? comparison : this.actualSummary;
+      actualHint.setText(hint); actualHint.hidden = !hint;
+      actualDetails.hidden = this.actualReadOnly;
+      if (this.actualReadOnly && actualF.parentElement === actualDetails) actualDetails.after(actualF);
+      else if (!this.actualReadOnly && actualF.parentElement !== actualDetails) actualDetails.append(actualF);
+    };
+    actual.addEventListener("input", () => { this.actualText = actual.value; this.actualEdited = true; clearFieldError(actual); syncActual(); });
+    this.actualRefresh = syncActual;
+    est.addEventListener("input", syncActual); syncActual();
 
     // 可选：父任务 / 跨度 / 状态 / 备注
     const extras = contentEl.createDiv({ cls: "lubi-extras" });

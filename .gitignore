@@ -8,6 +8,7 @@
 /.obsidian/plugins/*/data.json
 /.obsidian/plugins/realclaudian/
 /Lubi-导出-*.csv
+/Lubi-导出-*.json
 .env
 .env.*
 !.env.example

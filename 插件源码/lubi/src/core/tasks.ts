@@ -147,6 +147,19 @@ export class Tasks {
     this.loaded = true;
   }
 
+  /** Read the saved store without normalizing, migrating, or dropping unknown fields. */
+  async exportSnapshot(): Promise<TaskStore> {
+    await this.writing;
+    const file = this.app.vault.getAbstractFileByPath(this.filePath());
+    if (!(file instanceof TFile)) {
+      if (file || this.store.tasks.length) throw new Error("任务文件不可读取，请刷新后重试");
+      return { version: 14, tasks: [] };
+    }
+    const data = JSON.parse(await this.app.vault.read(file)) as TaskStore | null;
+    if (!data || data.version !== 14 || !Array.isArray(data.tasks)) throw new Error("任务文件格式异常，请先核对任务数据");
+    return data;
+  }
+
   private async persist(added: Task[] = []): Promise<void> {
     if (this.loadBlocked) throw new Error(this.lastLoadError || "任务数据无法写入：数据加载失败。");
     const next = this.writing.catch(() => undefined).then(async () => {

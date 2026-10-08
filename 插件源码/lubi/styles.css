@@ -839,7 +839,7 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
 .lubi-topbar-left { display: flex; align-items: center; min-width: 0; }
 .lubi-root .lubi-topbar-tabs { justify-self: center; }
 .lubi-root .lubi-topbar-right { justify-self: end; margin-left: 0; gap: 6px; }
-.lubi-root[data-tab="review"] :is(.lubi-topbar-import, .lubi-topbar-ai) { display: none !important; }
+.lubi-root[data-tab="review"] :is(.lubi-topbar-import, .lubi-topbar-ai, .lubi-topbar-cta) { display: none !important; }
 .lubi-context { font-weight: 600; font-size: var(--lubi-fs-md); color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 4px; }
 .lubi-root[data-tab="tasks"] .lubi-context { display: none; }
 .lubi-root .lubi-date-label, .lubi-root button.lubi-date-label.is-today, .lubi-root .lubi-date-label.is-today { color: var(--text-normal); display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
@@ -1349,7 +1349,7 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-root .lubi-drag-guide-segment { position: absolute; height: 0; border-top: 1px dashed var(--text-faint); z-index: 1; pointer-events: none; }
 .lubi-root .lubi-drag-guide-host > :is(.lubi-block-head, .lubi-block-meta, .lubi-plan-head, .lubi-plan-time) { position: relative; z-index: 2; }
 
-.lubi-root .lubi-tl-canvas > .lubi-block-ghost[data-area="plan"] { --chip: var(--lubi-info); border-color: var(--lubi-info); background: color-mix(in srgb, var(--lubi-info) 12%, transparent); }
+.lubi-root .lubi-tl-canvas > .lubi-block-ghost[data-area="plan"] { --chip: var(--lubi-info); border-color: var(--lubi-info); background: color-mix(in srgb, var(--lubi-info) 12%, var(--background-primary)); }
 .lubi-root .lubi-block-ghost[data-area="plan"] .lubi-block-head { color: var(--text-normal); }
 .lubi-plan-gap { position: absolute; left: calc(var(--lubi-rec-w) + 6px); right: 4px; z-index: 1; border-radius: 6px; }
 .lubi-plan-gap:hover { outline: 1.5px dashed color-mix(in srgb, var(--text-muted) 55%, transparent); outline-offset: -1px; background: color-mix(in srgb, var(--background-modifier-hover) 60%, transparent); }
@@ -1426,11 +1426,11 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-review-empty-detail { padding: 8px 0; }
 
 /* Actual time reuses the task form; no separate time-entry tab or modal. */
-.lubi-task-modal .lubi-plan-start-field { grid-column: 1 / -1; }
+.lubi-task-modal .lubi-plan-grid > .lubi-plan-full-field { grid-column: 1 / -1; }
+.lubi-task-modal .lubi-plan-grid > .lubi-plan-start-field { grid-column: 2; }
+.lubi-task-modal .lubi-actual-details > .lubi-actual-field { margin-top: 12px; }
 .lubi-actual-hint { margin: 8px 0; font-size: 12px; line-height: 1.5; }
 .lubi-actual-details { margin: 8px 0 12px; }
-.lubi-actual-details > summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
-.lubi-actual-details[open] > summary { margin-bottom: 8px; }
 
 /* Unified planning views: keep controls visible at every width, scroll only the plot. */
 .lubi-root .lubi-planning-head { flex-wrap: wrap; gap: 8px 12px; margin-bottom: 0; }

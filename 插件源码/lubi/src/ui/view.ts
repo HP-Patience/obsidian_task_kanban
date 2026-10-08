@@ -137,7 +137,7 @@ export class DashboardView extends ItemView {
   private openMore(e: MouseEvent): void {
     const menu = new Menu();
     menu.addItem((i) => i.setTitle("打开日记文件").setIcon("file-text").onClick(() => void this.plugin.openJournal(this.activeDate())));
-    menu.addItem((i) => i.setTitle("导出全部记录 CSV").setIcon("download").onClick(() => void this.plugin.exportCsv()));
+    menu.addItem((i) => i.setTitle("导出数据 JSON").setIcon("download").onClick(() => void this.plugin.exportJson()));
     menu.addItem((i) => i.setTitle("快捷键").setIcon("keyboard").onClick(() => new ShortcutsModal(this.app).open()));
     menu.addItem((i) => i.setTitle("设置").setIcon("settings").onClick(() => this.plugin.openSettings()));
     menu.showAtMouseEvent(e);

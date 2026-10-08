@@ -173,7 +173,6 @@ fs.writeFileSync(new URL("modal-new.html", out), page("modal-new", `<div class="
 nm.close();
 const actualForm=new nm.constructor(app,plugin,{defaults:{title:'实际用时布局（合成）',category:'学习',date:T,estimate:45},recordDate:T});actualForm.open();await tick(60);
 for(const [key,value,event]of [['minutes','60','input'],['start','10:00','change']]){const input=actualForm.contentEl.querySelector('[data-actual='+key+']');input.value=value;input.dispatchEvent(new window.Event(event,{bubbles:true}))}
-actualForm.contentEl.querySelector('.lubi-actual-details').open=true;
 actualForm.modalEl.classList.add('modal');actualForm.titleEl.classList.add('modal-title');actualForm.contentEl.classList.add('modal-content');
 fs.writeFileSync(new URL('modal-actual.html',out),page('modal-actual',`<div class="lubi-root"><div class="modal-bg"></div>${freeze(actualForm.modalEl)}</div>`));actualForm.close();
 for(const [name,opts] of [

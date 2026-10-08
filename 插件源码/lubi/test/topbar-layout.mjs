@@ -132,7 +132,9 @@ if (!browser) {
     const lr = r(left), tr = r(tabs), rr = r(right);
     out.zoneOverlap = (lr && tr && lr.width && lr.right > tr.left + 1 && getComputedStyle(tabs).gridRow === getComputedStyle(left).gridRow) || (rr && tr && rr.left < tr.right - 1 && getComputedStyle(tabs).gridRow === getComputedStyle(right).gridRow);
     // 精简界面仍保留主操作、所有折叠内容和键盘辅助入口。
-    out.primaryActions = document.querySelectorAll(".lubi-root .mod-cta").length;
+    out.primaryActions = [...document.querySelectorAll(".lubi-root .mod-cta")].filter(e => r(e).width > 0 && r(e).height > 0 && getComputedStyle(e).display !== "none").length;
+    out.newTaskVisible = !!cta && r(cta).width > 0 && r(cta).height > 0 && getComputedStyle(cta).display !== "none";
+    if(document.querySelector('.lubi-root[data-tab="review"]') && out.newTaskVisible) out.reviewCreationError = "review must not show the new-task button";
     const jsonModal=document.querySelector('.lubi-json-import-modal');if(jsonModal){const box=r(jsonModal),input=jsonModal.querySelector('textarea');out.jsonModal={textVisible:r(input).width>0&&r(input).height>=180,inside:r(input).left>=box.left&&r(input).right<=box.right,overflow:document.documentElement.scrollWidth-innerWidth,buttons:[...jsonModal.querySelectorAll('.lubi-modal-actions button')].map(b=>({text:b.textContent,visible:r(b).width>0&&r(b).height>0}))};}
     out.simplifyErrors = [];
     const unifiedModal=document.querySelector('.lubi-task-modal');
@@ -140,6 +142,9 @@ if (!browser) {
       const box=r(unifiedModal),hint=unifiedModal.querySelector('.lubi-actual-hint');
       const details=unifiedModal.querySelector('.lubi-actual-details');
       out.newTaskDetails=details?{visible:!details.hidden&&getComputedStyle(details).display!=='none',open:details.open,summary:details.querySelector('summary')?.textContent,inputsFit:[...details.querySelectorAll('input')].every(input=>r(input).width>0&&r(input).left>=box.left&&r(input).right<=box.right),hintVisible:hint?getComputedStyle(hint).display!=='none'&&r(hint).height>0:false,hint:hint?.textContent,removedInstruction:unifiedModal.textContent.includes('留空保存计划；填写实际用时后保存并完成任务')}:null;
+      const plan=unifiedModal.querySelector('.lubi-plan-grid'),planFields=plan?[...plan.children]:[],actualFields=details?[...details.querySelectorAll('.lubi-field')]:[];
+      const planDate=plan?.querySelector('input[type=date]'),planStart=plan?.querySelector('input[type=time]');
+      out.taskFieldOrder={plan:planFields.map(e=>e.querySelector('label')?.textContent),actual:actualFields.map(e=>e.querySelector('label')?.textContent),planPair:!planDate||(Math.abs(r(planDate).top-r(planStart).top)<=1&&r(planDate).right<=r(planStart).left),actualPair:actualFields.length===3&&Math.abs(r(actualFields[0]).top-r(actualFields[1]).top)<=1&&r(actualFields[0]).right<=r(actualFields[1]).left,actualBelow:actualFields.length===3&&r(actualFields[2]).top>=r(actualFields[0]).bottom};
       out.unifiedActual={modes:[...unifiedModal.querySelectorAll('.lubi-kind-seg button')].map(button=>button.dataset.lubiFocus),duration:unifiedModal.querySelector('[data-actual=minutes]').value,comparison:hint?.textContent,inputsFit:[...unifiedModal.querySelectorAll('input')].every(input=>r(input).width>0&&r(input).left>=box.left&&r(input).right<=box.right),overflow:document.documentElement.scrollWidth-innerWidth};
     }
     const sidebar = document.querySelector(".lubi-today-side");
@@ -314,6 +319,10 @@ if (!browser) {
       for (const area of lane ? ['record','plan'] : ['record']) {
         for (const el of [guide,ghost]) { el.dataset.area = area; el.classList.add('is-on'); }
         ghost.style.top='400px'; ghost.style.height='60px';
+        const ghostStyle=getComputedStyle(ghost),color=ghostStyle.backgroundColor,numbers=(color.match(/[\d.]+/g)||[]).map(Number);
+        const alpha=color.startsWith('color(')?(numbers[3]??1):(numbers[3]??1);
+        if(alpha<0.999||Number(ghostStyle.opacity)<1||Number(ghostStyle.zIndex)<=3) out.simplifyErrors.push(area+' selection must be opaque above the current-time red line');
+
         for (const el of [guide,ghost]) {
           const box=r(el);
           if (area==='record' && (Math.abs(box.left-r(areaCanvas).left)>1 || Math.abs(box.right-split)>1)) out.simplifyErrors.push('record hover/selection crosses region divider');
@@ -440,7 +449,8 @@ if (!browser) {
         for (const page of ["today", "review", "tasks"]) {
           const g = run(theme, page, width);
           xs[page] = g.tabsX;
-          assert.equal(g.primaryActions, 1, `${theme} ${page}: exactly one emphasized primary action`);
+          assert.equal(g.primaryActions, page === "review" ? 0 : 1, `${theme} ${page}: primary action only on planning`);
+          assert.equal(g.newTaskVisible, page !== "review", `${theme} ${page}: new task visible only on planning`);
           assert(g.aiEntry&&g.aiEntry.secondary&&g.aiEntry.named&&g.aiEntry.icon, `${theme} ${page}: AI button retains name and secondary style`);
           assert(g.jsonEntry&&g.jsonEntry.secondary&&g.jsonEntry.named,"JSON import has a secondary named button");
           if(page==="review")assert(!g.aiEntry.visible&&!g.jsonEntry.visible,"review does not gain creation entries");else {assert(g.jsonEntry.visible&&g.jsonEntry.left&&g.jsonEntry.inside,"JSON import is visible left of AI");assert(g.aiEntry.visible&&g.aiEntry.left&&g.aiEntry.inside,`${theme} ${width}px: AI button stays visible left of new task without clipping`);}
@@ -457,6 +467,7 @@ if (!browser) {
             if(g.reviewBarStates.zero)assert(!g.reviewBarStates.zero.outline&&g.reviewBarStates.zero.height<=.5&&g.reviewBarStates.zero.badge,'zero today keeps the date badge but no false bar outline');
             if(g.reviewBarStates.filled)assert(g.reviewBarStates.filled.outline&&g.reviewBarStates.filled.height>0&&g.reviewBarStates.filled.badge,'nonzero today retains its existing highlight');
           }
+          assert(!g.reviewCreationError, g.reviewCreationError);
           assert(g.barOverflow <= 1, `${theme} ${page} ${width}px: top bar overflows by ${g.barOverflow}px`);
           if(width<=560&&g.dateCaption)assert(g.dateCaption.oneLine&&g.dateCaption.contained,`${theme} ${width}px: date caption stays one line and inside its button`);
           assert(!g.zoneOverlap, `${theme} ${page} ${width}px: top bar zones overlap ${JSON.stringify(g)}`);
@@ -539,7 +550,11 @@ if (!browser) {
     }
     for(const theme of ['light','dark'])for(const width of [1000,600,390,320])for(const page of ['modal-new-actual-only','modal-new-planned']) {
       const g=run(theme,page,width),d=g.newTaskDetails;
-      assert(d&&d.visible&&d.open&&d.summary==='实际发生时间'&&d.inputsFit&&!d.hintVisible&&!d.hint&&!d.removedInstruction,theme+' '+width+'px '+page+': same expanded actual-time fields without redundant hints '+JSON.stringify(d));
+      assert(d&&d.visible&&!d.summary&&d.inputsFit&&!d.hintVisible&&!d.hint&&!d.removedInstruction,theme+' '+width+'px '+page+': same expanded actual-time fields without redundant hints '+JSON.stringify(d));
+      const order=g.taskFieldOrder;
+      assert.deepEqual(order.plan,['计划开始日期','计划开始时间','预计用时','重复'],theme+' '+width+'px: planning order');
+      assert.deepEqual(order.actual,['实际开始日期','实际开始时间','实际用时'],theme+' '+width+'px: actual order');
+      assert(order.planPair&&order.actualPair&&order.actualBelow,theme+' '+width+'px: date/time pairs and duration below');
       assert(g.unifiedActual.inputsFit&&g.unifiedActual.overflow<=1&&g.minFont>=11&&g.lowContrast.length===0,theme+' '+width+'px '+page+': shared new-task modal stays readable');
       console.log('PASS shared new-task modal: '+theme+' '+width+'px '+page);
     }
