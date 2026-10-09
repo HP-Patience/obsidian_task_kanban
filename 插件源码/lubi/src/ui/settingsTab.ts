@@ -7,6 +7,7 @@ import { curlJson } from "../core/curl";
 import { iconButton, tip } from "./components";
 import { taskImportPrompt } from "../core/taskImport";
 import { modelPicker } from "./modelPicker";
+import { PluginUpdateState, renderPluginUpdate } from "./pluginUpdateSettings";
 
 let settingsLabelId = 0;
 
@@ -36,6 +37,8 @@ function resolveLive(value: string): RGB | null {
 }
 
 export class LubiSettingTab extends PluginSettingTab {
+  private readonly updateState: PluginUpdateState = { busy: false, confirming: false, status: "" };
+
   constructor(app: App, private plugin: LubiPlugin) {
     super(app, plugin);
   }
@@ -57,6 +60,8 @@ export class LubiSettingTab extends PluginSettingTab {
       wrap.appendChild(control);
       if (control.tagName !== "BUTTON") { control.removeAttribute("aria-label"); control.setAttribute("aria-labelledby", caption.id); }
     };
+
+    renderPluginUpdate(section("插件更新"), this.app, this.plugin.manifest, this.updateState);
 
     const basics = section("数据与日程");
     new Setting(basics).setName("日记文件夹").setDesc("每天一份日记，记录写入「记录」章节").addText((t) => {

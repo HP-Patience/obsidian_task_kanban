@@ -17,9 +17,14 @@ if (!browser) {
     const root = document.querySelector('.lubi-settings'), ai = root.querySelector('.lubi-settings-ai');
     root.classList.add('vertical-tab-content');
     if (document.documentElement.dataset.expanded === 'true') ai.open = true;
+    const updateButton=root.querySelector('[data-lubi-update]'),updateStatus=root.querySelector('[data-lubi-update-status]'),updateLink=root.querySelector('[data-lubi-update-link]');
+    const installButton=root.querySelector('[data-lubi-install]');installButton.hidden=false;installButton.textContent='更新至 1.8.0';
+    updateStatus.textContent='发现新版本 1.8.0。保留 data.json、任务和日记；安装前校验最低 Obsidian 版本要求和 SHA-256，旧文件备份到 Vault 外，失败时回滚。点击更新并确认即可安装，安装后重启生效。';
+    updateLink.textContent='下载新版本 1.8.0';
+    updateStatus.textContent+=' 旧文件备份：/synthetic-temporary-directory/'+ 'unbroken-synthetic-backup-name'.repeat(15);
     const prompt=root.querySelector('.lubi-json-prompt'),copy=[...root.querySelectorAll('.lubi-settings-json-import button')].find(button=>button.textContent==='复制系统提示词');
     const promptRect=prompt.getBoundingClientRect(),rootRect=root.getBoundingClientRect();
-    const out = { prompt:{readOnly:prompt.readOnly,visible:promptRect.width>0&&promptRect.height>=180,inside:promptRect.left>=rootRect.left&&promptRect.right<=rootRect.right,hasFormat:prompt.value.includes('tasks')&&prompt.value.includes('subtasks'),copy:!!copy&&copy.getBoundingClientRect().width>0}, overflow: root.scrollWidth - root.clientWidth, bodyOverflow: document.body.scrollWidth - innerWidth, aiOpen:ai.open, modelInputs:root.querySelectorAll('[data-setting=ai-model]').length, aiDropdowns:ai.querySelectorAll('select').length, labels:[], minFont:99, contrast:[], effects:[] };
+    const out = { update:{button:!!updateButton&&updateButton.getBoundingClientRect().width>0, install:!!installButton&&installButton.getBoundingClientRect().width>0&&installButton.getBoundingClientRect().right<=rootRect.right+1, statusInside:updateStatus.getBoundingClientRect().right<=rootRect.right+1, linkInside:updateLink.getBoundingClientRect().right<=rootRect.right+1, live:updateStatus.getAttribute("aria-live")==="polite"}, prompt:{readOnly:prompt.readOnly,visible:promptRect.width>0&&promptRect.height>=180,inside:promptRect.left>=rootRect.left&&promptRect.right<=rootRect.right,hasFormat:prompt.value.includes('tasks')&&prompt.value.includes('subtasks'),copy:!!copy&&copy.getBoundingClientRect().width>0}, overflow: root.scrollWidth - root.clientWidth, bodyOverflow: document.body.scrollWidth - innerWidth, aiOpen:ai.open, modelInputs:root.querySelectorAll('[data-setting=ai-model]').length, aiDropdowns:ai.querySelectorAll('select').length, labels:[], minFont:99, contrast:[], effects:[] };
     const rect = el => el.getBoundingClientRect();
     for (const group of root.querySelectorAll('.lubi-category-controls')) {
       const cells = [...group.children].map(rect);
@@ -75,6 +80,7 @@ if (!browser) {
       assert.equal(result.status,0,result.error?.message||result.stderr?.slice(-500));
       const matches=[...result.stdout.matchAll(/SETTINGS_LAYOUT:([A-Za-z0-9%._~-]+)/g)];assert(matches.length,'browser did not return settings geometry');
       const out=JSON.parse(decodeURIComponent(matches.at(-1)[1]));
+      assert(out.update.button&&out.update.install&&out.update.statusInside&&out.update.linkInside&&out.update.live,'update controls, instructions and live status fit settings');
       assert(out.prompt.readOnly&&out.prompt.visible&&out.prompt.inside&&out.prompt.hasFormat&&out.prompt.copy,"copyable JSON prompt fits settings");
       assert(out.overflow<=1 && out.bodyOverflow<=1,theme+' '+width+': horizontal overflow '+JSON.stringify(out));
       assert.equal(out.aiOpen,expanded,'AI default/expanded state');assert.equal(out.modelInputs,1,'single model input');assert.equal(out.aiDropdowns,0,'no duplicate model selector');

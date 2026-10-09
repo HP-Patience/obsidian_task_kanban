@@ -171,3 +171,9 @@ export async function requestUrl(options) {
 
 export class WorkspaceLeaf {}
 
+
+// Optional desktop update API; other tests retain the in-memory Vault adapter.
+export const Platform = { isDesktopApp: true, isMobileApp: false };
+export class FileSystemAdapter { constructor(base) { this.base = base; } getBasePath() { return this.base; } }
+export const apiVersion = "1.8.0";
+export function requireApiVersion(minimum) { const a=apiVersion.split('.').map(Number),b=minimum.split('.').map(Number);const i=a.findIndex((v,j)=>v!==b[j]);return i<0||a[i]>b[i]; }

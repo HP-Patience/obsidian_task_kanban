@@ -1104,8 +1104,8 @@ body.lubi-dragging .lubi-block.is-resizing, body.lubi-dragging .lubi-block.is-re
   .lubi-root .lubi-topbar-tabs { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; }
   .lubi-root .lubi-day-nav { width: auto; justify-content: flex-start; }
   .lubi-root .lubi-date-label > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* 窄面板时间刻度列与画布起点一致，不留空白条 */
-  .lubi-root .lubi-timeline { --lubi-gutter: 42px; }
+  /* 窄面板也为完整拖拽时间读数保留刻度列，避免读数跨入画布。 */
+  .lubi-root .lubi-timeline { --lubi-gutter: 96px; }
 }
 @media (pointer: coarse) {
   .lubi-root button.lubi-gap-btn:not(.clickable-icon) { opacity: 1; pointer-events: auto; }
@@ -1537,3 +1537,7 @@ body.lubi-dragging .lubi-plan.is-resizing, body.lubi-dragging .lubi-plan.is-resi
 .lubi-gantt-project-heading { display: flex; position: sticky; left: 0; z-index: 6; min-width: 0; min-height: 0; contain: size; align-items: center; border-right: 1px solid var(--lubi-border); }
 .lubi-gantt-project-heading > .lubi-gantt-name { position: static; flex: 1; max-height: 100%; box-sizing: border-box; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; padding: 5px 3px; border: 0; line-height: 1.3; }
 .lubi-gantt-today { z-index: 10; }
+
+/* Long local backup locations must remain readable on narrow update settings. */
+.lubi-settings [data-lubi-update-status] { overflow-wrap: anywhere; }
+.lubi-settings [data-lubi-update-link] { color: var(--text-normal); text-decoration: underline; text-underline-offset: 2px; }

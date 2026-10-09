@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img alt="Lubi source version" src="https://img.shields.io/badge/Lubi-1.7.0-5b45c9">
+  <img alt="Lubi source version" src="https://img.shields.io/badge/Lubi-1.7.1-5b45c9">
   <a href="https://github.com/HP-Patience/obsidian_task_kanban/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/HP-Patience/obsidian_task_kanban?label=release&color=5b45c9"></a>
   <img alt="Obsidian" src="https://img.shields.io/badge/Obsidian-%E2%89%A5%201.4.0-7c3aed?logo=obsidian&logoColor=white">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white">
@@ -24,9 +24,9 @@
 - **名称复用**：规划任务和记录时间可按分类选择历史名称，输入文字实时筛选；列表最多露出 5 行，其余滚动查看，最近使用顺序重启后保留。
 
 > [!NOTE]
-> 截图均由当前 v1.7.0 生产构建与合成演示数据重新生成，不含真实个人记录。展示日历日 / 周、项目甘特、回顾、统一任务表单和窄栏；静态浏览器截图不等于真实 Obsidian 或移动端验收。
+> 截图均由 v1.7.0 生产构建与合成演示数据重新生成，不含真实个人记录。展示日历日 / 周、项目甘特、回顾、统一任务表单和窄栏；静态浏览器截图不等于真实 Obsidian 或移动端验收。
 
-**当前仓库及随仓库分发的安装版：v1.7.0。** 任务数据初始化为空，个人日记和 AI 设置不随仓库分发。GitHub Release 独立发布，不会因代码推送自动生成。变化见 [更新日志](CHANGELOG.md)，维护入口见 [文档索引](docs/README.md)。
+**当前仓库及随仓库分发的安装版：v1.7.1。** 任务数据初始化为空，个人日记和 AI 设置不随仓库分发。GitHub Release 独立发布，不会因代码推送自动生成。变化见 [更新日志](CHANGELOG.md)，维护入口见 [文档索引](docs/README.md)。
 
 ## 目录
 
@@ -180,6 +180,14 @@ git clone https://github.com/HP-Patience/obsidian_task_kanban.git
 3. 重启 Obsidian，在 *设置 → 第三方插件* 中启用 **Lubi 柳比歇夫记录**。
 
 > 需要 Obsidian ≥ 1.4.0。
+
+### 更新插件
+
+在 **设置 → Lubi → 插件更新** 点击「检查更新」。本地比正式 Release 新时不会降级；发现新版后，桌面本地 Vault 可点击「更新至…」并确认安装。附件必须包含三个分发文件及 GitHub SHA-256 校验信息；安装前校验插件 ID、版本和最低 Obsidian 版本，先备份再替换，异常时回滚。安装完成后**重启 Obsidian**生效，避免通过非公开接口强制卸载正在使用的插件。
+
+只替换 `main.js`、`styles.css`、`manifest.json`，不改 `data.json`、任务或日记。旧文件保存在系统临时目录的 `Lubi-plugin-backups` 中，结果提示显示具体备份位置；需要长期保留时请自行另存。回滚未完成或存在 `.lubi-update` 残留时，请先关闭 Obsidian，从提示的备份恢复三个分发文件，并移除该暂存目录后再启动，不要删除整个插件目录。不要与其他更新工具同时安装 Lubi；自动备份不能替代个人数据的常规备份。
+
+移动端、非本地文件系统或缺少校验信息的旧 Release 使用发布页手动下载。联网只在检查或确认更新后发生，访问公开 GitHub API 和该仓库的发布附件，不发送任务、日记或 AI 配置。旧于本版本的安装需要先手动升级一次才能获得更新按钮。
 
 ## 快速上手
 

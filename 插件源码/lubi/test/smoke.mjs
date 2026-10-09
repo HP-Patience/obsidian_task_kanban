@@ -1199,6 +1199,7 @@ check(!root.querySelector(".lubi-error"), "no render errors after keyboard and s
   const SettingsTab = plugin.settingTabs[0].constructor;
   let writes = 0, migrations = 0, stored = null;
   const settingsPlugin = {
+    manifest: { ...plugin.manifest },
     settings: JSON.parse(JSON.stringify(plugin.settings)),
     async saveSettings() { writes++; stored = JSON.parse(JSON.stringify(this.settings)); },
     async runMigration() { migrations++; },
