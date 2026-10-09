@@ -6,11 +6,12 @@ import { fmtDuration, minToHM } from "../core/time";
 import { categoryOf } from "../settings";
 import { button, catDot, infoTip, stopAll } from "./components";
 import { ganttShell, projectRows, projectHeading } from "./gantt";
-import { fitGanttLabel } from "./ganttLabels";
+import { fitGanttLabel, updateGanttNow } from "./ganttLabels";
 import { startDrag, DragMode } from "./drag";
 
 export function renderDailyGantt(plugin: LubiPlugin, card: HTMLElement, date: string, rerender: () => void, edit: (task: Task) => void, save: (id: string, patch: Partial<Pick<Task, "start" | "estimate">>, message: string) => Promise<void>): void {
   const { table, header } = ganttShell(card, `${date} 的时间甘特图，第一行是 00:00 至 24:00 时间线`, true);
+  table.dataset.ganttFrom = date; table.dataset.ganttCount = "1";
   const axis = header.createDiv({ cls: "lubi-daily-gantt-axis", attr: { role: "columnheader" } });
   for (let hour = 0; hour <= 24; hour++) {
     const tick = axis.createDiv({ cls: "lubi-daily-gantt-tick", text: `${String(hour).padStart(2, "0")}:00`, attr: { "data-hour": String(hour) } });
@@ -19,11 +20,11 @@ export function renderDailyGantt(plugin: LubiPlugin, card: HTMLElement, date: st
   const rows = dailyGanttRows(plugin.tasks.all, date);
   if (!rows.length) { table.createDiv({ cls: "lubi-gantt-empty lubi-muted", text: "这一天没有已安排的规划任务", attr: { role: "status" } }); return; }
   for (const group of projectRows(plugin, rows)) {
-    projectHeading(table, group, Array.from({ length: 24 }, () => ""), true);
+    const groupHost = projectHeading(table, group);
     for (const row of group.rows) {
     const task = row.task;
     const open = () => { const current = plugin.tasks.byId(task.id); if (current) edit(current); else { new Notice("任务已不存在", 5000); rerender(); } };
-    const line = table.createDiv({ cls: "lubi-gantt-row", attr: { role: "row", "data-task-id": task.id } });
+    const line = groupHost.createDiv({ cls: "lubi-gantt-row", attr: { role: "row", "data-task-id": task.id } });
     line.style.setProperty("--chip", categoryOf(plugin.settings, task.category).color);
     line.toggleClass("is-done", row.done);
     const name = line.createDiv({ cls: "lubi-gantt-name", attr: { role: "rowheader" } });
@@ -34,6 +35,7 @@ export function renderDailyGantt(plugin: LubiPlugin, card: HTMLElement, date: st
     const plot = track.createDiv({ cls: "lubi-daily-gantt-plot" });
     const grid = plot.createDiv({ cls: "lubi-gantt-grid", attr: { "aria-hidden": "true" } });
     for (let hour = 0; hour < 24; hour++) grid.createDiv();
+    plot.createDiv({ cls: "lubi-gantt-today", attr: { "aria-hidden": "true" } });
     if (row.start === null) { plot.createSpan({ cls: "lubi-daily-gantt-unset lubi-muted", text: "未定时" }); continue; }
     const bar = plot.createDiv({ cls: "lubi-gantt-bar", attr: { role: "button", tabindex: "0", "data-start": String(row.start), "data-minutes": String(row.minutes) } });
     bar.toggleClass("is-done", row.done); bar.toggleClass("is-point", row.minutes === 0);
@@ -41,7 +43,7 @@ export function renderDailyGantt(plugin: LubiPlugin, card: HTMLElement, date: st
     const place = (start: number, minutes: number) => {
       bar.style.left = `${start / 1440 * 100}%`;
       bar.style.width = minutes ? `${Math.min(minutes, 1440 - start) / 1440 * 100}%` : "6px";
-      label.setText(minutes >= 60 ? fmtDuration(minutes) : "");
+      label.setText(minutes > 0 ? fmtDuration(minutes) : "未填预计");
       fitGanttLabel(bar);
     };
     place(row.start, row.minutes);
@@ -88,4 +90,5 @@ export function renderDailyGantt(plugin: LubiPlugin, card: HTMLElement, date: st
     }
   }
   }
+  updateGanttNow(table);
 }

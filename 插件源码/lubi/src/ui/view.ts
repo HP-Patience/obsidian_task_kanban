@@ -9,7 +9,7 @@ import { ganttWindow } from "../core/gantt";
 import { renderTasks, TasksState } from "./tasks";
 import { ShortcutsModal, TaskModal } from "./modals";
 import { AiTaskModal } from "./aiTask";
-import { fitGanttLabels } from "./ganttLabels";
+import { fitGanttLabels, updateGanttNow } from "./ganttLabels";
 import { JsonTaskImportModal } from "./taskImport";
 
 export const VIEW_TYPE = "lubi-dashboard";
@@ -34,6 +34,7 @@ export class DashboardView extends ItemView {
   private readonly scrollCache = new Map<string, { body: number; timeline?: number; week?: number; ganttLeft?: number; ganttTop?: number }>();
   private panelObserver?: ResizeObserver;
   private ganttObserved?: HTMLElement;
+  private ganttClock?: number;
   readonly refresh = debounce(() => void this.render(), 150);
 
   constructor(leaf: WorkspaceLeaf, private plugin: LubiPlugin) {
@@ -53,6 +54,8 @@ export class DashboardView extends ItemView {
   async onClose(): Promise<void> {
     hideTip();
     this.panelObserver?.disconnect();
+    if (this.ganttClock !== undefined) window.clearInterval(this.ganttClock);
+    this.ganttClock = undefined;
     if (this.keyHandler) document.removeEventListener("keydown", this.keyHandler);
     this.keyHandler = undefined;
   }
@@ -61,6 +64,8 @@ export class DashboardView extends ItemView {
     const root = this.contentEl;
     root.empty();
     root.addClass("lubi-root");
+    if (this.ganttClock !== undefined) window.clearInterval(this.ganttClock);
+    this.ganttClock = undefined;
     const sizePanel = () => {
       fitGanttLabels(root);
       const height = root.getBoundingClientRect().height;
@@ -301,6 +306,9 @@ export class DashboardView extends ItemView {
     this.ganttObserved = host.querySelector<HTMLElement>(".lubi-gantt-table") || undefined;
     if (this.ganttObserved) this.panelObserver?.observe(this.ganttObserved);
     fitGanttLabels(host);
+    updateGanttNow(host);
+    if (this.ganttClock !== undefined) window.clearInterval(this.ganttClock);
+    this.ganttClock = this.ganttObserved ? window.setInterval(() => updateGanttNow(this.contentEl), 30_000) : undefined;
     void document.fonts?.ready.then(() => { if (host.isConnected) fitGanttLabels(host); });
 
     this.lastRenderKey = key;

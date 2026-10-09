@@ -70,7 +70,7 @@ const freeze = (el) => { for (const i of el.querySelectorAll("input, textarea"))
 // 与真实视图一致：按 data-scroll-target 定位首屏
 // 静态页没有插件脚本：按 tasks.ts 同样的算法补上周日程的滚动条轨道宽度
 const boot = `<script>addEventListener("load",()=>{for(const el of document.querySelectorAll("[data-scroll-target]"))el.scrollTop=Number(el.dataset.scrollTarget)||0;for(const b of document.querySelectorAll(".lubi-week-body"))b.parentElement.style.setProperty("--lubi-week-sbw",Math.max(0,b.offsetWidth-b.clientWidth)+"px");const g=document.querySelector(".lubi-gantt-card");if(g&&g.getBoundingClientRect().top>innerHeight-80)g.scrollIntoView({block:"start"});});</script>`;
-const page = (title, body, dark = false) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${shim}${styles}</style></head><body class="${dark ? "theme-dark" : "theme-light"}">${body}${boot}<script>${ganttLabelScript};addEventListener("load",()=>{LubiGanttLabels.fitGanttLabels(document);document.fonts?.ready.then(()=>LubiGanttLabels.fitGanttLabels(document));});</script></body></html>`;
+const page = (title, body, dark = false) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${shim}${styles}</style></head><body class="${dark ? "theme-dark" : "theme-light"}">${body}${boot}<script>${ganttLabelScript};addEventListener("load",()=>{LubiGanttLabels.fitGanttLabels(document);LubiGanttLabels.updateGanttNow(document);document.fonts?.ready.then(()=>LubiGanttLabels.fitGanttLabels(document));});</script></body></html>`;
 const out = new URL("../preview/", import.meta.url);
 const outDark = new URL("dark/", out);
 fs.mkdirSync(outDark, { recursive: true });

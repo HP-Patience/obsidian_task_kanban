@@ -2,12 +2,11 @@ import { Notice } from "obsidian";
 import type LubiPlugin from "../main";
 import { explicitSpan, GanttAction, ganttPatch, GanttPatch, ganttRows, GanttSegment } from "../core/gantt";
 import { Task } from "../core/tasks";
-import { daysBetween, isValidDate, shortDate, todayStr, weekdayZh } from "../core/time";
+import { daysBetween, fmtDuration, isValidDate, shortDate, todayStr, weekdayZh } from "../core/time";
 import { categoryOf } from "../settings";
 import { button, catDot, iconButton, infoTip, stopAll } from "./components";
 import { startDrag } from "./drag";
-import { fitGanttLabel } from "./ganttLabels";
-import { fmtDuration } from "../core/time";
+import { fitGanttLabel, updateGanttNow } from "./ganttLabels";
 
 let descriptionId = 0;
 
@@ -16,6 +15,7 @@ export function ganttShell(card: HTMLElement, text: string, daily = false): { ta
   const scroller = card.createDiv({ cls: `lubi-gantt-scroll ${daily ? "lubi-daily-gantt-scroll" : ""}`, attr: { tabindex: "0", role: "region", "aria-labelledby": description.id } });
   const table = scroller.createDiv({ cls: "lubi-gantt-table", attr: { role: "table", "aria-labelledby": description.id } });
   const header = table.createDiv({ cls: "lubi-gantt-heading", attr: { role: "row" } });
+  header.createDiv({ cls: "lubi-gantt-project-column", text: "项目", attr: { role: "columnheader" } });
   header.createDiv({ cls: "lubi-gantt-name", text: "任务", attr: { role: "columnheader" } });
   return { table, header };
 }
@@ -28,14 +28,11 @@ export function projectRows<T extends { task: Task }>(plugin: LubiPlugin, rows: 
   }
   return [...groups.values()];
 }
-export function projectHeading(table: HTMLElement, group: { title: string; id: string }, columns: string[], daily = false): void {
-  const line = table.createDiv({ cls: "lubi-gantt-project-heading", attr: { role: "row", "data-project-id": group.id } });
-  line.createDiv({ cls: "lubi-gantt-name", text: group.title, attr: { role: "rowheader" } });
-  const track = line.createDiv({ cls: "lubi-gantt-track", attr: { role: "cell" } });
-  const plot = daily ? track.createDiv({ cls: "lubi-daily-gantt-plot" }) : track;
-  const grid = plot.createDiv({ cls: "lubi-gantt-grid", attr: { "aria-hidden": "true" } });
-  for (const day of columns) grid.createDiv({ cls: !daily && ["六", "日"].includes(weekdayZh(day)) ? "is-weekend" : "" });
-
+export function projectHeading(table: HTMLElement, group: { title: string; id: string }): HTMLElement {
+  const container = table.createDiv({ cls: "lubi-gantt-project-group", attr: { role: "rowgroup", "aria-label": group.title } });
+  const label = container.createDiv({ cls: "lubi-gantt-project-heading", attr: { role: "rowheader", "data-project-id": group.id } });
+  label.createDiv({ cls: "lubi-gantt-name", text: group.title });
+  return container.createDiv({ cls: "lubi-gantt-project-tasks" });
 }
 
 export function renderGantt(plugin: LubiPlugin, card: HTMLElement, days: string[], collapsed: Set<string>, rerender: () => void, edit: (t: Task, date?: string) => void, save: (id: string, patch: GanttPatch, message: string) => Promise<void>): void {
@@ -44,6 +41,7 @@ export function renderGantt(plugin: LubiPlugin, card: HTMLElement, days: string[
   const { table, header } = ganttShell(card, "规划任务甘特图，可横向滚动");
   table.style.setProperty("--gantt-count", String(count));
   table.dataset.days = String(count);
+  table.dataset.ganttFrom = days[0]; table.dataset.ganttCount = String(count);
   const dates = header.createDiv({ cls: "lubi-gantt-dates" });
   for (const day of days) {
     const cell = button(dates, `${shortDate(day)} 周${weekdayZh(day)}`, () => plugin.openDate(day, "tasks"), { cls: "lubi-gantt-date" });
@@ -55,9 +53,9 @@ export function renderGantt(plugin: LubiPlugin, card: HTMLElement, days: string[
     empty.setAttribute("role", "status");
     return;
   }
-  const first = days[0], last = days[days.length - 1], today = todayStr();
+  const first = days[0], last = days[days.length - 1];
   for (const group of projectRows(plugin, rows)) {
-    projectHeading(table, group, days);
+    const groupHost = projectHeading(table, group);
     for (const row of group.rows) {
     const t = row.task;
     const openTask = () => {
@@ -65,7 +63,7 @@ export function renderGantt(plugin: LubiPlugin, card: HTMLElement, days: string[
       if (!current) { new Notice("任务已不存在", 5000); rerender(); return; }
       edit(current);
     };
-    const line = table.createDiv({ cls: "lubi-gantt-row", attr: { role: "row", "data-task-id": t.id } });
+    const line = groupHost.createDiv({ cls: "lubi-gantt-row", attr: { role: "row", "data-task-id": t.id } });
     line.toggleClass("is-done", t.repeat.kind === "none" && t.status === "done");
     line.style.setProperty("--chip", categoryOf(plugin.settings, t.category).color);
     const name = line.createDiv({ cls: "lubi-gantt-name", attr: { role: "rowheader" } });
@@ -80,11 +78,8 @@ export function renderGantt(plugin: LubiPlugin, card: HTMLElement, days: string[
     button(name, t.title, openTask, { cls: "lubi-gantt-title" });
     const track = line.createDiv({ cls: "lubi-gantt-track", attr: { role: "cell" } });
     const grid = track.createDiv({ cls: "lubi-gantt-grid", attr: { "aria-hidden": "true" } });
-    for (const day of days) grid.createDiv({ cls: `${["六", "日"].includes(weekdayZh(day)) ? "is-weekend" : ""}` });
-    if (today >= first && today <= last) {
-      const mark = track.createDiv({ cls: "lubi-gantt-today", attr: { "aria-hidden": "true" } });
-      mark.style.left = `${(daysBetween(first, today) + .5) / count * 100}%`;
-    }
+    for (const day of days) grid.createDiv({ cls: `${["六", "日"].includes(weekdayZh(day)) ? "is-weekend" : ""}`, attr: { "data-date": day } });
+    track.createDiv({ cls: "lubi-gantt-today", attr: { "aria-hidden": "true" } });
     for (const segment of row.segments) {
       const bar = track.createDiv({ cls: "lubi-gantt-bar", attr: { role: "button", tabindex: "0", "data-from": segment.from, "data-to": segment.to } });
       bar.toggleClass("is-done", segment.done); bar.toggleClass("is-summary", row.summary);
@@ -99,7 +94,7 @@ export function renderGantt(plugin: LubiPlugin, card: HTMLElement, days: string[
         bar.style.left = `calc(${a / count * 100}% + 2px)`;
         bar.style.width = `calc(${(b - a + 1) / count * 100}% - 4px)`;
         const outside = range.to < first || range.from > last;
-        const text = range.from === range.to ? shortDate(range.from) : `${shortDate(range.from)}–${shortDate(range.to)}`;
+        const text = range.from === range.to ? (t.estimate > 0 ? fmtDuration(t.estimate) : "未填预计") : `${shortDate(range.from)}–${shortDate(range.to)}`;
         label.setText(`${outside ? "窗口外 · " : ""}${text}`);
         fitGanttLabel(bar);
       };
@@ -161,4 +156,5 @@ export function renderGantt(plugin: LubiPlugin, card: HTMLElement, days: string[
     }
   }
   }
+  updateGanttNow(table);
 }

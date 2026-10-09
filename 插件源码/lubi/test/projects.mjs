@@ -33,8 +33,8 @@ for(const period of ['day','week','month']) {
  view.tasksState.scheduleView='gantt';view.tasksState.period=period;view.show('tasks',D);await wait();
  const headings=[...view.contentEl.querySelectorAll('.lubi-gantt-project-heading')];assert(headings.some(e=>e.dataset.projectId===p.id));assert(headings.some(e=>e.textContent==='独立任务'));
  assert(headings.every(e=>!e.querySelector('input,button,.lubi-gantt-bar,.lubi-gantt-handle')&&!e.hasAttribute('data-task-id')));
- const math=headings.find(e=>e.dataset.projectId===p.id);assert.equal(math.nextElementSibling.dataset.taskId,'action-a');assert.equal(math.nextElementSibling.nextElementSibling.dataset.taskId,'action-b');
- assert.equal(headings.filter(e=>e.dataset.projectId===p.id).length,1);assert(headings.every(h=>h.querySelectorAll('.lubi-gantt-grid > div').length===(period==='day'?24:period==='week'?7:31)));assert.equal(math.nextElementSibling.querySelector('.lubi-gantt-name').style.getPropertyValue('--gantt-indent'),'8px');
+ const math=headings.find(e=>e.dataset.projectId===p.id);assert.equal(math.nextElementSibling.children[0].dataset.taskId,'action-a');assert.equal(math.nextElementSibling.children[1].dataset.taskId,'action-b');
+ assert.equal(headings.filter(e=>e.dataset.projectId===p.id).length,1);assert(headings.every(h=>h.nextElementSibling.querySelector('.lubi-gantt-grid').children.length===(period==='day'?24:period==='week'?7:31)));assert.equal(math.nextElementSibling.querySelector('.lubi-gantt-name').style.getPropertyValue('--gantt-indent'),'8px');
 }
 for(const period of ['day','week','month']) {
  view.tasksState.scheduleView='list';view.tasksState.period=period;view.show('tasks',D);await wait();
@@ -42,6 +42,23 @@ for(const period of ['day','week','month']) {
 }
 view.show('today',D);await wait();const dayGroups=view.contentEl.querySelectorAll('.lubi-plan-task-list .lubi-task-group-title');assert([...dayGroups].some(e=>e.textContent==='独立任务'));assert.equal([...dayGroups].filter(e=>e.textContent==='考研数学').length,1);const plan=[...view.contentEl.querySelectorAll('.lubi-plan')].find(e=>e.textContent.includes('积分学习'));assert(plan);plan.focus();await wait();assert(document.querySelector('.lubi-tip')?.textContent.includes('项目：考研数学'));plan.blur();
 console.log('PASS project views: day/week/month Gantt headings only, group membership, independent tasks, list context once and daily calendar details');
+// Fixed local clock: fractional current time, project-row continuity and date/duration labels.
+{
+ const RealDate=Date;
+ try {
+  const instant=new RealDate(2026,9,9,6,0,0);
+  globalThis.Date=class extends RealDate { constructor(...args){super(...(args.length?args:[instant.getTime()]));} static now(){return instant.getTime();} };
+  view.tasksState.scheduleView='gantt';view.tasksState.period='week';view.show('tasks','2026-10-09');await wait();
+  const table=view.contentEl.querySelector('.lubi-gantt-table'),before=JSON.stringify([...app.vault.files]);
+  const marks=[...table.querySelectorAll('.lubi-gantt-today')];assert(marks.length>0);
+  assert.equal(marks.length,table.querySelectorAll('.lubi-gantt-row').length);
+  assert(marks.every(m=>!m.hidden&&Math.abs(parseFloat(m.style.left)-(4+.25)/7*100)<.00001));
+  assert.equal(table.querySelector('[data-task-id="action-a"] .lubi-gantt-bar-label').textContent,'30min');
+  assert.equal(table.querySelector('[data-task-id="action-b"] .lubi-gantt-bar-label').textContent,'30min');
+  assert([...table.querySelectorAll('.lubi-gantt-grid > [data-date="2026-10-10"]')].every(c=>c.classList.contains('is-future')));
+  assert.equal(JSON.stringify([...app.vault.files]),before,'Gantt time presentation writes no data');
+ } finally {globalThis.Date=RealDate;}
+}
 const settings=plugin.settingTabs[0];settings.display();assert(settings.containerEl.textContent.includes('旧父任务转为项目'));
 await plugin.exportJson();const exported=JSON.parse([...app.vault.files].findLast(([f])=>f.startsWith('Lubi-导出-'))[1]);assert(exported.taskStore.projects.length);assert(exported.taskStore.projectContainers.includes('old-root'));assert(exported.records.some(r=>r.task==='old-recorded-parent'));
 plugin.onunload();await view.onClose();console.log('PASS projects: independent containers, inline creation, membership, optional tasks, progress, explicit backed-up migration, archival IDs, actual records, import/export, failures, conflicts, duplicate creation and queued edits');

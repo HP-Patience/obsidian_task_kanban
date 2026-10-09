@@ -69,7 +69,7 @@ const styles = fs.readFileSync(new URL("../styles.css", import.meta.url), "utf8"
 const freeze = (el) => { for (const i of el.querySelectorAll("input, textarea")) { if (i.type === "checkbox") { if (i.checked) i.setAttribute("checked", ""); } else if (i.tagName === "TEXTAREA") i.textContent = i.value; else i.setAttribute("value", i.value); } for (const s of el.querySelectorAll("select")) for (const o of s.options) o.toggleAttribute("selected", o.selected); return el.outerHTML; };
 // 与真实视图一致：按 data-scroll-target 定位首屏
 const boot = `<script>addEventListener("load",()=>{for(const el of document.querySelectorAll("[data-scroll-target]"))el.scrollTop=Number(el.dataset.scrollTarget)||0;});</script>`;
-const labelBoot = `<script>${ganttLabelScript};addEventListener("load",()=>{LubiGanttLabels.fitGanttLabels(document);document.fonts.ready.then(()=>LubiGanttLabels.fitGanttLabels(document));});</script>`;
+const labelBoot = `<script>${ganttLabelScript};addEventListener("load",()=>{LubiGanttLabels.fitGanttLabels(document);LubiGanttLabels.updateGanttNow(document,new Date(${JSON.stringify(new Date().toISOString())}));document.fonts.ready.then(()=>LubiGanttLabels.fitGanttLabels(document));});</script>`;
 const page = (title, body, dark = false) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${shim}${styles}</style></head><body class="${dark ? "theme-dark" : "theme-light"}">${body}${boot}${labelBoot}</body></html>`;
 const out = new URL("../preview/manual/", import.meta.url);
 const outDark = new URL("dark/", out);

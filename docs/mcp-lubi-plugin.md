@@ -94,6 +94,6 @@ Tasks.projectChange 串行、复制状态、比较 diskText、写入前备份、
 
 项目视图：gantt.ts 的 projectRows 按项目 ID 分组、保留组内投影顺序，projectHeading 只创建非交互标题行，不使用任务 ID、任务条或操作句柄；dailyGantt.ts 共用。项目 ID 不混入原任务折叠集合，旧父子关系仍兼容显示；不派生项目日期或回写项目状态。日历日 / 周 / 月任务详情显示项目，范围列表只显示一次项目归属，回顾不改。
 
-甘特图视觉收敛：projectHeading 复用同一日期网格及日视图 20px 两端留白，左列项目标题固定，任务缩进 8px。ganttLabels.ts 按实际标签宽度和双端句柄安全间距决定完整显示或隐藏；label 隐藏仍保留可测量的内在宽度，不改变 bar 交互与 accessible infoTip。DashboardView 共用既有 ResizeObserver 观察当前表，重新渲染取消旧表观察、关闭时 disconnect；字体就绪重测，拖拽 place 后重测。预览使用同一个 helper，浏览器测试覆盖 grid 对齐、明暗主题及 narrow → wide → narrow 标签状态，不新增侧栏或导航。
+甘特图视觉收敛：projectHeading 返回任务组容器，项目标签位于左侧跨行单元格并横纵居中，项目与任务名称列横向固定；项目不生成额外时间行或任务条，日视图保留 20px 两端留白。ganttLabels.ts 按实际标签宽度和双端句柄安全间距决定完整显示或隐藏；单日标签优先预计用时，跨日标签显示日期范围。updateGanttNow 支持表格本身或外层容器，按本地当天时刻计算分数位置，视窗外隐藏，并标识未来日期，未来周末不灰化。DashboardView 仅在有甘特表时每 30 秒更新，重渲染和关闭清理时钟。蓝线置于任务条和句柄上方且 pointer-events: none。完成条保留 --chip 并使用实心分类色填充与主题反色文字，不对名称划线；不显示左侧粗色阴影。左右句柄各不超过条宽的一半，覆盖真实边缘并显示 ew-resize，避免边框遮挡及窄条句柄重叠。复用 ResizeObserver 观察当前表，重新渲染取消旧表观察、关闭时 disconnect；字体就绪与拖拽 place 后重测。预览使用同一 helper，浏览器检查覆盖各周期、明暗主题、居中、边缘命中、实心状态、当前时刻及 narrow → wide → narrow 标签状态。
 
 日历日的 renderLists(records) 也复用 groupedRows；taskRow 使用 hideContext 隐藏已在组标题呈现的项目 / 旧父级路径，不隐藏时间、预计、重复及跨度。进度仍按同一 occurrences 数组计算，不计组标题；renderDayPlan 的原生 details、进度条、记录配对和操作回调不改，其他视图行的项目显示保持原规则。

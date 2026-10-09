@@ -28,7 +28,7 @@ async def hover_big(pg):
     return best
 async def main():
     async with async_playwright() as p:
-        b = await p.chromium.launch()
+        b = await p.chromium.launch(**({"executable_path": os.environ["LUBI_BROWSER"]} if os.environ.get("LUBI_BROWSER") else {}))
         async def page(w, h, scale):
             return await b.new_page(viewport={"width": w, "height": h}, device_scale_factor=scale)
         async def go(pg, n, dark=False):
@@ -46,6 +46,7 @@ async def main():
         await go(pg, "review"); save(await pg.screenshot(), MAN/"06-回顾页.webp")
         await go(pg, "review-year"); save(await (await pg.query_selector(".lubi-heat-card")).screenshot(), MAN/"07-年热力图.webp")
         await go(pg, "tasks"); save(await pg.screenshot(), MAN/"08-任务页.webp")
+        await go(pg, "projects-gantt"); save(await pg.screenshot(), MAN/"11-项目甘特图.webp")
         await pg.close()
         # ---------- README（2x） ----------
         pg = await page(1400, 900, 2)
