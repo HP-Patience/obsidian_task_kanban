@@ -1,19 +1,23 @@
 // 生成教学手册 / README 截图用的静态预览页（演示数据，亮色 + 暗色），输出到 preview/manual/，配合 scripts/screenshots.py 使用。
 import * as O from "./mock-obsidian.js";
 import fs from "fs";
+import { buildSync } from "esbuild";
+const ganttLabelScript = buildSync({ entryPoints: ["src/ui/ganttLabels.ts"], bundle: true, write: false, format: "iife", globalName: "LubiGanttLabels" }).outputFiles[0].text;
+const manifest = JSON.parse(fs.readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
 import { demoData, seedVault } from "./demo-data.mjs";
 import Module from "module";
 import { createRequire } from "module";
 const origLoad = Module._load;
 Module._load = function (req, ...a) { return req === "obsidian" ? O : origLoad.call(this, req, ...a); };
 const require = createRequire(import.meta.url);
-const LubiPlugin = require("./plugin.cjs").default;
+const LubiPlugin = require(process.env.LUBI_TEST_PLUGIN || "../main.js").default;
 const tick = (ms = 40) => new Promise((r) => setTimeout(r, ms));
 
 // 时钟固定在当天 14:30（照常走秒）：清晨 / 深夜运行时截图内容也一致（当天记录、现在线、逾期计划）
 {
   const RealDate = Date;
-  const base = new RealDate(); base.setHours(14, 30, 0, 0);
+  const base = new RealDate(`${process.env.LUBI_SCREENSHOT_DATE || "2026-10-09"}T14:30:00`);
+  if (!Number.isFinite(base.getTime())) throw new Error("Invalid synthetic screenshot date");
   const off = base.getTime() - RealDate.now();
   globalThis.Date = class extends RealDate {
     constructor(...a) { if (a.length) super(...a); else super(RealDate.now() + off); }
@@ -26,10 +30,14 @@ const demo = demoData(today);
 const T = demo.today;
 seedVault(app.vault, demo);
 
-const plugin = new LubiPlugin(app, { id: "lubi", version: "1.1.0" });
+const plugin = new LubiPlugin(app, manifest);
 await plugin.onload();
 for (const fn of app.workspace._ready) await fn();
 await tick();
+// Explicit conversion happens only in this in-memory synthetic Vault, never in a real Vault.
+const linked = new Set();
+for (const date of plugin.journal.dates()) for (const row of await plugin.journal.read(date)) if (row.rec.task) linked.add(row.rec.task);
+await plugin.tasks.convertParentsToProjects(linked);
 plugin.settings.onboardingDone = true;
 const view = await plugin.activateView("today", T);
 await tick(200);
@@ -61,7 +69,8 @@ const styles = fs.readFileSync(new URL("../styles.css", import.meta.url), "utf8"
 const freeze = (el) => { for (const i of el.querySelectorAll("input, textarea")) { if (i.type === "checkbox") { if (i.checked) i.setAttribute("checked", ""); } else if (i.tagName === "TEXTAREA") i.textContent = i.value; else i.setAttribute("value", i.value); } for (const s of el.querySelectorAll("select")) for (const o of s.options) o.toggleAttribute("selected", o.selected); return el.outerHTML; };
 // 与真实视图一致：按 data-scroll-target 定位首屏
 const boot = `<script>addEventListener("load",()=>{for(const el of document.querySelectorAll("[data-scroll-target]"))el.scrollTop=Number(el.dataset.scrollTarget)||0;});</script>`;
-const page = (title, body, dark = false) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${shim}${styles}</style></head><body class="${dark ? "theme-dark" : "theme-light"}">${body}${boot}</body></html>`;
+const labelBoot = `<script>${ganttLabelScript};addEventListener("load",()=>{LubiGanttLabels.fitGanttLabels(document);document.fonts.ready.then(()=>LubiGanttLabels.fitGanttLabels(document));});</script>`;
+const page = (title, body, dark = false) => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${shim}${styles}</style></head><body class="${dark ? "theme-dark" : "theme-light"}">${body}${boot}${labelBoot}</body></html>`;
 const out = new URL("../preview/manual/", import.meta.url);
 const outDark = new URL("dark/", out);
 fs.mkdirSync(outDark, { recursive: true });
@@ -85,8 +94,11 @@ fs.writeFileSync(new URL("review.html", out), page("review", freeze(root)));
   if (weekBtn) { weekBtn.click(); await tick(200); }
 }
 // 3. 任务页
-view.show("tasks"); await tick(200);
+view.tasksState.scheduleView="calendar";view.tasksState.period="week";view.show("tasks",T); await tick(200);
 fs.writeFileSync(new URL("tasks.html", out), page("tasks", freeze(root)));
+view.tasksState.scheduleView="gantt";view.tasksState.period="month";view.show("tasks",T);await tick(200);
+fs.writeFileSync(new URL("projects-gantt.html",out),page("projects-gantt",freeze(root)));
+view.tasksState.scheduleView="calendar";view.tasksState.period="week";
 // 4. 编辑模态
 view.show("today"); await tick(200);
 const b = [...root.querySelectorAll(".lubi-block")].find((x) => x.textContent.includes("线性代数"));
@@ -105,6 +117,13 @@ plugin.quickLog(); await tick();
 const nm = O.openModals.at(-1); nm.modalEl.classList.add("modal"); nm.titleEl.classList.add("modal-title"); nm.contentEl.classList.add("modal-content");
 fs.writeFileSync(new URL("modal-new.html", out), page("modal-new", `<div class="lubi-root" style="height:100vh;background:var(--background-secondary)"></div><div class="modal-bg"></div>${freeze(nm.modalEl)}`));
 nm.close();
+const actual = new nm.constructor(app,plugin,{defaults:{title:"复习一个章节（合成示例）",category:"学习",date:T,start:"09:00",estimate:45},recordDate:T});
+actual.open();await tick();
+for (const [key,value,event] of [["minutes","60","input"],["start","09:00","change"]]) {
+  const field=actual.contentEl.querySelector(`[data-actual=${key}]`);field.value=value;field.dispatchEvent(new window.Event(event,{bubbles:true}));
+}
+await tick();actual.modalEl.classList.add("modal");actual.titleEl.classList.add("modal-title");actual.contentEl.classList.add("modal-content");
+fs.writeFileSync(new URL("estimate-comparison.html",out),page("estimate-comparison",`<div class="modal-bg"></div>${freeze(actual.modalEl)}`));actual.close();
 // 6. 任务模态：点任务页里的一行
 view.show("tasks"); await tick(200);
 const rowEl = [...root.querySelectorAll(".lubi-task")].find((x) => x.textContent.includes("线性代数"));
@@ -124,7 +143,7 @@ root.dispatchEvent(new window.KeyboardEvent("keydown", { key: "?", bubbles: true
 { const sm = O.openModals.at(-1); if (sm && sm.contentEl.querySelector(".lubi-shortcuts")) wrapModal(sm, "modal-keys"); }
 {
   const app2 = new O.App();
-  const p2 = new LubiPlugin(app2, { id: "lubi", version: "1.4.0" });
+  const p2 = new LubiPlugin(app2, manifest);
   await p2.onload(); for (const fn of app2.workspace._ready) await fn(); await tick();
   const v2 = await p2.activateView("today", T); await tick(200);
   fs.writeFileSync(new URL("empty.html", out), page("empty", freeze(v2.contentEl)));

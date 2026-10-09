@@ -1,12 +1,12 @@
 # 生成 README 与教学手册截图（演示数据，无真实记录）。
 # 用法（在 插件源码/lubi 下）：
-#   npm run test:smoke                               # 生成 test/plugin.cjs
+#   npm run build                                    # 类型检查与生产包 main.js
 #   TZ=Asia/Shanghai node test/preview-manual.mjs    # 渲染静态预览页到 preview/manual/
 #   pip install playwright pillow && python -m playwright install chromium
 #   TZ=Asia/Shanghai python scripts/screenshots.py
 # 字体默认 Noto Sans CJK，可用 LUBI_FONT / LUBI_FONT_BOLD / LUBI_FONT_INDEX 指定
 # （Windows：LUBI_FONT=C:/Windows/Fonts/msyh.ttc LUBI_FONT_BOLD=C:/Windows/Fonts/msyhbd.ttc LUBI_FONT_INDEX=0）。
-import os
+import os, json
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import asyncio, pathlib, io
 from playwright.async_api import async_playwright
@@ -17,23 +17,27 @@ RD = ROOT.parents[1] / "docs" / "images"                     # README 配图
 MAN.mkdir(parents=True, exist_ok=True); RD.mkdir(parents=True, exist_ok=True)
 def save(png, path, q=84):
     Image.open(io.BytesIO(png)).convert("RGB").save(path, "WEBP", quality=q, method=6)
-SCROLL = "(()=>{const s=document.querySelector('.lubi-timeline-scroll'); if(s) s.scrollTop=7*48-8; const w=document.querySelector('.lubi-week-body'); if(w) w.scrollTop=2*48-6;})()"
+SCROLL = "(()=>{const s=document.querySelector('.lubi-timeline-scroll'); if(s) s.scrollTop=7*56-8; const w=document.querySelector('.lubi-week-body'); if(w) w.scrollTop=8*56-6;})()"
 async def hover_big(pg):
     gaps = await pg.query_selector_all(".lubi-gap")
-    best = max([(((await g.bounding_box()) or {"height":0})["height"], i) for i, g in enumerate(gaps)])
-    await gaps[best[1]].hover()
+    if not gaps: raise RuntimeError("Synthetic screenshot requires a real gap")
+    best = gaps[0]  # bring the first qualifying gap into view
+    await best.scroll_into_view_if_needed()
+    await best.hover()
+    await pg.wait_for_timeout(150)
+    return best
 async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch()
         async def page(w, h, scale):
             return await b.new_page(viewport={"width": w, "height": h}, device_scale_factor=scale)
         async def go(pg, n, dark=False):
-            await pg.goto(f"file://{B}/{'dark/' if dark else ''}{n}.html"); await pg.wait_for_timeout(250); await pg.evaluate(SCROLL)
+            await pg.goto((B / ("dark" if dark else "") / f"{n}.html").as_uri()); await pg.evaluate("document.fonts.ready"); await pg.wait_for_timeout(250); await pg.evaluate(SCROLL)
         # ---------- 教学手册（1x） ----------
         pg = await page(1400, 900, 1)
         await go(pg, "empty"); save(await pg.screenshot(clip={"x":0,"y":0,"width":1400,"height":560}), MAN/"01-首次打开.webp")
         await go(pg, "today"); save(await pg.screenshot(), MAN/"02-每日页.webp")
-        save(await pg.screenshot(clip={"x":0,"y":0,"width":1400,"height":56}), MAN/"00-顶栏.webp")
+        save(await pg.screenshot(clip={"x":0,"y":0,"width":1400,"height":64}), MAN/"00-顶栏.webp")
         await hover_big(pg); await pg.wait_for_timeout(150)
         box = await (await pg.query_selector(".lubi-timeline-wrap")).bounding_box()
         save(await pg.screenshot(clip={"x":box["x"],"y":box["y"],"width":box["width"],"height":min(box["height"],520)}), MAN/"03-补记空白.webp")
@@ -50,6 +54,8 @@ async def main():
         await go(pg, "review-year"); save(await (await pg.query_selector(".lubi-heat-card")).screenshot(), RD/"year-heatmap.webp", 82)
         await go(pg, "modal-quick"); save(await (await pg.query_selector(".modal")).screenshot(), RD/"quick-entry.webp", 84)
         await go(pg, "modal-keys"); save(await (await pg.query_selector(".modal")).screenshot(), RD/"shortcuts.webp", 84)
+        await go(pg, "estimate-comparison"); await (await pg.query_selector(".modal")).screenshot(path=str(RD/"estimate-comparison.png"))
+        await go(pg, "projects-gantt"); save(await pg.screenshot(), RD/"projects-gantt.webp", 84)
         await go(pg, "today"); await hover_big(pg); await pg.wait_for_timeout(150)
         box = await (await pg.query_selector(".lubi-timeline-wrap")).bounding_box()
         save(await pg.screenshot(clip={"x":box["x"],"y":box["y"],"width":box["width"],"height":min(box["height"],520)}), RD/"gap-fill.webp", 82)
@@ -90,9 +96,10 @@ def hero():
     d.text((68, 268), "柳比歇夫时间记录", font=F(font, 34), fill="#3b3170")
     d.text((68, 318), "Obsidian 插件", font=F(reg, 24), fill="#6a6490")
     y = 392
-    for t in ["记一条 · 时间轴与一行快速记录", "看一眼 · 周 / 月 / 年回顾与热力图", "排一下 · 周日程、负载条与项目"]:
+    for t in ["记一条 · 时间轴与一行快速记录", "看一眼 · 周 / 月 / 年回顾与热力图", "排一下 · 日历、甘特图与独立项目"]:
         d.ellipse([70, y + 11, 80, y + 21], fill="#5b45c9"); d.text((94, y), t, font=F(reg, 22), fill="#3b3a4a"); y += 42
-    pill = "v1.5 · 纯 Markdown 数据 · 开源 MIT"
+    version = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))["version"]
+    pill = f"v{version} · Markdown 记录 / JSON 任务 · MIT"
     tw = d.textlength(pill, font=F(reg, 19))
     d.rounded_rectangle([68, 540, 68 + tw + 40, 580], 20, fill="#5b45c9")
     d.text((88, 547), pill, font=F(reg, 19), fill="white")
